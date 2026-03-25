@@ -74,7 +74,8 @@ REG32(UART_MEM_RX_STATUS, 0x60);
 REG32(UART_DATE, 0x78)
 
 /* Size of the register file */
-#define UART_REG_CNT (R_UART_DATE + 1)
+/* Cover up to offset 0x84 for ESP32-S3 UART_ID register at 0x80 */
+#define UART_REG_CNT (0x84 / 4)
 
 
 typedef struct ESPUARTState {

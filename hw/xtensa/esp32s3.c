@@ -500,6 +500,7 @@ static void esp32s3_io_write(void *opaque, hwaddr addr, uint64_t value, unsigned
     if (addr / 4 < ESP32S3_IO_REG_COUNT) {
         esp32s3_io_regs[addr / 4] = (uint32_t)value;
     }
+
 }
 
 

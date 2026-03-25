@@ -11,6 +11,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/log.h"
 #include "qemu/module.h"
 #include "qapi/error.h"
 #include "sysemu/sysemu.h"
@@ -31,8 +32,13 @@ static uint64_t esp32s3_uart_read(void *opaque, hwaddr addr, unsigned int size)
     switch (addr)
     {
     case A_ESP32S3_UART_CONF1:
-        /* Return the mirrored conf1 */
         r = s->conf1;
+        break;
+
+    case A_ESP32S3_UART_ID:
+        /* REG_UPDATE (bit 0) is auto-cleared by hardware after sync completes.
+         * Always return 0 so firmware never spins waiting for it. */
+        r = s->id_reg & ~R_ESP32S3_UART_ID_REG_UPDATE_MASK;
         break;
 
     default:
@@ -77,6 +83,11 @@ static void esp32s3_uart_write(void *opaque, hwaddr addr,
 
             esp32_uart_set_rx_timeout(&s->parent);
             esp32_uart_update_irq(&s->parent);
+            break;
+
+        case A_ESP32S3_UART_ID:
+            /* Store non-REG_UPDATE bits. REG_UPDATE is write-1-auto-clear. */
+            s->id_reg = (uint32_t)(value & ~R_ESP32S3_UART_ID_REG_UPDATE_MASK);
             break;
 
         default:
