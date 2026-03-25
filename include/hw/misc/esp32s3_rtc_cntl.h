@@ -84,6 +84,9 @@ typedef struct Esp32s3RtcCntlState {
     uint32_t scratch_reg[ESP32S3_RTC_CNTL_SCRATCH_REG_COUNT];
     Esp32s3ResetCause reset_cause[ESP32S3_CPU_COUNT];
     bool stat_vector_sel[ESP32S3_CPU_COUNT];
+
+    /* Generic register storage for unhandled registers (write-store, read-back) */
+    uint32_t reg_store[0x200 / 4];
 } Esp32s3RtcCntlState;
 
 REG32(RTC_CNTL_OPTIONS0, 0x00)

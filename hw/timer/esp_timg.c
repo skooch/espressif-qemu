@@ -608,6 +608,8 @@ static void esp_timg_write(void *opaque, hwaddr addr,
     uint32_t      t0_mask  = R_TIMG_T0_INT_TIMG_T0_RAW_MASK;
     uint32_t      t1_mask  = R_TIMG_T0_INT_TIMG_T1_RAW_MASK;
 
+
+
     /* Check if the timer to change/configure is the first or the second one, of course, this only applies
      * to targets who have two timers */
     if (klass->m_has_t1 && addr >= A_TIMG_T1CONFIG && addr <= A_TIMG_T1LOAD) {

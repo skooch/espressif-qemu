@@ -458,12 +458,35 @@ static void esp32s3_soc_realize(DeviceState *dev, Error **errp)
 }
 
 
+/*
+ * Generic catch-all I/O region for unimplemented peripherals.
+ * Stores writes and returns the stored value on reads, so that firmware
+ * write-then-poll patterns don't spin forever on unmodeled registers.
+ */
+#define ESP32S3_IO_REG_COUNT  (0xd1000 / 4)
+static uint32_t esp32s3_io_regs[ESP32S3_IO_REG_COUNT];
+
 static uint64_t esp32s3_io_read(void *opaque, hwaddr addr, unsigned int size)
 {
+    uint32_t r = 0;
 #if ESP32S3_IO_WARNING
     warn_report("[ESP32-S3] Unsupported read to $%08lx, size = %i\n", ESP32S3_IO_START_ADDR + addr, size);
 #endif
-    return 0;
+    if (addr / 4 < ESP32S3_IO_REG_COUNT) {
+        r = esp32s3_io_regs[addr / 4];
+    }
+
+    /*
+     * I2C_ANA_MST ANA_CONF0 at 0x6000_E040 (offset 0xE040):
+     * Bit 24 = BBPLL_CAL_DONE — PLL calibration done flag.
+     * The firmware polls this after PLL configuration. Since QEMU has no
+     * PLL hardware, always report calibration done.
+     */
+    if (addr == 0xe040) {
+        r |= (1 << 24);
+    }
+
+    return r;
 }
 
 
@@ -472,6 +495,9 @@ static void esp32s3_io_write(void *opaque, hwaddr addr, uint64_t value, unsigned
 #if ESP32S3_IO_WARNING
         warn_report("[ESP32-S3] Unsupported write $%08lx = %08lx\n", ESP32S3_IO_START_ADDR + addr, value);
 #endif
+    if (addr / 4 < ESP32S3_IO_REG_COUNT) {
+        esp32s3_io_regs[addr / 4] = (uint32_t)value;
+    }
 }
 
 
@@ -668,8 +694,12 @@ static void esp32s3_machine_init(MachineState *machine)
     /* Initialize OpenCores Ethernet controller now sicne it requires the interrupt matrix */
     esp32s3_init_openeth(ss);
 
-    /* USB Serial JTAG realization */
+    /* USB Serial JTAG realization — connect to serial2 for defmt output */
     {
+        Chardev *chr = serial_hd(2);
+        if (chr) {
+            qdev_prop_set_chr(DEVICE(&ss->jtag), "chardev", chr);
+        }
         sysbus_realize(SYS_BUS_DEVICE(&ss->jtag), &error_fatal);
         MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->jtag), 0);
         memory_region_add_subregion_overlap(sys_mem, DR_REG_USB_SERIAL_JTAG_BASE, mr, 0);

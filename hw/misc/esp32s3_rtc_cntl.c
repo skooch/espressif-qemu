@@ -72,6 +72,13 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
     case A_RTC_CNTL_STORE7:
         r = s->scratch_reg[(addr - A_RTC_CNTL_STORE4) / 4 + 4];
         break;
+
+    default:
+        /* Fallback: return stored value for unhandled registers */
+        if (addr < sizeof(s->reg_store)) {
+            r = s->reg_store[addr / 4];
+        }
+        break;
     }
     return r;
 }
@@ -141,6 +148,13 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
     case A_RTC_CNTL_STORE6:
     case A_RTC_CNTL_STORE7:
         s->scratch_reg[(addr - A_RTC_CNTL_STORE4) / 4 + 4] = value;
+        break;
+
+    default:
+        /* Fallback: store value for unhandled registers (enables read-back) */
+        if (addr < sizeof(s->reg_store)) {
+            s->reg_store[addr / 4] = value;
+        }
         break;
     }
 }
