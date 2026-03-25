@@ -216,11 +216,13 @@ static void esp32s3_soc_reset(DeviceState *dev)
         xtensa_select_static_vectors(&s->cpu[0].env, s->rtc_cntl.stat_vector_sel[0]);
         remove_cpu_watchpoints(&s->cpu[0]);
         cpu_reset(CPU(&s->cpu[0]));
+        s->cpu[0].env.sregs[CPENABLE] = 0xff;
     }
     if (s->requested_reset & ESP32S3_SOC_RESET_APPCPU && (ESP32S3_CPU_COUNT > 1)) {
         xtensa_select_static_vectors(&s->cpu[1].env, s->rtc_cntl.stat_vector_sel[1]);
         remove_cpu_watchpoints(&s->cpu[1]);
         cpu_reset(CPU(&s->cpu[1]));
+        s->cpu[1].env.sregs[CPENABLE] = 0xff;
     }
     s->requested_reset = 0;
 }
@@ -909,6 +911,15 @@ static void esp32s3_machine_init(MachineState *machine)
      * so that ELF gets loaded into virtual addresses
      */
     cpu_reset(CPU(&ss->cpu[0]));
+
+    /*
+     * Enable FPU coprocessor (CPENABLE bit 0).
+     * The real ESP32-S3 ROM bootloader enables coprocessors during startup.
+     * QEMU's Xtensa CPU reset leaves CPENABLE=0 in system mode, which causes
+     * a CoprocessorDisabled exception when the firmware's context-switch code
+     * tries to save FPU state (rur.fcr / ssi f0..f15).
+     */
+    ss->cpu[0].env.sregs[CPENABLE] = 0xff;
 
     const char *load_elf_filename = NULL;
     if (machine->firmware) {
