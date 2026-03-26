@@ -48,6 +48,7 @@
 #include "hw/ssi/esp32s3_spi.h"
 #include "hw/misc/esp32s3_cache.h"
 #include "hw/char/esp32s3_uart.h"
+#include "hw/char/tdeck_modem.h"
 #include "hw/misc/esp32s3_rng.h"
 
 #include "chardev/char-fe.h"
@@ -56,6 +57,8 @@
 /* Forward declarations for T-Deck I2C device types */
 typedef struct TdeckTca8418State TdeckTca8418State;
 typedef struct TdeckCst328State TdeckCst328State;
+typedef struct TdeckBq25896State TdeckBq25896State;
+typedef struct TdeckBq27220State TdeckBq27220State;
 #define TDECK_TCA8418(obj) ((TdeckTca8418State *)(obj))
 #define TDECK_CST328(obj)  ((TdeckCst328State *)(obj))
 void tdeck_tca8418_inject_char(TdeckTca8418State *s, char c);
@@ -175,6 +178,9 @@ typedef struct Esp32s3SocState {
     /* Keyboard input chardev (serial port 3 -> TCA8418 FIFO) */
     TdeckTca8418State *kbd_dev;
     CharBackend kbd_chr;
+
+    /* AT modem chardev for UART1 */
+    TdeckModemChardev *modem;
 } Esp32s3SocState;
 
 
@@ -586,7 +592,14 @@ static void esp32s3_soc_init(Object *obj)
     object_property_add_alias(obj, "serial1", OBJECT(&s->uart[1]), "chardev");
     // object_property_add_alias(obj, "serial2", OBJECT(&s->uart[2]), "chardev");
     qdev_prop_set_chr(DEVICE(&s->uart[0]), "chardev", serial_hd(0));
-    qdev_prop_set_chr(DEVICE(&s->uart[1]), "chardev", serial_hd(1));
+    /* Create AT modem chardev for UART1 instead of serial_hd(1) */
+    {
+        Chardev *modem_chr = qemu_chardev_new("tdeck-modem",
+                                               TYPE_CHARDEV_TDECK_MODEM,
+                                               NULL, NULL, &error_fatal);
+        s->modem = CHARDEV_TDECK_MODEM(modem_chr);
+        qdev_prop_set_chr(DEVICE(&s->uart[1]), "chardev", modem_chr);
+    }
     // qdev_prop_set_chr(DEVICE(&s->uart[2]), "chardev", serial_hd(2));
 
     for (int i = 0; i < ESP32S3_I2C_COUNT; i++) {
@@ -868,10 +881,12 @@ static void esp32s3_machine_init(MachineState *machine)
         /* Add T-Deck I2C slave devices to I2C0 bus */
         I2CBus *i2c_bus = I2C_BUS(qdev_get_child_bus(DEVICE(&ss->i2c[0]), "i2c"));
         if (i2c_bus) {
-            i2c_slave_create_simple(i2c_bus, "tdeck-bq25896", 0x6B);
-            i2c_slave_create_simple(i2c_bus, "tdeck-bq27220", 0x55);
+            I2CSlave *bq25896 = i2c_slave_create_simple(i2c_bus, "tdeck-bq25896", 0x6B);
+            I2CSlave *bq27220 = i2c_slave_create_simple(i2c_bus, "tdeck-bq27220", 0x55);
             I2CSlave *kbd = i2c_slave_create_simple(i2c_bus, "tdeck-tca8418", 0x34);
             I2CSlave *touch = i2c_slave_create_simple(i2c_bus, "tdeck-cst328",  0x1A);
+            i2c_slave_create_simple(i2c_bus, "tdeck-bhi260ap", 0x28);
+            i2c_slave_create_simple(i2c_bus, "tdeck-ltr553", 0x23);
 
             /* Connect TCA8418 INT pin to GPIO15 (keyboard IRQ).
              * The TCA8418 drives INT LOW when events are pending.
@@ -897,6 +912,9 @@ static void esp32s3_machine_init(MachineState *machine)
             ss->epd.kbd = TDECK_TCA8418(kbd);
             ss->epd.touch = TDECK_CST328(touch);
             ss->epd.gpio = &ss->gpio;
+            ss->epd.bq25896 = (TdeckBq25896State *)bq25896;
+            ss->epd.bq27220 = (TdeckBq27220State *)bq27220;
+            ss->epd.modem = ss->modem;
 
             /* Connect serial port 3 as keyboard input channel.
              * Characters received are injected into TCA8418 FIFO.

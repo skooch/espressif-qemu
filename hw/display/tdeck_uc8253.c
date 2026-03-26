@@ -18,6 +18,8 @@
 #include "qemu/module.h"
 #include "hw/irq.h"
 #include "hw/display/tdeck_uc8253.h"
+#include "hw/char/tdeck_modem.h"
+#include "ui/vgafont.h"
 
 #define UC8253_BUSY_POWER_MS   10
 #define UC8253_BUSY_REFRESH_MS 200
@@ -37,6 +39,171 @@ static void tdeck_uc8253_assert_busy(TdeckUc8253State *s, uint32_t delay_ms)
               qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + delay_ms);
 }
 
+#define CONSOLE_WIDTH (UC8253_WIDTH + 240)
+
+/* Panel text rendering using VGA 8x16 font */
+static void panel_putchar(uint32_t *pixels, int stride, int x, int y,
+                            char ch, uint32_t fg, uint32_t bg)
+{
+    const uint8_t *glyph = vgafont16 + (unsigned char)ch * 16;
+    for (int row = 0; row < 16; row++) {
+        uint8_t bits = glyph[row];
+        for (int col = 0; col < 8; col++) {
+            pixels[(y + row) * stride + x + col] =
+                (bits & (0x80 >> col)) ? fg : bg;
+        }
+    }
+}
+
+static void panel_puts(uint32_t *pixels, int stride, int x, int y,
+                         const char *text, uint32_t fg, uint32_t bg)
+{
+    while (*text) {
+        panel_putchar(pixels, stride, x, y, *text, fg, bg);
+        x += 8;
+        text++;
+    }
+}
+
+/* Forward declaration */
+static void tdeck_panel_render(TdeckUc8253State *s);
+
+/* External I2C register accessors from tdeck_i2c_devices.c */
+void tdeck_bq27220_set_reg(TdeckBq27220State *s, uint8_t addr, uint8_t val);
+void tdeck_bq25896_set_reg(TdeckBq25896State *s, uint8_t addr, uint8_t val);
+
+/* Update BQ27220 SOC and voltage registers from panel state */
+static void tdeck_panel_update_battery(TdeckUc8253State *s)
+{
+    if (!s->bq27220) return;
+    uint16_t soc = (uint16_t)s->panel_soc;
+    uint16_t mv = 3300 + (uint16_t)(s->panel_soc * 9);  /* 3300-4200mV range */
+    /* BQ27220 SOC register at 0x1C (16-bit LE) */
+    tdeck_bq27220_set_reg(s->bq27220, 0x1C, soc & 0xFF);
+    tdeck_bq27220_set_reg(s->bq27220, 0x1D, (soc >> 8) & 0xFF);
+    /* BQ27220 Voltage register at 0x08 (16-bit LE) */
+    tdeck_bq27220_set_reg(s->bq27220, 0x08, mv & 0xFF);
+    tdeck_bq27220_set_reg(s->bq27220, 0x09, (mv >> 8) & 0xFF);
+}
+
+/* Update BQ25896 charge status register from panel state */
+static void tdeck_panel_update_charger(TdeckUc8253State *s)
+{
+    if (!s->bq25896) return;
+    /* REG0B[7:5]=VBUS_STAT, [4:3]=CHRG_STAT */
+    static const uint8_t vals[] = {
+        0x00,         /* Off: no input, not charging */
+        0x50,         /* Fast: USB host (010), fast charging (10) */
+        0x58,         /* Done: USB host (010), charge done (11) */
+    };
+    tdeck_bq25896_set_reg(s->bq25896, 0x0B, vals[s->panel_charger % 3]);
+}
+
+/* Handle a mouse click in the control panel area */
+static void tdeck_panel_click(TdeckUc8253State *s, int px, int py)
+{
+    /* Battery [-] button: around (8-32, 48-64) */
+    if (px >= 8 && px <= 32 && py >= 48 && py <= 64) {
+        s->panel_soc -= 5;
+        if (s->panel_soc < 0) s->panel_soc = 0;
+        tdeck_panel_update_battery(s);
+    }
+    /* Battery [+] button: around (40-64, 48-64) */
+    else if (px >= 40 && px <= 64 && py >= 48 && py <= 64) {
+        s->panel_soc += 5;
+        if (s->panel_soc > 100) s->panel_soc = 100;
+        tdeck_panel_update_battery(s);
+    }
+    /* Charger [Toggle]: around (8-80, 92-108) */
+    else if (px >= 8 && px <= 80 && py >= 92 && py <= 108) {
+        s->panel_charger = (s->panel_charger + 1) % 3;
+        tdeck_panel_update_charger(s);
+    }
+    /* [Call] button: around (8-48, 136-152) */
+    else if (px >= 8 && px <= 48 && py >= 136 && py <= 152) {
+        if (s->modem) {
+            tdeck_modem_incoming_call(s->modem);
+        }
+    }
+    /* [SMS] button: around (8-48, 156-172) */
+    else if (px >= 8 && px <= 48 && py >= 156 && py <= 172) {
+        if (s->modem) {
+            tdeck_modem_receive_sms(s->modem);
+        }
+    }
+    /* [Signal] button: around (8-72, 176-192) */
+    else if (px >= 8 && px <= 72 && py >= 176 && py <= 192) {
+        if (s->panel_signal == 20) s->panel_signal = 10;
+        else if (s->panel_signal == 10) s->panel_signal = 0;
+        else s->panel_signal = 20;
+        if (s->modem) {
+            tdeck_modem_set_signal(s->modem, s->panel_signal);
+        }
+    }
+    else {
+        return;  /* no button hit */
+    }
+
+    tdeck_panel_render(s);
+    dpy_gfx_update(s->con, 240, 0, 240, UC8253_HEIGHT);
+}
+
+/* Render control panel on the right 240px */
+static void tdeck_panel_render(TdeckUc8253State *s)
+{
+    DisplaySurface *surface = qemu_console_surface(s->con);
+    if (!surface) {
+        return;
+    }
+
+    uint32_t *pixels = (uint32_t *)surface_data(surface);
+    int stride = CONSOLE_WIDTH;
+    int px = 240;  /* panel x offset */
+
+    uint32_t bg = 0x00E8E8E8;      /* light gray background */
+    uint32_t fg = 0x00000000;      /* black text */
+    uint32_t btn_bg = 0x00D0D0D0;  /* button background */
+
+    /* Fill panel background */
+    for (int row = 0; row < UC8253_HEIGHT; row++) {
+        for (int col = px; col < CONSOLE_WIDTH; col++) {
+            pixels[row * stride + col] = bg;
+        }
+    }
+
+    /* Title */
+    panel_puts(pixels, stride, px + 8, 4, "T-Deck Simulator", fg, bg);
+
+    /* Divider line */
+    for (int col = px; col < CONSOLE_WIDTH; col++) {
+        pixels[22 * stride + col] = fg;
+    }
+
+    /* Battery section */
+    char buf[32];
+    panel_puts(pixels, stride, px + 8, 28, "Battery", fg, bg);
+    snprintf(buf, sizeof(buf), "[-]");
+    panel_puts(pixels, stride, px + 8, 48, buf, fg, btn_bg);
+    snprintf(buf, sizeof(buf), "[+]");
+    panel_puts(pixels, stride, px + 40, 48, buf, fg, btn_bg);
+    snprintf(buf, sizeof(buf), "%d%%", s->panel_soc);
+    panel_puts(pixels, stride, px + 80, 48, buf, fg, bg);
+
+    /* Charger section */
+    panel_puts(pixels, stride, px + 8, 72, "Charger", fg, bg);
+    const char *charger_text[] = {"Off", "Fast", "Done"};
+    snprintf(buf, sizeof(buf), "[Toggle] %s", charger_text[s->panel_charger % 3]);
+    panel_puts(pixels, stride, px + 8, 92, buf, fg, btn_bg);
+
+    /* Cellular section */
+    panel_puts(pixels, stride, px + 8, 116, "Cellular", fg, bg);
+    panel_puts(pixels, stride, px + 8, 136, "[Call]", fg, btn_bg);
+    panel_puts(pixels, stride, px + 8, 156, "[SMS]", fg, btn_bg);
+    panel_puts(pixels, stride, px + 8, 176, "[Signal]", fg, btn_bg);
+    snprintf(buf, sizeof(buf), "CSQ: %d", s->panel_signal);
+    panel_puts(pixels, stride, px + 80, 176, buf, fg, bg);
+}
+
 /* Expand 1bpp framebuffer to 32bpp XRGB on the GraphicConsole surface */
 static void tdeck_uc8253_render(TdeckUc8253State *s)
 {
@@ -46,19 +213,21 @@ static void tdeck_uc8253_render(TdeckUc8253State *s)
     }
 
     uint32_t *pixels = (uint32_t *)surface_data(surface);
-    int idx = 0;
 
     for (int row = 0; row < UC8253_HEIGHT; row++) {
         for (int col_byte = 0; col_byte < UC8253_WIDTH / 8; col_byte++) {
             uint8_t byte = s->current[row * (UC8253_WIDTH / 8) + col_byte];
             /* MSB first within each byte */
             for (int bit = 7; bit >= 0; bit--) {
-                pixels[idx++] = (byte & (1 << bit)) ? 0x00FFFFFF : 0x00000000;
+                int col = col_byte * 8 + (7 - bit);
+                pixels[row * CONSOLE_WIDTH + col] =
+                    (byte & (1 << bit)) ? 0x00FFFFFF : 0x00000000;
             }
         }
     }
 
-    dpy_gfx_update(s->con, 0, 0, UC8253_WIDTH, UC8253_HEIGHT);
+    tdeck_panel_render(s);
+    dpy_gfx_update(s->con, 0, 0, CONSOLE_WIDTH, UC8253_HEIGHT);
 }
 
 /* Handle data bytes for the current command */
@@ -262,6 +431,14 @@ static uint8_t qcode_to_tca8418(int qcode)
     case Q_KEY_CODE_RET: return R2(9);
     /* Row 3: SHF MIC SPACE SYM SHF */
     case Q_KEY_CODE_SPC: return R3(2);
+    /* Modifiers */
+    case Q_KEY_CODE_SHIFT:        return R3(0);  /* Left Shift */
+    case Q_KEY_CODE_SHIFT_R:      return R3(9);  /* Right Shift */
+    case Q_KEY_CODE_TAB:          return R3(8);  /* SYM (symbol layer) */
+    case Q_KEY_CODE_ALT:          return R2(0);  /* ALT (reserved) */
+    /* Special keys */
+    case Q_KEY_CODE_GRAVE_ACCENT: return R2(8);  /* $ key */
+    case Q_KEY_CODE_F1:           return R3(1);  /* MIC key */
     default:
         return 0;
     }
@@ -290,14 +467,14 @@ static void tdeck_input_event(DeviceState *dev, QemuConsole *src,
     }
     case INPUT_EVENT_KIND_ABS: {
         InputMoveEvent *move = evt->u.abs.data;
-        /* Track absolute mouse position (0-32767 range) */
+        /* Track absolute mouse position (0-32767 range), scaled to 480-wide window */
         if (move->axis == INPUT_AXIS_X) {
-            s->mouse_x = move->value * UC8253_WIDTH / INPUT_EVENT_ABS_MAX;
+            s->mouse_x = move->value * CONSOLE_WIDTH / INPUT_EVENT_ABS_MAX;
         } else if (move->axis == INPUT_AXIS_Y) {
             s->mouse_y = move->value * UC8253_HEIGHT / INPUT_EVENT_ABS_MAX;
         }
-        /* Send continuous touch updates while dragging (for swipe gestures) */
-        if (s->mouse_pressed && s->touch) {
+        /* Send continuous touch updates while dragging (EPD area only) */
+        if (s->mouse_pressed && s->touch && s->mouse_x < UC8253_WIDTH) {
             tdeck_cst328_inject_touch(s->touch,
                                       s->mouse_x, s->mouse_y, true);
         }
@@ -305,11 +482,17 @@ static void tdeck_input_event(DeviceState *dev, QemuConsole *src,
     }
     case INPUT_EVENT_KIND_BTN: {
         InputBtnEvent *btn = evt->u.btn.data;
-        if (btn->button == INPUT_BUTTON_LEFT && s->touch) {
-            s->mouse_pressed = btn->down;
-            tdeck_cst328_inject_touch(s->touch,
-                                      s->mouse_x, s->mouse_y,
-                                      btn->down);
+        if (btn->button == INPUT_BUTTON_LEFT) {
+            if (s->mouse_x < UC8253_WIDTH && s->touch) {
+                /* EPD area touch */
+                s->mouse_pressed = btn->down;
+                tdeck_cst328_inject_touch(s->touch,
+                                          s->mouse_x, s->mouse_y,
+                                          btn->down);
+            } else if (s->mouse_x >= UC8253_WIDTH && btn->down) {
+                /* Panel click -- route to control panel handler */
+                tdeck_panel_click(s, s->mouse_x - UC8253_WIDTH, s->mouse_y);
+            }
         }
         break;
     }
@@ -335,7 +518,7 @@ static void tdeck_uc8253_init(Object *obj)
     TdeckUc8253State *s = TDECK_UC8253(obj);
 
     s->con = graphic_console_init(DEVICE(s), 0, &tdeck_uc8253_gfx_ops, s);
-    qemu_console_resize(s->con, UC8253_WIDTH, UC8253_HEIGHT);
+    qemu_console_resize(s->con, CONSOLE_WIDTH, UC8253_HEIGHT);
 
     s->busy_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL,
                                   tdeck_uc8253_busy_cb, s);
@@ -364,6 +547,11 @@ static void tdeck_uc8253_reset_hold(Object *obj, ResetType type)
     s->partial_x_end = 0;
     s->partial_y_start = 0;
     s->partial_y_end = 0;
+
+    /* Control panel defaults */
+    s->panel_soc = 85;
+    s->panel_charger = 0;
+    s->panel_signal = 20;
 
     /* BUSY starts HIGH (ready) */
     qemu_set_irq(s->busy_pin, 1);
