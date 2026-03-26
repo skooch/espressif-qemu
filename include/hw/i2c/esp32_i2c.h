@@ -12,7 +12,10 @@
 
 #define ESP32_I2C_MEM_SIZE 0x100
 #define ESP32_I2C_FIFO_LENGTH 32
-#define ESP32_I2C_CMD_COUNT 16
+/* ESP32 has 16 COMD registers, ESP32-S3 has 8. Use 8 to match the
+ * ESP32-S3 register layout (0x58-0x74). With the unified regs[] array,
+ * iterating beyond 8 would read from unrelated registers (SCL timeout). */
+#define ESP32_I2C_CMD_COUNT 8
 #define ESP32_I2C_REG_COUNT (ESP32_I2C_MEM_SIZE / 4)
 
 
