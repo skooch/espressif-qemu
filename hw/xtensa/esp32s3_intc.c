@@ -105,19 +105,25 @@ static uint64_t esp32s3_intmatrix_read(void* opaque, hwaddr addr, unsigned int s
 {
     Esp32s3IntMatrixState *s = ESP32S3_INTMATRIX(opaque);
 
-    /* Interrupt status registers: return actual pending interrupt state */
-    if (addr >= INTMATRIX_STATUS_REG0 && addr <= INTMATRIX_STATUS_REG3) {
-        int word = (addr - INTMATRIX_STATUS_REG0) / 4;
-        if (word < 4) {
+    /* Interrupt status registers: return actual pending interrupt state.
+     *
+     * Core 0 status at offsets 0x18C-0x198 (4 words).
+     * Core 1 status at offsets 0x98C-0x998 (4 words, 0x800 per CPU).
+     * Both return the same irq_levels[] (shared peripheral state). */
+    {
+        int word = -1;
+        if (addr >= INTMATRIX_STATUS_REG0 && addr <= INTMATRIX_STATUS_REG3) {
+            word = (addr - INTMATRIX_STATUS_REG0) / 4;
+        } else if (addr >= (INTMATRIX_STATUS_REG0 + 0x800) &&
+                   addr <= (INTMATRIX_STATUS_REG3 + 0x800)) {
+            word = (addr - (INTMATRIX_STATUS_REG0 + 0x800)) / 4;
+        }
+        if (word >= 0 && word < 4) {
             uint32_t val = s->irq_levels[word];
-            /* Mask out reserved interrupt sources that have null entries
-             * in the PAC __INTERRUPTS vector table. Without this, the
-             * firmware dispatcher jumps to address 0 and crashes. */
             if (word == 0) val &= ~INTMATRIX_RESERVED_MASK_0;
             if (word == 1) val &= ~INTMATRIX_RESERVED_MASK_1;
             return val;
         }
-        return 0;
     }
 
     /* Mapping registers: return the CPU interrupt number for this source */
