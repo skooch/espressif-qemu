@@ -62,13 +62,8 @@ static uint32_t esp32_i2c_get_status_reg(Esp32I2CState* s)
 
 static void esp32_i2c_update_irq(Esp32I2CState * s)
 {
-    /* Defer the IRQ to break synchronous re-entrancy. Save the computed
-     * state now because the firmware may clear int_raw via polling before
-     * the timer fires. The 1us delay ensures the interrupt fires after
-     * the current CPU instruction completes. */
-    s->pending_irq = !!(s->int_raw_reg & s->int_ena_reg);
-    timer_mod_ns(s->irq_timer,
-                 qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 1000);
+    int irq_state = !!(s->int_raw_reg & s->int_ena_reg);
+    qemu_set_irq(s->irq, irq_state);
 }
 
 static uint64_t esp32_i2c_read(void * opaque, hwaddr addr, unsigned int size)
