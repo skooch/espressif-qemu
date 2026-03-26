@@ -110,7 +110,7 @@ static void tdeck_uc8253_data(TdeckUc8253State *s, const uint8_t *data,
                     (uint16_t)(s->pw_buf[2] << 8) | s->pw_buf[3];
                 s->partial_y_end =
                     (uint16_t)(s->pw_buf[4] << 8) | s->pw_buf[5];
-                qemu_log_mask(LOG_GUEST_ERROR,
+                qemu_log_mask(LOG_TRACE,
                     "UC8253: partial window x=%u-%u y=%u-%u\n",
                     s->partial_x_start, s->partial_x_end,
                     s->partial_y_start, s->partial_y_end);

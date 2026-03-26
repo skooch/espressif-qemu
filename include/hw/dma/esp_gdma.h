@@ -156,6 +156,7 @@ bool esp_gdma_get_channel_periph(ESPGdmaState *s, GdmaPeripheral periph, int dir
                                      uint32_t* chan);
 
 bool esp_gdma_read_channel(ESPGdmaState *s, uint32_t chan, uint8_t* buffer, uint32_t size);
+bool esp_gdma_read_channel_data(ESPGdmaState *s, uint32_t chan, uint8_t *buffer, uint32_t size);
 bool esp_gdma_write_channel(ESPGdmaState *s, uint32_t chan, uint8_t* buffer, uint32_t size);
 
 

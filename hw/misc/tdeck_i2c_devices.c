@@ -281,7 +281,7 @@ static uint8_t ascii_to_tca8418(char c)
     static const char row0[] = "qwertyuiop";
     /* Row 1 */
     static const char row1[] = "asdfghjkl";
-    /* Row 2 (excluding modifiers) */
+    /* Row 2: position 0 is ALT (modifier, skipped by loop starting at i=1) */
     static const char row2[] = " zxcvbnm";
 
     for (int i = 0; i < 10; i++) {

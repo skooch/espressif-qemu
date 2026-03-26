@@ -402,6 +402,57 @@ bool esp_gdma_read_channel(ESPGdmaState *s, uint32_t chan, uint8_t* buffer, uint
 
 
 /**
+ * @brief Read data from the GDMA OUT channel descriptor chain without triggering
+ *        completion interrupts or modifying any GDMA state (link, descriptors, etc.).
+ *
+ *        This is useful for peripheral models (e.g., SPI) that need to peek at
+ *        DMA TX data without causing OUT_DONE/OUT_EOF interrupts that the firmware
+ *        may not be prepared to handle.
+ *
+ * @param s      GDMA state
+ * @param chan    Channel index (from esp_gdma_get_channel_periph)
+ * @param buffer Output buffer
+ * @param size   Number of bytes to read
+ *
+ * @returns true if the data was read successfully, false on error
+ */
+bool esp_gdma_read_channel_data(ESPGdmaState *s, uint32_t chan,
+                                uint8_t *buffer, uint32_t size)
+{
+    DmaConfigState *state = &s->ch_conf[ESP_GDMA_OUT_IDX][chan];
+
+    /* Compute the guest DRAM address of the first descriptor */
+    uint32_t desc_addr = ((ESP_GDMA_RAM_ADDR >> 20) << 20) |
+                         FIELD_EX32(state->link, GDMA_OUT_LINK, ADDR);
+
+    GdmaLinkedList node;
+    uint32_t filled = 0;
+
+    /* Walk the descriptor chain, reading data from each buffer */
+    for (int iter = 0; iter < 256 && filled < size; iter++) {
+        if (!esp_gdma_read_descr(s, desc_addr, &node)) {
+            return false;
+        }
+
+        uint32_t n = MIN(node.config.length, size - filled);
+        if (n > 0 && node.buf_addr != 0) {
+            if (!esp_gdma_read_guest(s, node.buf_addr, buffer + filled, n)) {
+                return false;
+            }
+            filled += n;
+        }
+
+        if (node.config.suc_eof || node.next_addr == 0) {
+            break;
+        }
+        desc_addr = node.next_addr;
+    }
+
+    return true;
+}
+
+
+/**
  * @brief Write data to the guest RAM pointed by the linked list configured in the given DmaConfigState index.
  *        `size` bytes from `buffer` will be written to guest machine's RAM.
  */
