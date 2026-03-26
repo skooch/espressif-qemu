@@ -24,6 +24,19 @@
 #include "hw/sysbus.h"
 #include "hw/irq.h"
 #include "hw/ssi/esp32s3_gpspi.h"
+#include "hw/dma/esp_gdma.h"
+#include "hw/gpio/esp32s3_gpio.h"
+
+/* Prototype for EPD SPI receive - implemented in hw/display/tdeck_uc8253.c */
+void tdeck_uc8253_spi_receive(TdeckUc8253State *s, const uint8_t *data,
+                               uint32_t len, bool dc_level);
+
+/* Weak stub - overridden when EPD model object is linked */
+__attribute__((weak))
+void tdeck_uc8253_spi_receive(TdeckUc8253State *s, const uint8_t *data,
+                               uint32_t len, bool dc_level)
+{
+}
 
 #define ESP32S3_GPSPI(obj) OBJECT_CHECK(Esp32s3GpSpiState, (obj), TYPE_ESP32S3_GPSPI)
 
@@ -98,6 +111,31 @@ static void esp32s3_gpspi_write(void *opaque, hwaddr addr,
          */
         if (value & SPI_CMD_USR_BIT) {
             value &= ~SPI_CMD_USR_BIT;
+
+            /* Pull DMA TX data and route to EPD slave if CS is asserted */
+            if (s->gdma && s->gpio && s->epd) {
+                /* Check if EPD CS (GPIO34) is LOW (asserted) */
+                bool cs_low = !(s->gpio->out[1] & (1 << 2));
+                if (cs_low) {
+                    /* Read transfer size from SPI_MS_DLEN_REG (value is bits-1) */
+                    uint32_t ms_dlen = s->regs[SPI_MS_DLEN_REG / 4];
+                    uint32_t byte_count = (ms_dlen + 1) / 8;
+                    if (byte_count > 0 && byte_count <= 16384) {
+                        uint8_t *buf = g_malloc(byte_count);
+                        uint32_t chan;
+                        if (esp_gdma_get_channel_periph(s->gdma,
+                                (GdmaPeripheral)s->gdma_periph_id,
+                                ESP_GDMA_OUT_IDX, &chan)) {
+                            esp_gdma_read_channel(s->gdma, chan, buf, byte_count);
+                            /* Read DC pin (GPIO35): LOW=command, HIGH=data */
+                            bool dc = (s->gpio->out[1] >> 3) & 1;
+                            tdeck_uc8253_spi_receive(s->epd, buf, byte_count, dc);
+                        }
+                        g_free(buf);
+                    }
+                }
+            }
+
             s->regs[SPI_DMA_INT_RAW_REG / 4] |= SPI_INT_TRANS_DONE;
             esp32s3_gpspi_update_irq(s);
         }

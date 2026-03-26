@@ -901,6 +901,10 @@ static void esp32s3_machine_init(MachineState *machine)
             sysbus_connect_irq(SYS_BUS_DEVICE(&ss->gpspi[i]), 0,
                                qdev_get_gpio_in(intmatrix_dev, ETS_SPI2_INTR_SOURCE + i));
         }
+        /* Connect SPI2 to GDMA and GPIO for EPD data routing */
+        ss->gpspi[0].gdma = ESP_GDMA(&ss->gdma);
+        ss->gpspi[0].gpio = &ss->gpio;
+        ss->gpspi[0].gdma_periph_id = 0;  /* GDMA_SPI2 */
     }
 
     {
