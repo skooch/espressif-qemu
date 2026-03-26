@@ -306,7 +306,7 @@ static uint8_t ascii_to_tca8418(char c)
 /*
  * Inject an ASCII character as a press+release pair.
  */
-static void __attribute__((unused)) tdeck_tca8418_inject_char(TdeckTca8418State *s, char c)
+void tdeck_tca8418_inject_char(TdeckTca8418State *s, char c)
 {
     uint8_t code = ascii_to_tca8418(c);
     if (code == 0) return;

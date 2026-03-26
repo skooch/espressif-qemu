@@ -50,7 +50,13 @@
 #include "hw/char/esp32s3_uart.h"
 #include "hw/misc/esp32s3_rng.h"
 
+#include "chardev/char-fe.h"
 #include "hw/nvram/esp32s3_efuse.h"
+
+/* Forward declarations for T-Deck I2C device types */
+typedef struct TdeckTca8418State TdeckTca8418State;
+#define TDECK_TCA8418(obj) ((TdeckTca8418State *)(obj))
+void tdeck_tca8418_inject_char(TdeckTca8418State *s, char c);
 #include "hw/xtensa/esp32s3_clk.h"
 #include "hw/dma/esp32s3_gdma.h"
 #include "hw/misc/esp32s3_sha.h"
@@ -161,6 +167,10 @@ typedef struct Esp32s3SocState {
     SsiPsramState *psram;
 
     uint32_t requested_reset;
+
+    /* Keyboard input chardev (serial port 3 -> TCA8418 FIFO) */
+    TdeckTca8418State *kbd_dev;
+    CharBackend kbd_chr;
 } Esp32s3SocState;
 
 
@@ -644,6 +654,21 @@ static void esp32s3_soc_add_unimp_device(MemoryRegion *dest, const char* name, h
     g_free(name_apb);
 }
 
+/* Keyboard chardev callbacks: characters from serial3 -> TCA8418 FIFO */
+static int esp32s3_kbd_can_receive(void *opaque)
+{
+    return 16; /* accept up to 16 bytes at a time */
+}
+
+static void esp32s3_kbd_receive(void *opaque, const uint8_t *buf, int size)
+{
+    Esp32s3SocState *s = (Esp32s3SocState *)opaque;
+    if (!s->kbd_dev) return;
+    for (int i = 0; i < size; i++) {
+        tdeck_tca8418_inject_char(s->kbd_dev, (char)buf[i]);
+    }
+}
+
 static void esp32s3_machine_init(MachineState *machine)
 {
     DriveInfo *dinfo = drive_get(IF_MTD, 0, 0);
@@ -850,6 +875,19 @@ static void esp32s3_machine_init(MachineState *machine)
                 qemu_allocate_irq(
                     (void (*)(void *, int, int))esp32s3_gpio_set_input,
                     &ss->gpio, 15));
+
+            /* Connect serial port 3 as keyboard input channel.
+             * Characters received are injected into TCA8418 FIFO.
+             * Usage: add -serial tcp::4444,server,nowait
+             * Then: echo -n "hello" | nc localhost 4444 */
+            Chardev *kbd_chr = serial_hd(3);
+            if (kbd_chr) {
+                ss->kbd_dev = TDECK_TCA8418(kbd);
+                qemu_chr_fe_init(&ss->kbd_chr, kbd_chr, NULL);
+                qemu_chr_fe_set_handlers(&ss->kbd_chr,
+                    esp32s3_kbd_can_receive, esp32s3_kbd_receive,
+                    NULL, NULL, ss, NULL, true);
+            }
         }
     }
 
