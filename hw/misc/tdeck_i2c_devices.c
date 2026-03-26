@@ -249,7 +249,7 @@ static void tdeck_tca8418_update_int(TdeckTca8418State *s)
  * raw_code: TCA8418 key code (row*10 + col + 1)
  * pressed: true for press, false for release
  */
-static void tdeck_tca8418_inject_key(TdeckTca8418State *s, uint8_t raw_code, bool pressed)
+void tdeck_tca8418_inject_key(TdeckTca8418State *s, uint8_t raw_code, bool pressed)
 {
     if (s->fifo_count >= TCA8418_FIFO_SIZE) {
         return; /* FIFO full, drop event */
@@ -423,7 +423,24 @@ struct TdeckCst328State {
     uint8_t finger_state;  /* 6 = pressed, 0 = released */
     uint16_t x;
     uint16_t y;
+    /* INT pin (active LOW when touch data available) */
+    qemu_irq int_pin;
 };
+
+/*
+ * Inject a touch event. The CST328 fires INT LOW when touched and
+ * keeps it LOW for repeated IRQ cycles until the firmware ACKs.
+ * On release, finger_state goes to 0 and INT goes HIGH.
+ */
+void tdeck_cst328_inject_touch(TdeckCst328State *s,
+                                uint16_t x, uint16_t y, bool pressed)
+{
+    s->x = x;
+    s->y = y;
+    s->finger_state = pressed ? 6 : 0;
+    /* INT is active LOW when touch data is available */
+    qemu_set_irq(s->int_pin, pressed ? 0 : 1);
+}
 
 static void tdeck_cst328_reset(DeviceState *dev)
 {
@@ -480,11 +497,18 @@ static int tdeck_cst328_send(I2CSlave *i2c, uint8_t data)
     return 0;
 }
 
+static void tdeck_cst328_realize(DeviceState *dev, Error **errp)
+{
+    TdeckCst328State *s = TDECK_CST328(dev);
+    qdev_init_gpio_out_named(dev, &s->int_pin, "int", 1);
+}
+
 static void tdeck_cst328_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     I2CSlaveClass *sc = I2C_SLAVE_CLASS(klass);
     dc->legacy_reset = tdeck_cst328_reset;
+    dc->realize = tdeck_cst328_realize;
     sc->event = tdeck_cst328_event;
     sc->recv = tdeck_cst328_recv;
     sc->send = tdeck_cst328_send;

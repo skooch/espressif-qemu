@@ -13,6 +13,7 @@
 #include "hw/qdev-core.h"
 #include "ui/console.h"
 #include "qemu/timer.h"
+#include "ui/input.h"
 
 #define TYPE_TDECK_UC8253 "tdeck-uc8253"
 #define TDECK_UC8253(obj) OBJECT_CHECK(TdeckUc8253State, (obj), TYPE_TDECK_UC8253)
@@ -31,6 +32,11 @@
 #define UC8253_CMD_PARTIAL_WIN  0x90  /* Partial Window (7 bytes data) */
 #define UC8253_CMD_PARTIAL_IN   0x91
 #define UC8253_CMD_PARTIAL_OUT  0x92
+
+/* Forward declarations for input device types */
+typedef struct TdeckTca8418State TdeckTca8418State;
+typedef struct TdeckCst328State TdeckCst328State;
+typedef struct ESP32S3GPIOState ESP32S3GPIOState;
 
 typedef struct TdeckUc8253State {
     DeviceState parent_obj;
@@ -59,6 +65,17 @@ typedef struct TdeckUc8253State {
     /* BUSY pin callback */
     qemu_irq busy_pin;
     QEMUTimer *busy_timer;
+
+    /* Input device references (set by machine init) */
+    TdeckTca8418State *kbd;
+    TdeckCst328State *touch;
+    ESP32S3GPIOState *gpio;    /* for touch IRQ on GPIO12 */
+
+    /* QEMU input handler state */
+    QemuInputHandlerState *input_handler;
+    uint32_t mouse_x;
+    uint32_t mouse_y;
+    bool mouse_pressed;
 } TdeckUc8253State;
 
 /* Called by GP-SPI model to deliver SPI bytes */

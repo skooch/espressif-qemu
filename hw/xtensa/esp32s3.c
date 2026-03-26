@@ -55,7 +55,9 @@
 
 /* Forward declarations for T-Deck I2C device types */
 typedef struct TdeckTca8418State TdeckTca8418State;
+typedef struct TdeckCst328State TdeckCst328State;
 #define TDECK_TCA8418(obj) ((TdeckTca8418State *)(obj))
+#define TDECK_CST328(obj)  ((TdeckCst328State *)(obj))
 void tdeck_tca8418_inject_char(TdeckTca8418State *s, char c);
 #include "hw/xtensa/esp32s3_clk.h"
 #include "hw/dma/esp32s3_gdma.h"
@@ -869,7 +871,7 @@ static void esp32s3_machine_init(MachineState *machine)
             i2c_slave_create_simple(i2c_bus, "tdeck-bq25896", 0x6B);
             i2c_slave_create_simple(i2c_bus, "tdeck-bq27220", 0x55);
             I2CSlave *kbd = i2c_slave_create_simple(i2c_bus, "tdeck-tca8418", 0x34);
-            i2c_slave_create_simple(i2c_bus, "tdeck-cst328",  0x1A);
+            I2CSlave *touch = i2c_slave_create_simple(i2c_bus, "tdeck-cst328",  0x1A);
 
             /* Connect TCA8418 INT pin to GPIO15 (keyboard IRQ).
              * The TCA8418 drives INT LOW when events are pending.
@@ -878,6 +880,20 @@ static void esp32s3_machine_init(MachineState *machine)
                 qemu_allocate_irq(
                     (void (*)(void *, int, int))esp32s3_gpio_set_input,
                     &ss->gpio, 15));
+
+            /* Connect CST328 INT pin to GPIO12 (touch IRQ).
+             * The CST328 drives INT LOW when touch data is available. */
+            qdev_connect_gpio_out_named(DEVICE(touch), "int", 0,
+                qemu_allocate_irq(
+                    (void (*)(void *, int, int))esp32s3_gpio_set_input,
+                    &ss->gpio, 12));
+
+            /* Set input device references on the EPD model so its
+             * QEMU window input handler can route keyboard/mouse
+             * events to the TCA8418 and CST328 models. */
+            ss->epd.kbd = TDECK_TCA8418(kbd);
+            ss->epd.touch = TDECK_CST328(touch);
+            ss->epd.gpio = &ss->gpio;
 
             /* Connect serial port 3 as keyboard input channel.
              * Characters received are injected into TCA8418 FIFO.

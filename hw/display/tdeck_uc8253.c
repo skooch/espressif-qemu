@@ -188,6 +188,117 @@ static const GraphicHwOps tdeck_uc8253_gfx_ops = {
     .gfx_update = tdeck_uc8253_gfx_update,
 };
 
+/* ======================================================================= */
+/* QEMU window input → T-Deck keyboard and touch                           */
+/* ======================================================================= */
+
+/* External injection APIs from tdeck_i2c_devices.c */
+void tdeck_tca8418_inject_key(TdeckTca8418State *s,
+                               uint8_t raw_code, bool pressed);
+void tdeck_cst328_inject_touch(TdeckCst328State *s,
+                                uint16_t x, uint16_t y, bool pressed);
+
+/*
+ * Map QEMU Q_KEY_CODE to TCA8418 raw key code.
+ * Returns 0 for unmapped keys.
+ *
+ * The T-Deck has a 4x10 matrix with reversed columns:
+ *   raw_code = row*10 + (9-col) + 1
+ *
+ * Row 0: q w e r t y u i o p
+ * Row 1: a s d f g h j k l BSP
+ * Row 2: ALT z x c v b n m $ ENT
+ * Row 3: SHF MIC SPACE...    SYM SHF
+ */
+static uint8_t qcode_to_tca8418(int qcode)
+{
+    /* Letters: Q_KEY_CODE_A through Q_KEY_CODE_Z */
+    static const char layout_row0[] = "qwertyuiop";
+    static const char layout_row1[] = "asdfghjkl";
+    static const char layout_row2[] = "\0zxcvbnm";  /* pos 0 = ALT (skip) */
+
+    /* Map Q_KEY_CODE to ASCII letter */
+    char ch = 0;
+    if (qcode >= Q_KEY_CODE_A && qcode <= Q_KEY_CODE_Z) {
+        ch = 'a' + (qcode - Q_KEY_CODE_A);
+    }
+
+    if (ch) {
+        for (int i = 0; i < 10; i++) {
+            if (layout_row0[i] == ch) return (0 * 10) + (9 - i) + 1;
+        }
+        for (int i = 0; i < 9; i++) {
+            if (layout_row1[i] == ch) return (1 * 10) + (9 - i) + 1;
+        }
+        for (int i = 1; i < 8; i++) {
+            if (layout_row2[i] == ch) return (2 * 10) + (9 - i) + 1;
+        }
+    }
+
+    /* Special keys */
+    switch (qcode) {
+    case Q_KEY_CODE_SPC:       return (3 * 10) + (9 - 2) + 1; /* SPACE */
+    case Q_KEY_CODE_RET:       return (2 * 10) + (9 - 9) + 1; /* ENTER */
+    case Q_KEY_CODE_BACKSPACE: return (1 * 10) + (9 - 9) + 1; /* BSP */
+    default:
+        return 0; /* unmapped */
+    }
+}
+
+static void tdeck_input_event(DeviceState *dev, QemuConsole *src,
+                               InputEvent *evt)
+{
+    TdeckUc8253State *s = TDECK_UC8253(dev);
+
+    switch (evt->type) {
+    case INPUT_EVENT_KIND_KEY: {
+        InputKeyEvent *key = evt->u.key.data;
+        if (s->kbd) {
+            int qcode = qemu_input_key_value_to_qcode(key->key);
+            uint8_t raw = qcode_to_tca8418(qcode);
+            if (raw != 0) {
+                tdeck_tca8418_inject_key(s->kbd, raw, key->down);
+            }
+        }
+        break;
+    }
+    case INPUT_EVENT_KIND_ABS: {
+        InputMoveEvent *move = evt->u.abs.data;
+        /* Track absolute mouse position (0-32767 range) */
+        if (move->axis == INPUT_AXIS_X) {
+            s->mouse_x = move->value * UC8253_WIDTH / INPUT_EVENT_ABS_MAX;
+        } else if (move->axis == INPUT_AXIS_Y) {
+            s->mouse_y = move->value * UC8253_HEIGHT / INPUT_EVENT_ABS_MAX;
+        }
+        break;
+    }
+    case INPUT_EVENT_KIND_BTN: {
+        InputBtnEvent *btn = evt->u.btn.data;
+        if (btn->button == INPUT_BUTTON_LEFT && s->touch) {
+            s->mouse_pressed = btn->down;
+            tdeck_cst328_inject_touch(s->touch,
+                                      s->mouse_x, s->mouse_y,
+                                      btn->down);
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+static void tdeck_input_sync(DeviceState *dev)
+{
+    /* No batching needed -- events are processed immediately */
+}
+
+static const QemuInputHandler tdeck_input_handler = {
+    .name  = "T-Deck Pro",
+    .mask  = INPUT_EVENT_MASK_KEY | INPUT_EVENT_MASK_BTN | INPUT_EVENT_MASK_ABS,
+    .event = tdeck_input_event,
+    .sync  = tdeck_input_sync,
+};
+
 static void tdeck_uc8253_init(Object *obj)
 {
     TdeckUc8253State *s = TDECK_UC8253(obj);
@@ -199,6 +310,11 @@ static void tdeck_uc8253_init(Object *obj)
                                   tdeck_uc8253_busy_cb, s);
 
     qdev_init_gpio_out_named(DEVICE(s), &s->busy_pin, "busy", 1);
+
+    /* Register input handler for keyboard and mouse from the QEMU window */
+    s->input_handler = qemu_input_handler_register(DEVICE(s),
+                                                    &tdeck_input_handler);
+    qemu_input_handler_activate(s->input_handler);
 }
 
 static void tdeck_uc8253_reset_hold(Object *obj, ResetType type)
