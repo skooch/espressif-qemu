@@ -26,10 +26,19 @@
 #include "hw/ssi/esp32s3_gpspi.h"
 #include "hw/dma/esp_gdma.h"
 #include "hw/gpio/esp32s3_gpio.h"
+#include "sysemu/dma.h"
+
+/* GDMA descriptor format (matches hardware linked list node) */
+typedef struct {
+    uint32_t config_word;  /* size:12, length:12, rsvd:4, err_eof:1, rsvd:1, suc_eof:1, owner:1 */
+    uint32_t buf_addr;
+    uint32_t next_addr;
+} GpSpiDmaDesc;
 
 /* Prototype for EPD SPI receive - implemented in hw/display/tdeck_uc8253.c */
 void tdeck_uc8253_spi_receive(TdeckUc8253State *s, const uint8_t *data,
                                uint32_t len, bool dc_level);
+
 
 /* Weak stub - overridden when EPD model object is linked */
 __attribute__((weak))
@@ -81,7 +90,19 @@ static void esp32s3_gpspi_update_irq(Esp32s3GpSpiState *s)
     uint32_t ena = s->regs[SPI_DMA_INT_ENA_REG / 4];
     uint32_t st = raw & ena;
     s->regs[SPI_DMA_INT_ST_REG / 4] = st;
-    qemu_set_irq(s->irq, st != 0);
+    /*
+     * Do NOT fire the SPI interrupt. The firmware's async SPI path polls
+     * DMA_INT_RAW directly (not masked) to check completion. Firing the
+     * interrupt causes an InstrProhibited crash because the __INTERRUPTS
+     * vector table is in flash-cached IRAM and runtime handler overwrites
+     * (via bind_handler/write_volatile) do not take effect in QEMU.
+     *
+     * The firmware recovers from the missing IRQ because:
+     * - wait_for_idle_async() checks is_done() first (polls USR bit)
+     * - interrupts() reads DMA_INT_RAW (not masked INT_ST)
+     * - Both return immediately since our model clears USR and sets
+     *   TRANS_DONE synchronously
+     */
 }
 
 static uint64_t esp32s3_gpspi_read(void *opaque, hwaddr addr, unsigned int size)
@@ -112,26 +133,68 @@ static void esp32s3_gpspi_write(void *opaque, hwaddr addr,
         if (value & SPI_CMD_USR_BIT) {
             value &= ~SPI_CMD_USR_BIT;
 
-            /* Pull DMA TX data and route to EPD slave if CS is asserted */
+            /* Pull DMA TX data and route to EPD slave if CS is asserted.
+             *
+             * We read the GDMA descriptor chain directly (without calling
+             * esp_gdma_read_channel) to avoid triggering DMA completion
+             * interrupts that would crash the firmware with unhandled
+             * interrupt exceptions. */
             if (s->gdma && s->gpio && s->epd) {
                 /* Check if EPD CS (GPIO34) is LOW (asserted) */
                 bool cs_low = !(s->gpio->out[1] & (1 << 2));
                 if (cs_low) {
-                    /* Read transfer size from SPI_MS_DLEN_REG (value is bits-1) */
                     uint32_t ms_dlen = s->regs[SPI_MS_DLEN_REG / 4];
                     uint32_t byte_count = (ms_dlen + 1) / 8;
                     if (byte_count > 0 && byte_count <= 16384) {
-                        uint8_t *buf = g_malloc(byte_count);
                         uint32_t chan;
                         if (esp_gdma_get_channel_periph(s->gdma,
                                 (GdmaPeripheral)s->gdma_periph_id,
                                 ESP_GDMA_OUT_IDX, &chan)) {
-                            esp_gdma_read_channel(s->gdma, chan, buf, byte_count);
                             /* Read DC pin (GPIO35): LOW=command, HIGH=data */
                             bool dc = (s->gpio->out[1] >> 3) & 1;
-                            tdeck_uc8253_spi_receive(s->epd, buf, byte_count, dc);
+                            /* Read DMA TX data by walking the descriptor chain
+                             * directly from guest memory. We avoid calling
+                             * esp_gdma_read_channel because it fires DMA
+                             * completion interrupts (OUT_DONE/OUT_EOF) that
+                             * crash the firmware — the __INTERRUPTS vector
+                             * table is in flash-cached memory and runtime
+                             * handler overwrites do not take effect in QEMU. */
+                            DmaConfigState *dma_st =
+                                &s->gdma->ch_conf[ESP_GDMA_OUT_IDX][chan];
+                            uint32_t desc_phys =
+                                ((ESP_GDMA_RAM_ADDR >> 20) << 20) |
+                                FIELD_EX32(dma_st->link, GDMA_OUT_LINK, ADDR);
+                            uint8_t *buf = g_malloc(byte_count);
+                            uint32_t filled = 0;
+                            for (int iter = 0; iter < 64 && filled < byte_count; iter++) {
+                                GpSpiDmaDesc node;
+                                if (dma_memory_read(&s->gdma->dma_as, desc_phys,
+                                                     &node, sizeof(node),
+                                                     MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
+                                    break;
+                                }
+                                /* length is bits [23:12] of config_word */
+                                uint32_t length = (node.config_word >> 12) & 0xFFF;
+                                uint32_t n = MIN(length, byte_count - filled);
+                                if (n > 0 && node.buf_addr != 0) {
+                                    dma_memory_read(&s->gdma->dma_as,
+                                                     node.buf_addr,
+                                                     buf + filled, n,
+                                                     MEMTXATTRS_UNSPECIFIED);
+                                    filled += n;
+                                }
+                                /* suc_eof is bit 30 */
+                                bool suc_eof = (node.config_word >> 30) & 1;
+                                if (suc_eof || node.next_addr == 0) {
+                                    break;
+                                }
+                                desc_phys = node.next_addr;
+                            }
+                            if (filled > 0) {
+                                tdeck_uc8253_spi_receive(s->epd, buf, filled, dc);
+                            }
+                            g_free(buf);
                         }
-                        g_free(buf);
                     }
                 }
             }
