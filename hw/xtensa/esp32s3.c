@@ -77,6 +77,7 @@ void tdeck_tca8418_inject_char(TdeckTca8418State *s, char c);
 
 #include "hw/misc/esp32c3_jtag.h"
 #include "hw/display/esp_rgb.h"
+#include "hw/display/tdeck_uc8253.h"
 
 #define TYPE_ESP32S3_SOC "xtensa.esp32s3"
 #define ESP32S3_SOC(obj) OBJECT_CHECK(Esp32s3SocState, (obj), TYPE_ESP32S3_SOC)
@@ -160,6 +161,7 @@ typedef struct Esp32s3SocState {
     Esp32I2CState i2c[ESP32S3_I2C_COUNT];
     Esp32s3GpSpiState gpspi[2];  /* SPI2 and SPI3 */
     ESPRgbState rgb;
+    TdeckUc8253State epd;
 
     MemoryRegion iomem;
     DWCSDMMCState sdmmc;
@@ -605,6 +607,7 @@ static void esp32s3_soc_init(Object *obj)
     object_initialize_child(obj, "twai", &s->twai, TYPE_ESP32S3_TWAI);
 
     object_initialize_child(obj, "sdmmc", &s->sdmmc, TYPE_DWC_SDMMC);
+    object_initialize_child(obj, "epd", &s->epd, TYPE_TDECK_UC8253);
 }
 
 static Property esp32s3_soc_properties[] = {
@@ -905,6 +908,20 @@ static void esp32s3_machine_init(MachineState *machine)
         ss->gpspi[0].gdma = ESP_GDMA(&ss->gdma);
         ss->gpspi[0].gpio = &ss->gpio;
         ss->gpspi[0].gdma_periph_id = 0;  /* GDMA_SPI2 */
+    }
+
+    /* UC8253 EPD display model */
+    {
+        qdev_realize(DEVICE(&ss->epd), NULL, &error_fatal);
+
+        /* Connect EPD BUSY pin to GPIO37 */
+        qdev_connect_gpio_out_named(DEVICE(&ss->epd), "busy", 0,
+            qemu_allocate_irq(
+                (void (*)(void *, int, int))esp32s3_gpio_set_input,
+                &ss->gpio, 37));
+
+        /* Connect SPI2 to EPD for data routing */
+        ss->gpspi[0].epd = &ss->epd;
     }
 
     {
