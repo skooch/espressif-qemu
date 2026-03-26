@@ -270,6 +270,11 @@ static void tdeck_input_event(DeviceState *dev, QemuConsole *src,
         } else if (move->axis == INPUT_AXIS_Y) {
             s->mouse_y = move->value * UC8253_HEIGHT / INPUT_EVENT_ABS_MAX;
         }
+        /* Send continuous touch updates while dragging (for swipe gestures) */
+        if (s->mouse_pressed && s->touch) {
+            tdeck_cst328_inject_touch(s->touch,
+                                      s->mouse_x, s->mouse_y, true);
+        }
         break;
     }
     case INPUT_EVENT_KIND_BTN: {
