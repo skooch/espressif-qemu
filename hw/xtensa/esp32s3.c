@@ -880,13 +880,16 @@ static void esp32s3_machine_init(MachineState *machine)
                 qemu_allocate_irq(
                     (void (*)(void *, int, int))esp32s3_gpio_set_input,
                     &ss->gpio, 15));
+            esp32s3_gpio_set_input(&ss->gpio, 15, true);
 
             /* Connect CST328 INT pin to GPIO12 (touch IRQ).
-             * The CST328 drives INT LOW when touch data is available. */
+             * The CST328 drives INT LOW when touch data is available.
+             * Initialize GPIO12 HIGH (idle) so falling edges are detected. */
             qdev_connect_gpio_out_named(DEVICE(touch), "int", 0,
                 qemu_allocate_irq(
                     (void (*)(void *, int, int))esp32s3_gpio_set_input,
                     &ss->gpio, 12));
+            esp32s3_gpio_set_input(&ss->gpio, 12, true);
 
             /* Set input device references on the EPD model so its
              * QEMU window input handler can route keyboard/mouse
