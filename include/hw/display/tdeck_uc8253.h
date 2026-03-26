@@ -37,6 +37,9 @@
 typedef struct TdeckTca8418State TdeckTca8418State;
 typedef struct TdeckCst328State TdeckCst328State;
 typedef struct ESP32S3GPIOState ESP32S3GPIOState;
+typedef struct TdeckModemChardev TdeckModemChardev;
+typedef struct TdeckBq27220State TdeckBq27220State;
+typedef struct TdeckBq25896State TdeckBq25896State;
 
 typedef struct TdeckUc8253State {
     DeviceState parent_obj;
@@ -76,6 +79,16 @@ typedef struct TdeckUc8253State {
     uint32_t mouse_x;
     uint32_t mouse_y;
     bool mouse_pressed;
+
+    /* Control panel state */
+    int panel_soc;            /* battery SOC 0-100, default 85 */
+    int panel_charger;        /* 0=off, 1=fast, 2=done */
+    int panel_signal;         /* CSQ value: 0, 10, or 20 */
+
+    /* Peripheral references (for Task 5 wiring) */
+    TdeckModemChardev *modem;
+    TdeckBq27220State *bq27220;
+    TdeckBq25896State *bq25896;
 } TdeckUc8253State;
 
 /* Called by GP-SPI model to deliver SPI bytes */
