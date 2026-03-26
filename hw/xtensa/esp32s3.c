@@ -834,6 +834,15 @@ static void esp32s3_machine_init(MachineState *machine)
             sysbus_connect_irq(SYS_BUS_DEVICE(&ss->i2c[i]), 0,
                                qdev_get_gpio_in(intmatrix_dev, ETS_I2C_EXT0_INTR_SOURCE + i));
         }
+
+        /* Add T-Deck I2C slave devices to I2C0 bus */
+        I2CBus *i2c_bus = I2C_BUS(qdev_get_child_bus(DEVICE(&ss->i2c[0]), "i2c"));
+        if (i2c_bus) {
+            i2c_slave_create_simple(i2c_bus, "tdeck-bq25896", 0x6B);
+            i2c_slave_create_simple(i2c_bus, "tdeck-bq27220", 0x55);
+            i2c_slave_create_simple(i2c_bus, "tdeck-tca8418", 0x34);
+            i2c_slave_create_simple(i2c_bus, "tdeck-cst328",  0x1A);
+        }
     }
 
     /* GP-SPI (SPI2/SPI3) realization */
