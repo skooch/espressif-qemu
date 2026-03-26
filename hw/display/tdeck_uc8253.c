@@ -212,37 +212,63 @@ void tdeck_cst328_inject_touch(TdeckCst328State *s,
  */
 static uint8_t qcode_to_tca8418(int qcode)
 {
-    /* Letters: Q_KEY_CODE_A through Q_KEY_CODE_Z */
-    static const char layout_row0[] = "qwertyuiop";
-    static const char layout_row1[] = "asdfghjkl";
-    static const char layout_row2[] = "\0zxcvbnm";  /* pos 0 = ALT (skip) */
+    /*
+     * Map QEMU Q_KEY_CODE to TCA8418 raw key code.
+     * Q_KEY_CODEs follow QWERTY layout order (not alphabetical!).
+     * TCA8418 raw code = row*10 + (9-col) + 1 (reversed columns).
+     *
+     * T-Deck layout:
+     *   Row 0: q w e r t y u i o p
+     *   Row 1: a s d f g h j k l BSP
+     *   Row 2: ALT z x c v b n m $ ENT
+     *   Row 3: SHF MIC SPACE...    SYM SHF
+     */
+#define R0(col) ((0 * 10) + (9 - (col)) + 1)
+#define R1(col) ((1 * 10) + (9 - (col)) + 1)
+#define R2(col) ((2 * 10) + (9 - (col)) + 1)
+#define R3(col) ((3 * 10) + (9 - (col)) + 1)
 
-    /* Map Q_KEY_CODE to ASCII letter */
-    char ch = 0;
-    if (qcode >= Q_KEY_CODE_A && qcode <= Q_KEY_CODE_Z) {
-        ch = 'a' + (qcode - Q_KEY_CODE_A);
-    }
-
-    if (ch) {
-        for (int i = 0; i < 10; i++) {
-            if (layout_row0[i] == ch) return (0 * 10) + (9 - i) + 1;
-        }
-        for (int i = 0; i < 9; i++) {
-            if (layout_row1[i] == ch) return (1 * 10) + (9 - i) + 1;
-        }
-        for (int i = 1; i < 8; i++) {
-            if (layout_row2[i] == ch) return (2 * 10) + (9 - i) + 1;
-        }
-    }
-
-    /* Special keys */
     switch (qcode) {
-    case Q_KEY_CODE_SPC:       return (3 * 10) + (9 - 2) + 1; /* SPACE */
-    case Q_KEY_CODE_RET:       return (2 * 10) + (9 - 9) + 1; /* ENTER */
-    case Q_KEY_CODE_BACKSPACE: return (1 * 10) + (9 - 9) + 1; /* BSP */
+    /* Row 0: q w e r t y u i o p */
+    case Q_KEY_CODE_Q: return R0(0);
+    case Q_KEY_CODE_W: return R0(1);
+    case Q_KEY_CODE_E: return R0(2);
+    case Q_KEY_CODE_R: return R0(3);
+    case Q_KEY_CODE_T: return R0(4);
+    case Q_KEY_CODE_Y: return R0(5);
+    case Q_KEY_CODE_U: return R0(6);
+    case Q_KEY_CODE_I: return R0(7);
+    case Q_KEY_CODE_O: return R0(8);
+    case Q_KEY_CODE_P: return R0(9);
+    /* Row 1: a s d f g h j k l BSP */
+    case Q_KEY_CODE_A: return R1(0);
+    case Q_KEY_CODE_S: return R1(1);
+    case Q_KEY_CODE_D: return R1(2);
+    case Q_KEY_CODE_F: return R1(3);
+    case Q_KEY_CODE_G: return R1(4);
+    case Q_KEY_CODE_H: return R1(5);
+    case Q_KEY_CODE_J: return R1(6);
+    case Q_KEY_CODE_K: return R1(7);
+    case Q_KEY_CODE_L: return R1(8);
+    case Q_KEY_CODE_BACKSPACE: return R1(9);
+    /* Row 2: ALT z x c v b n m $ ENT */
+    case Q_KEY_CODE_Z: return R2(1);
+    case Q_KEY_CODE_X: return R2(2);
+    case Q_KEY_CODE_C: return R2(3);
+    case Q_KEY_CODE_V: return R2(4);
+    case Q_KEY_CODE_B: return R2(5);
+    case Q_KEY_CODE_N: return R2(6);
+    case Q_KEY_CODE_M: return R2(7);
+    case Q_KEY_CODE_RET: return R2(9);
+    /* Row 3: SHF MIC SPACE SYM SHF */
+    case Q_KEY_CODE_SPC: return R3(2);
     default:
-        return 0; /* unmapped */
+        return 0;
     }
+#undef R0
+#undef R1
+#undef R2
+#undef R3
 }
 
 static void tdeck_input_event(DeviceState *dev, QemuConsole *src,
