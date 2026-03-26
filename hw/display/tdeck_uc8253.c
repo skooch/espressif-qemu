@@ -262,6 +262,14 @@ static uint8_t qcode_to_tca8418(int qcode)
     case Q_KEY_CODE_RET: return R2(9);
     /* Row 3: SHF MIC SPACE SYM SHF */
     case Q_KEY_CODE_SPC: return R3(2);
+    /* Modifiers */
+    case Q_KEY_CODE_SHIFT:        return R3(0);  /* Left Shift */
+    case Q_KEY_CODE_SHIFT_R:      return R3(9);  /* Right Shift */
+    case Q_KEY_CODE_TAB:          return R3(8);  /* SYM (symbol layer) */
+    case Q_KEY_CODE_ALT:          return R2(0);  /* ALT (reserved) */
+    /* Special keys */
+    case Q_KEY_CODE_GRAVE_ACCENT: return R2(8);  /* $ key */
+    case Q_KEY_CODE_F1:           return R3(1);  /* MIC key */
     default:
         return 0;
     }
