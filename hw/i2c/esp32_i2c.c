@@ -51,7 +51,15 @@ static uint32_t esp32_i2c_get_status_reg(Esp32I2CState* s)
 
 static void esp32_i2c_update_irq(Esp32I2CState * s)
 {
-    int irq_state = !!(s->int_raw_reg & s->int_ena_reg);
+    /* Do not fire I2C interrupt. The firmware's async I2C driver polls
+     * INT_RAW directly for completion checking. Firing the IRQ causes
+     * an interrupt storm because transactions complete synchronously
+     * in QEMU (instant I2C), creating re-entrant interrupt loops that
+     * overflow the stack or starve other tasks.
+     *
+     * The firmware recovers because its I2C future checks int_raw on
+     * each poll and finds TRANS_COMPLETE/END_DETECT already set. */
+    int irq_state = 0;  /* force IRQ OFF */
     qemu_set_irq(s->irq, irq_state);
 }
 

@@ -90,19 +90,7 @@ static void esp32s3_gpspi_update_irq(Esp32s3GpSpiState *s)
     uint32_t ena = s->regs[SPI_DMA_INT_ENA_REG / 4];
     uint32_t st = raw & ena;
     s->regs[SPI_DMA_INT_ST_REG / 4] = st;
-    /*
-     * Do NOT fire the SPI interrupt. The firmware's async SPI path polls
-     * DMA_INT_RAW directly (not masked) to check completion. Firing the
-     * interrupt causes an InstrProhibited crash because the __INTERRUPTS
-     * vector table is in flash-cached IRAM and runtime handler overwrites
-     * (via bind_handler/write_volatile) do not take effect in QEMU.
-     *
-     * The firmware recovers from the missing IRQ because:
-     * - wait_for_idle_async() checks is_done() first (polls USR bit)
-     * - interrupts() reads DMA_INT_RAW (not masked INT_ST)
-     * - Both return immediately since our model clears USR and sets
-     *   TRANS_DONE synchronously
-     */
+    qemu_set_irq(s->irq, st != 0);
 }
 
 static uint64_t esp32s3_gpspi_read(void *opaque, hwaddr addr, unsigned int size)

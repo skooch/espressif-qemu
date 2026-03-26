@@ -40,12 +40,10 @@ static void esp32s3_intmatrix_irq_handler(void *opaque, int n, int level)
     }
 
     /* Block interrupt sources that have null entries in the PAC __INTERRUPTS
-     * vector table. These are reserved entries (Vector { _reserved: 0 })
-     * at indices 15, 23, 33, 34, 46. If they fire, the firmware dispatcher
-     * jumps to PC=0 and crashes with InstrProhibited. */
+     * vector table. */
     static const int reserved_sources[] = {15, 23, 33, 34, 46};
-    for (int i = 0; i < 5; i++) {
-        if (n == reserved_sources[i]) return;
+    for (int ri = 0; ri < 5; ri++) {
+        if (n == reserved_sources[ri]) return;
     }
 
     for (int i = 0; i < ESP32S3_CPU_COUNT; ++i) {
