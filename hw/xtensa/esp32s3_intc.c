@@ -39,6 +39,15 @@ static void esp32s3_intmatrix_irq_handler(void *opaque, int n, int level)
         }
     }
 
+    /* Block interrupt sources that have null entries in the PAC __INTERRUPTS
+     * vector table. These are reserved entries (Vector { _reserved: 0 })
+     * at indices 15, 23, 33, 34, 46. If they fire, the firmware dispatcher
+     * jumps to PC=0 and crashes with InstrProhibited. */
+    static const int reserved_sources[] = {15, 23, 33, 34, 46};
+    for (int i = 0; i < 5; i++) {
+        if (n == reserved_sources[i]) return;
+    }
+
     for (int i = 0; i < ESP32S3_CPU_COUNT; ++i) {
         if (s->outputs[i] == NULL) {
             continue;
@@ -82,6 +91,18 @@ static inline uint8_t* get_map_entry(Esp32s3IntMatrixState* s, hwaddr addr)
 #define INTMATRIX_STATUS_REG0   0x18C
 #define INTMATRIX_STATUS_REG3   0x198
 
+/*
+ * Mask for interrupt sources that have null entries in the PAC __INTERRUPTS
+ * vector table (Vector { _reserved: 0 }). If any of these sources appear
+ * as active in the status registers, the firmware dispatcher jumps to PC=0.
+ *
+ * Null entries at indices 15, 23, 33, 34, 46:
+ *   Word 0 (sources 0-31):  bits 15, 23 = 0x00808000
+ *   Word 1 (sources 32-63): bits 1, 2, 14 = 0x00004006
+ */
+#define INTMATRIX_RESERVED_MASK_0  ((1u << 15) | (1u << 23))
+#define INTMATRIX_RESERVED_MASK_1  ((1u << (33-32)) | (1u << (34-32)) | (1u << (46-32)))
+
 static uint64_t esp32s3_intmatrix_read(void* opaque, hwaddr addr, unsigned int size)
 {
     Esp32s3IntMatrixState *s = ESP32S3_INTMATRIX(opaque);
@@ -90,7 +111,13 @@ static uint64_t esp32s3_intmatrix_read(void* opaque, hwaddr addr, unsigned int s
     if (addr >= INTMATRIX_STATUS_REG0 && addr <= INTMATRIX_STATUS_REG3) {
         int word = (addr - INTMATRIX_STATUS_REG0) / 4;
         if (word < 4) {
-            return s->irq_levels[word];
+            uint32_t val = s->irq_levels[word];
+            /* Mask out reserved interrupt sources that have null entries
+             * in the PAC __INTERRUPTS vector table. Without this, the
+             * firmware dispatcher jumps to address 0 and crashes. */
+            if (word == 0) val &= ~INTMATRIX_RESERVED_MASK_0;
+            if (word == 1) val &= ~INTMATRIX_RESERVED_MASK_1;
+            return val;
         }
         return 0;
     }
