@@ -143,6 +143,9 @@ typedef struct Esp32s3IntMatrixState {
     qemu_irq *outputs[ESP32S3_CPU_COUNT];
     uint8_t irq_map[ESP32S3_CPU_COUNT][ESP32S3_INT_MATRIX_INPUTS];
 
+    /* Peripheral interrupt source levels (bitmask, 4 x 32 bits = 128 sources) */
+    uint32_t irq_levels[4];
+
     /* properties */
     XtensaCPU *cpu[ESP32S3_CPU_COUNT];
 } Esp32s3IntMatrixState;

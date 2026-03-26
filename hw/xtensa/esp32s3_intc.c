@@ -29,6 +29,16 @@
 static void esp32s3_intmatrix_irq_handler(void *opaque, int n, int level)
 {
     Esp32s3IntMatrixState *s = ESP32S3_INTMATRIX(opaque);
+
+    /* Track interrupt source levels for the status registers */
+    if (n < 128) {
+        if (level) {
+            s->irq_levels[n / 32] |= (1u << (n % 32));
+        } else {
+            s->irq_levels[n / 32] &= ~(1u << (n % 32));
+        }
+    }
+
     for (int i = 0; i < ESP32S3_CPU_COUNT; ++i) {
         if (s->outputs[i] == NULL) {
             continue;
@@ -57,9 +67,35 @@ static inline uint8_t* get_map_entry(Esp32s3IntMatrixState* s, hwaddr addr)
     return &IRQ_MAP(cpu_index, source_index);
 }
 
+/*
+ * INTERRUPT_CORE0 register layout:
+ *   0x000-0x18B: mapping registers (source -> CPU interrupt)
+ *   0x18C-0x198: interrupt status registers (4 x 32-bit, read-only)
+ *   0x19C:       clock gate register
+ *
+ * The status registers reflect which peripheral interrupt sources are currently
+ * active. We track this via the irq_levels bitmask, which is updated by the
+ * IRQ handler when peripherals assert/deassert their interrupt lines.
+ */
+
+/* Status register offsets within the INTERRUPT_CORE0 peripheral */
+#define INTMATRIX_STATUS_REG0   0x18C
+#define INTMATRIX_STATUS_REG3   0x198
+
 static uint64_t esp32s3_intmatrix_read(void* opaque, hwaddr addr, unsigned int size)
 {
     Esp32s3IntMatrixState *s = ESP32S3_INTMATRIX(opaque);
+
+    /* Interrupt status registers: return actual pending interrupt state */
+    if (addr >= INTMATRIX_STATUS_REG0 && addr <= INTMATRIX_STATUS_REG3) {
+        int word = (addr - INTMATRIX_STATUS_REG0) / 4;
+        if (word < 4) {
+            return s->irq_levels[word];
+        }
+        return 0;
+    }
+
+    /* Mapping registers: return the CPU interrupt number for this source */
     uint8_t* map_entry = get_map_entry(s, addr);
     return (map_entry != NULL) ? *map_entry : 0;
 }
@@ -86,6 +122,7 @@ static void esp32s3_intmatrix_reset_hold(Object *obj, ResetType type)
 {
     Esp32s3IntMatrixState *s = ESP32S3_INTMATRIX(obj);
     memset(s->irq_map, INTMATRIX_UNINT_VALUE, sizeof(s->irq_map));
+    memset(s->irq_levels, 0, sizeof(s->irq_levels));
     for (int i = 0; i < ESP32S3_CPU_COUNT; ++i) {
         if (s->outputs[i] == NULL) {
             continue;
