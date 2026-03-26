@@ -4,6 +4,7 @@
 #include "hw/hw.h"
 #include "hw/registerfields.h"
 #include "esp32_gpio.h"
+#include "qemu/timer.h"
 
 #define TYPE_ESP32S3_GPIO "esp32s3.gpio"
 #define ESP32S3_GPIO(obj)           OBJECT_CHECK(ESP32S3GPIOState, (obj), TYPE_ESP32S3_GPIO)
@@ -98,6 +99,9 @@ typedef struct ESP32S3GPIOState {
     /* IRQ outputs to interrupt matrix */
     qemu_irq irq_cpu0;
     qemu_irq irq_cpu1;
+
+    /* Deferred IRQ timer to prevent re-entrant interrupt processing */
+    QEMUTimer irq_timer;
 } ESP32S3GPIOState;
 
 typedef struct ESP32S3GPIOClass {

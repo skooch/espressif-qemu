@@ -31,10 +31,36 @@
 #include "hw/gpio/esp32s3_gpio.h"
 
 
-static void esp32s3_gpio_update_irq(ESP32S3GPIOState *s)
+/* Deferred GPIO IRQ callback */
+static void esp32s3_gpio_irq_timer_cb(void *opaque)
 {
+    ESP32S3GPIOState *s = ESP32S3_GPIO(opaque);
     bool irq = (s->status[0] != 0) || (s->status[1] != 0);
     qemu_set_irq(s->parent.irq, irq ? 1 : 0);
+}
+
+static void esp32s3_gpio_update_irq(ESP32S3GPIOState *s)
+{
+    /* Deassert immediately, but defer assertion to prevent re-entrant
+     * interrupt processing. When check_int fires during a pin_reg write
+     * (e.g. from listen()), synchronous qemu_set_irq would invoke the
+     * GPIO interrupt handler inside the MMIO write, causing lock
+     * re-entrancy in the firmware's GPIO_LOCK. */
+    bool irq = (s->status[0] != 0) || (s->status[1] != 0);
+    if (!irq) {
+        qemu_set_irq(s->parent.irq, 0);
+    }
+    /* For assertion, the interrupt matrix will pick it up on the next
+     * InterruptStatus::current() read since we set irq_levels via
+     * the intmatrix IRQ handler. We still need to assert the line
+     * so the intmatrix sees it. Use a brief timer to break re-entrancy. */
+    if (irq) {
+        /* Schedule assertion for after current TB exits */
+        timer_mod_ns(&s->irq_timer,
+                     qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 1000);
+    } else {
+        timer_del(&s->irq_timer);
+    }
 }
 
 /*
@@ -323,6 +349,10 @@ static void esp32s3_gpio_init(Object *obj)
 
     /* IRQ output: reuse parent's irq (sysbus IRQ 0), already initialized
      * by parent esp32_gpio_init. Connected to ETS_GPIO_INTR_SOURCE. */
+
+    /* Timer for deferred IRQ assertion */
+    timer_init_ns(&s->irq_timer, QEMU_CLOCK_VIRTUAL,
+                  esp32s3_gpio_irq_timer_cb, s);
 }
 
 static void esp32s3_gpio_class_init(ObjectClass *klass, void *data)
