@@ -880,11 +880,11 @@ static void esp32s3_machine_init(MachineState *machine)
                 qemu_allocate_irq(
                     (void (*)(void *, int, int))esp32s3_gpio_set_input,
                     &ss->gpio, 15));
+            /* Set initial level AFTER connection (device reset fires
+             * before connection, so its qemu_set_irq goes nowhere) */
             esp32s3_gpio_set_input(&ss->gpio, 15, true);
 
-            /* Connect CST328 INT pin to GPIO12 (touch IRQ).
-             * The CST328 drives INT LOW when touch data is available.
-             * Initialize GPIO12 HIGH (idle) so falling edges are detected. */
+            /* Connect CST328 INT pin to GPIO12 (touch IRQ). */
             qdev_connect_gpio_out_named(DEVICE(touch), "int", 0,
                 qemu_allocate_irq(
                     (void (*)(void *, int, int))esp32s3_gpio_set_input,
@@ -938,9 +938,6 @@ static void esp32s3_machine_init(MachineState *machine)
             qemu_allocate_irq(
                 (void (*)(void *, int, int))esp32s3_gpio_set_input,
                 &ss->gpio, 37));
-
-        /* EPD starts with BUSY HIGH (ready). The reset fired before the
-         * IRQ connection was made, so set GPIO37 HIGH explicitly. */
         esp32s3_gpio_set_input(&ss->gpio, 37, true);
 
         /* Connect SPI2 to EPD for data routing */

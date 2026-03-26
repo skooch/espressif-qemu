@@ -275,7 +275,6 @@ static void esp32s3_gpio_write(void *opaque, hwaddr addr,
             (addr - GPIO_PIN0_REG) % 4 == 0) {
             int pin = (addr - GPIO_PIN0_REG) / 4;
             s->pin_reg[pin] = (uint32_t)value;
-
             /* Re-evaluate level interrupts: if the current pin level
              * already satisfies the newly configured interrupt type,
              * fire the interrupt immediately. This is needed for
@@ -316,7 +315,9 @@ static void esp32s3_gpio_reset_hold(Object *obj, ResetType type)
 
     memset(s->out, 0, sizeof(s->out));
     memset(s->enable, 0, sizeof(s->enable));
-    memset(s->in_levels, 0, sizeof(s->in_levels));
+    /* in_levels is NOT cleared: it reflects external pin state driven by
+     * connected device models (TCA8418 INT, CST328 INT, etc.) which
+     * assert their levels during their own reset phase. */
     memset(s->status, 0, sizeof(s->status));
     memset(s->pin_reg, 0, sizeof(s->pin_reg));
     memset(s->func_in_sel, 0, sizeof(s->func_in_sel));

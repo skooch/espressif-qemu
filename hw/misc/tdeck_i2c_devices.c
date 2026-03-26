@@ -323,6 +323,8 @@ static void tdeck_tca8418_reset(DeviceState *dev)
     s->fifo_count = 0;
     s->fifo_head = 0;
     s->fifo_tail = 0;
+    /* INT is active LOW; deassert (HIGH) when idle */
+    qemu_set_irq(s->int_pin, 1);
 }
 
 static int tdeck_tca8418_event(I2CSlave *i2c, enum i2c_event event)
@@ -451,6 +453,8 @@ static void tdeck_cst328_reset(DeviceState *dev)
     s->finger_state = 0;
     s->x = 0;
     s->y = 0;
+    /* INT is active LOW; deassert (HIGH) when idle */
+    qemu_set_irq(s->int_pin, 1);
 }
 
 static int tdeck_cst328_event(I2CSlave *i2c, enum i2c_event event)
