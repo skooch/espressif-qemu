@@ -1,0 +1,16 @@
+#!/bin/bash
+# Build QEMU, touching any dirty source files first so ninja detects changes.
+# Ninja dep tracking can miss edits when the file mtime matches the last build
+# (common with atomic file writes from editors/tools).
+set -euo pipefail
+
+cd "$(dirname "$0")/build"
+
+# Touch any source files that git reports as modified
+for f in $(cd .. && git diff --name-only HEAD 2>/dev/null); do
+    if [ -f "../$f" ]; then
+        touch "../$f"
+    fi
+done
+
+exec ninja "$@"

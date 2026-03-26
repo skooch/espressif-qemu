@@ -61,6 +61,7 @@
 #include "hw/timer/esp32s3_timg.h"
 #include "hw/timer/esp32s3_systimer.h"
 #include "hw/gpio/esp32s3_gpio.h"
+#include "hw/i2c/esp32_i2c.h"
 #include "hw/misc/esp32s3_xts_aes.h"
 #include "hw/misc/esp32s3_pms.h"
 #include "hw/net/can/esp32s3_twai.h"
@@ -149,6 +150,7 @@ typedef struct Esp32s3SocState {
     ESP32S3SysTimerState systimer;
 
     ESP32C3UsbJtagState jtag;
+    Esp32I2CState i2c[ESP32S3_I2C_COUNT];
     ESPRgbState rgb;
 
     MemoryRegion iomem;
@@ -210,6 +212,9 @@ static void esp32s3_soc_reset(DeviceState *dev)
         device_cold_reset(DEVICE(&s->intmatrix));
         for (int i = 0; i < ESP32S3_UART_COUNT; ++i) {
             device_cold_reset(DEVICE(&s->uart[i]));
+        }
+        for (int i = 0; i < ESP32S3_I2C_COUNT; ++i) {
+            device_cold_reset(DEVICE(&s->i2c[i]));
         }
     }
     if (s->requested_reset & ESP32S3_SOC_RESET_PROCPU) {
@@ -568,6 +573,11 @@ static void esp32s3_soc_init(Object *obj)
     qdev_prop_set_chr(DEVICE(&s->uart[1]), "chardev", serial_hd(1));
     // qdev_prop_set_chr(DEVICE(&s->uart[2]), "chardev", serial_hd(2));
 
+    for (int i = 0; i < ESP32S3_I2C_COUNT; i++) {
+        snprintf(name, sizeof(name), "i2c%d", i);
+        object_initialize_child(obj, name, &s->i2c[i], TYPE_ESP32_I2C);
+    }
+
     object_initialize_child(obj, "intmatrix", &s->intmatrix, TYPE_ESP32S3_INTMATRIX);
 
     object_initialize_child(obj, "rtc_cntl", &s->rtc_cntl, TYPE_ESP32S3_RTC_CNTL);
@@ -810,10 +820,20 @@ static void esp32s3_machine_init(MachineState *machine)
                            qdev_get_gpio_in(intmatrix_dev, ETS_GPIO_INTR_SOURCE));
     }
 
+    /* I2C controller realization */
+    {
+        const hwaddr i2c_base[] = {DR_REG_I2C_EXT_BASE, DR_REG_I2C1_EXT_BASE};
+        for (int i = 0; i < ESP32S3_I2C_COUNT; i++) {
+            qdev_realize(DEVICE(&ss->i2c[i]), &ss->periph_bus, &error_fatal);
+            esp32s3_soc_add_periph_device(sys_mem, &ss->i2c[i], i2c_base[i]);
+            sysbus_connect_irq(SYS_BUS_DEVICE(&ss->i2c[i]), 0,
+                               qdev_get_gpio_in(intmatrix_dev, ETS_I2C_EXT0_INTR_SOURCE + i));
+        }
+    }
+
     {
         qdev_realize(DEVICE(&ss->rng), &ss->periph_bus, &error_fatal);
         esp32s3_soc_add_periph_device(sys_mem, &ss->rng, ESP32S3_RNG_BASE);
-
     }
 
 
