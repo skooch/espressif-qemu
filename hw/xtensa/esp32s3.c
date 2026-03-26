@@ -699,7 +699,7 @@ static void esp32s3_machine_init(MachineState *machine)
 
     memory_region_init_io(&ss->iomem, OBJECT(&ss->cpu[0]), &esp32s3_io_ops,
                           NULL, "esp32s3.iomem", 0xd1000);
-    memory_region_add_subregion(sys_mem, ESP32S3_IO_START_ADDR, &ss->iomem);
+    memory_region_add_subregion_overlap(sys_mem, ESP32S3_IO_START_ADDR, &ss->iomem, -1);
 
     // qdev_prop_set_chr(DEVICE(ss), "serial0", serial_hd(0));
     // qdev_prop_set_chr(DEVICE(ss), "serial1", serial_hd(1));
@@ -900,7 +900,7 @@ static void esp32s3_machine_init(MachineState *machine)
         for (int i = 0; i < 2; i++) {
             sysbus_realize(SYS_BUS_DEVICE(&ss->gpspi[i]), &error_fatal);
             MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->gpspi[i]), 0);
-            memory_region_add_subregion_overlap(sys_mem, spi_base[i], mr, 0);
+            memory_region_add_subregion_overlap(sys_mem, spi_base[i], mr, 1);
             sysbus_connect_irq(SYS_BUS_DEVICE(&ss->gpspi[i]), 0,
                                qdev_get_gpio_in(intmatrix_dev, ETS_SPI2_INTR_SOURCE + i));
         }
