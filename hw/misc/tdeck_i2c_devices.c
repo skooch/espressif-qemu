@@ -18,6 +18,7 @@
 #include "qemu/osdep.h"
 #include "qemu/module.h"
 #include "hw/i2c/i2c.h"
+#include "hw/irq.h"
 
 /* ========================================================================= */
 /* BQ25896 Charger                                                           */
@@ -223,12 +224,95 @@ struct TdeckTca8418State {
     uint8_t fifo[TCA8418_FIFO_SIZE];
     uint8_t fifo_count;
     uint8_t fifo_head;
+    uint8_t fifo_tail;
+    /* INT pin output (active LOW) */
+    qemu_irq int_pin;
 };
 
 #define TCA8418_REG_CFG       0x01
 #define TCA8418_REG_INT_STAT  0x02
 #define TCA8418_REG_KEY_LCK   0x03
 #define TCA8418_REG_KEY_EVENT 0x04
+
+static void tdeck_tca8418_update_int(TdeckTca8418State *s)
+{
+    /* INT pin is active LOW when FIFO has events */
+    bool active = s->fifo_count > 0;
+    if (active) {
+        s->regs[TCA8418_REG_INT_STAT] |= 0x01; /* K_INT */
+    }
+    qemu_set_irq(s->int_pin, active ? 0 : 1);
+}
+
+/*
+ * Push a key event into the TCA8418 FIFO.
+ * raw_code: TCA8418 key code (row*10 + col + 1)
+ * pressed: true for press, false for release
+ */
+static void tdeck_tca8418_inject_key(TdeckTca8418State *s, uint8_t raw_code, bool pressed)
+{
+    if (s->fifo_count >= TCA8418_FIFO_SIZE) {
+        return; /* FIFO full, drop event */
+    }
+    uint8_t event = raw_code & 0x7F;
+    if (pressed) {
+        event |= 0x80;
+    }
+    s->fifo[s->fifo_tail] = event;
+    s->fifo_tail = (s->fifo_tail + 1) % TCA8418_FIFO_SIZE;
+    s->fifo_count++;
+    tdeck_tca8418_update_int(s);
+}
+
+/*
+ * Map an ASCII character to a TCA8418 raw key code.
+ * The T-Deck keyboard has a 4x10 matrix with columns reversed.
+ * Raw code = row*10 + (9-col) + 1.
+ *
+ * Layout (physical):
+ *   Row 0: q w e r t y u i o p
+ *   Row 1: a s d f g h j k l BSP
+ *   Row 2: ALT z x c v b n m $ ENT
+ *   Row 3: SHF MIC SPACE SPACE SPACE SPACE SPACE SYM SHF
+ */
+static uint8_t ascii_to_tca8418(char c)
+{
+    /* Row 0 */
+    static const char row0[] = "qwertyuiop";
+    /* Row 1 */
+    static const char row1[] = "asdfghjkl";
+    /* Row 2 (excluding modifiers) */
+    static const char row2[] = " zxcvbnm";
+
+    for (int i = 0; i < 10; i++) {
+        if (row0[i] == c) return (0 * 10) + (9 - i) + 1;
+    }
+    for (int i = 0; i < 9; i++) {
+        if (row1[i] == c) return (1 * 10) + (9 - i) + 1;
+    }
+    if (c == '\b' || c == 127) return (1 * 10) + (9 - 9) + 1; /* BSP at row1 col9 */
+    for (int i = 1; i < 8; i++) {
+        if (row2[i] == c) return (2 * 10) + (9 - i) + 1;
+    }
+    if (c == '\r' || c == '\n') return (2 * 10) + (9 - 9) + 1; /* ENT at row2 col9 */
+    if (c == ' ') return (3 * 10) + (9 - 2) + 1; /* SPACE at row3 col2 */
+
+    /* Uppercase: same key with shift (not implemented here, just map to lowercase) */
+    if (c >= 'A' && c <= 'Z') return ascii_to_tca8418(c - 'A' + 'a');
+
+    return 0; /* Unknown key */
+}
+
+/*
+ * Inject an ASCII character as a press+release pair.
+ */
+static void __attribute__((unused)) tdeck_tca8418_inject_char(TdeckTca8418State *s, char c)
+{
+    uint8_t code = ascii_to_tca8418(c);
+    if (code == 0) return;
+    tdeck_tca8418_inject_key(s, code, true);
+    tdeck_tca8418_inject_key(s, code, false);
+}
 
 static void tdeck_tca8418_reset(DeviceState *dev)
 {
@@ -238,6 +322,7 @@ static void tdeck_tca8418_reset(DeviceState *dev)
     s->addr_set = false;
     s->fifo_count = 0;
     s->fifo_head = 0;
+    s->fifo_tail = 0;
 }
 
 static int tdeck_tca8418_event(I2CSlave *i2c, enum i2c_event event)
@@ -268,10 +353,7 @@ static uint8_t tdeck_tca8418_recv(I2CSlave *i2c)
             val = s->fifo[s->fifo_head];
             s->fifo_head = (s->fifo_head + 1) % TCA8418_FIFO_SIZE;
             s->fifo_count--;
-            if (s->fifo_count == 0) {
-                /* Clear K_INT when FIFO is empty */
-                s->regs[TCA8418_REG_INT_STAT] &= ~0x01;
-            }
+            tdeck_tca8418_update_int(s);
         }
         break;
     default:
@@ -300,11 +382,19 @@ static int tdeck_tca8418_send(I2CSlave *i2c, uint8_t data)
     return 0;
 }
 
+static void tdeck_tca8418_realize(DeviceState *dev, Error **errp)
+{
+    TdeckTca8418State *s = TDECK_TCA8418(dev);
+    /* INT pin output — active LOW when FIFO has events */
+    qdev_init_gpio_out_named(dev, &s->int_pin, "int", 1);
+}
+
 static void tdeck_tca8418_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     I2CSlaveClass *sc = I2C_SLAVE_CLASS(klass);
     dc->legacy_reset = tdeck_tca8418_reset;
+    dc->realize = tdeck_tca8418_realize;
     sc->event = tdeck_tca8418_event;
     sc->recv = tdeck_tca8418_recv;
     sc->send = tdeck_tca8418_send;

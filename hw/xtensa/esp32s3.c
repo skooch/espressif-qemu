@@ -840,8 +840,16 @@ static void esp32s3_machine_init(MachineState *machine)
         if (i2c_bus) {
             i2c_slave_create_simple(i2c_bus, "tdeck-bq25896", 0x6B);
             i2c_slave_create_simple(i2c_bus, "tdeck-bq27220", 0x55);
-            i2c_slave_create_simple(i2c_bus, "tdeck-tca8418", 0x34);
+            I2CSlave *kbd = i2c_slave_create_simple(i2c_bus, "tdeck-tca8418", 0x34);
             i2c_slave_create_simple(i2c_bus, "tdeck-cst328",  0x1A);
+
+            /* Connect TCA8418 INT pin to GPIO15 (keyboard IRQ).
+             * The TCA8418 drives INT LOW when events are pending.
+             * GPIO15 is configured for falling-edge interrupt by the firmware. */
+            qdev_connect_gpio_out_named(DEVICE(kbd), "int", 0,
+                qemu_allocate_irq(
+                    (void (*)(void *, int, int))esp32s3_gpio_set_input,
+                    &ss->gpio, 15));
         }
     }
 
