@@ -311,35 +311,6 @@ static void tdeck_uc8253_init(Object *obj)
 
     qdev_init_gpio_out_named(DEVICE(s), &s->busy_pin, "busy", 1);
 
-    /* Create a visible red crosshair cursor for the EPD window.
-     * The default cursor is nearly invisible on a white e-paper background. */
-    {
-        const int sz = 17;
-        const int center = sz / 2;
-        QEMUCursor *cur = cursor_alloc(sz, sz);
-        cur->hot_x = center;
-        cur->hot_y = center;
-        for (int i = 0; i < sz; i++) {
-            /* Horizontal line */
-            cur->data[center * sz + i] = 0xFFFF0000;
-            /* Vertical line */
-            cur->data[i * sz + center] = 0xFFFF0000;
-        }
-        /* White outline for visibility on dark areas */
-        for (int i = 0; i < sz; i++) {
-            if (i != center) {
-                if (center > 0) {
-                    cur->data[(center - 1) * sz + i] |= 0x80FFFFFF;
-                    cur->data[(center + 1) * sz + i] |= 0x80FFFFFF;
-                    cur->data[i * sz + center - 1] |= 0x80FFFFFF;
-                    cur->data[i * sz + center + 1] |= 0x80FFFFFF;
-                }
-            }
-        }
-        dpy_cursor_define(s->con, cur);
-        cursor_unref(cur);
-    }
-
     /* Register input handler for keyboard and mouse from the QEMU window */
     s->input_handler = qemu_input_handler_register(DEVICE(s),
                                                     &tdeck_input_handler);
