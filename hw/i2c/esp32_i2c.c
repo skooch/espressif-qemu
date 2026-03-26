@@ -42,8 +42,27 @@ static uint32_t esp32_i2c_get_status_reg(Esp32I2CState* s)
 
 static void esp32_i2c_update_irq(Esp32I2CState * s)
 {
+    /* Defer IRQ to prevent re-entrant interrupt processing.
+     *
+     * When the firmware writes INT_ENA from I2cFuture::new(), a synchronous
+     * qemu_set_irq causes the interrupt dispatcher to run INSIDE the MMIO
+     * write. This triggers the GPIO interrupt handler (also active), which
+     * tries to acquire a lock already held by the current context — deadlock.
+     *
+     * Deferring with timer_mod_ns(+0) schedules the IRQ delivery for after
+     * the current translation block exits, preventing re-entrancy.
+     * Deassertion is immediate since it never causes re-entrancy issues. */
     int irq_state = !!(I2C_REG(s, A_I2C_INT_RAW) & I2C_REG(s, A_I2C_INT_ENA));
-    qemu_set_irq(s->irq, irq_state);
+    if (irq_state) {
+        s->pending_irq = 1;
+        /* +1000ns (1us) ensures the timer fires in a new TB */
+        timer_mod_ns(s->irq_timer,
+                     qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 1000);
+    } else {
+        s->pending_irq = 0;
+        timer_del(s->irq_timer);
+        qemu_set_irq(s->irq, 0);
+    }
 }
 
 static uint64_t esp32_i2c_read(void * opaque, hwaddr addr, unsigned int size)
