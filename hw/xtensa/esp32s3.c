@@ -48,6 +48,7 @@
 #include "hw/ssi/esp32s3_spi.h"
 #include "hw/misc/esp32s3_cache.h"
 #include "hw/char/esp32s3_uart.h"
+#include "hw/char/tdeck_modem.h"
 #include "hw/misc/esp32s3_rng.h"
 
 #include "chardev/char-fe.h"
@@ -175,6 +176,9 @@ typedef struct Esp32s3SocState {
     /* Keyboard input chardev (serial port 3 -> TCA8418 FIFO) */
     TdeckTca8418State *kbd_dev;
     CharBackend kbd_chr;
+
+    /* AT modem chardev for UART1 */
+    TdeckModemChardev *modem;
 } Esp32s3SocState;
 
 
@@ -586,7 +590,14 @@ static void esp32s3_soc_init(Object *obj)
     object_property_add_alias(obj, "serial1", OBJECT(&s->uart[1]), "chardev");
     // object_property_add_alias(obj, "serial2", OBJECT(&s->uart[2]), "chardev");
     qdev_prop_set_chr(DEVICE(&s->uart[0]), "chardev", serial_hd(0));
-    qdev_prop_set_chr(DEVICE(&s->uart[1]), "chardev", serial_hd(1));
+    /* Create AT modem chardev for UART1 instead of serial_hd(1) */
+    {
+        Chardev *modem_chr = qemu_chardev_new("tdeck-modem",
+                                               TYPE_CHARDEV_TDECK_MODEM,
+                                               NULL, NULL, &error_fatal);
+        s->modem = CHARDEV_TDECK_MODEM(modem_chr);
+        qdev_prop_set_chr(DEVICE(&s->uart[1]), "chardev", modem_chr);
+    }
     // qdev_prop_set_chr(DEVICE(&s->uart[2]), "chardev", serial_hd(2));
 
     for (int i = 0; i < ESP32S3_I2C_COUNT; i++) {
