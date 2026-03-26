@@ -57,6 +57,8 @@
 /* Forward declarations for T-Deck I2C device types */
 typedef struct TdeckTca8418State TdeckTca8418State;
 typedef struct TdeckCst328State TdeckCst328State;
+typedef struct TdeckBq25896State TdeckBq25896State;
+typedef struct TdeckBq27220State TdeckBq27220State;
 #define TDECK_TCA8418(obj) ((TdeckTca8418State *)(obj))
 #define TDECK_CST328(obj)  ((TdeckCst328State *)(obj))
 void tdeck_tca8418_inject_char(TdeckTca8418State *s, char c);
@@ -879,8 +881,8 @@ static void esp32s3_machine_init(MachineState *machine)
         /* Add T-Deck I2C slave devices to I2C0 bus */
         I2CBus *i2c_bus = I2C_BUS(qdev_get_child_bus(DEVICE(&ss->i2c[0]), "i2c"));
         if (i2c_bus) {
-            i2c_slave_create_simple(i2c_bus, "tdeck-bq25896", 0x6B);
-            i2c_slave_create_simple(i2c_bus, "tdeck-bq27220", 0x55);
+            I2CSlave *bq25896 = i2c_slave_create_simple(i2c_bus, "tdeck-bq25896", 0x6B);
+            I2CSlave *bq27220 = i2c_slave_create_simple(i2c_bus, "tdeck-bq27220", 0x55);
             I2CSlave *kbd = i2c_slave_create_simple(i2c_bus, "tdeck-tca8418", 0x34);
             I2CSlave *touch = i2c_slave_create_simple(i2c_bus, "tdeck-cst328",  0x1A);
             i2c_slave_create_simple(i2c_bus, "tdeck-bhi260ap", 0x28);
@@ -910,6 +912,9 @@ static void esp32s3_machine_init(MachineState *machine)
             ss->epd.kbd = TDECK_TCA8418(kbd);
             ss->epd.touch = TDECK_CST328(touch);
             ss->epd.gpio = &ss->gpio;
+            ss->epd.bq25896 = (TdeckBq25896State *)bq25896;
+            ss->epd.bq27220 = (TdeckBq27220State *)bq27220;
+            ss->epd.modem = ss->modem;
 
             /* Connect serial port 3 as keyboard input channel.
              * Characters received are injected into TCA8418 FIFO.

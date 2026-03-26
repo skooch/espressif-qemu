@@ -622,3 +622,18 @@ static void tdeck_i2c_devices_register_types(void)
 }
 
 type_init(tdeck_i2c_devices_register_types)
+
+/* Public accessors for panel wiring (EPD display model writes these) */
+void tdeck_bq27220_set_reg(TdeckBq27220State *s, uint8_t addr, uint8_t val)
+{
+    if (s && addr < sizeof(s->regs)) {
+        s->regs[addr] = val;
+    }
+}
+
+void tdeck_bq25896_set_reg(TdeckBq25896State *s, uint8_t addr, uint8_t val)
+{
+    if (s && addr < sizeof(s->regs)) {
+        s->regs[addr] = val;
+    }
+}
