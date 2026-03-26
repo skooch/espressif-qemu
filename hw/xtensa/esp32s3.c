@@ -872,6 +872,8 @@ static void esp32s3_machine_init(MachineState *machine)
             i2c_slave_create_simple(i2c_bus, "tdeck-bq27220", 0x55);
             I2CSlave *kbd = i2c_slave_create_simple(i2c_bus, "tdeck-tca8418", 0x34);
             I2CSlave *touch = i2c_slave_create_simple(i2c_bus, "tdeck-cst328",  0x1A);
+            i2c_slave_create_simple(i2c_bus, "tdeck-bhi260ap", 0x28);
+            i2c_slave_create_simple(i2c_bus, "tdeck-ltr553", 0x23);
 
             /* Connect TCA8418 INT pin to GPIO15 (keyboard IRQ).
              * The TCA8418 drives INT LOW when events are pending.

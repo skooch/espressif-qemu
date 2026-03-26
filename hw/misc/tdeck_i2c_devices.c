@@ -38,8 +38,8 @@ static void tdeck_bq25896_reset(DeviceState *dev)
 {
     TdeckBq25896State *s = TDECK_BQ25896(dev);
     memset(s->regs, 0, sizeof(s->regs));
-    /* REG0B: VBUS_STAT=0b100 (USB host), CHRG_STAT=0b10 (fast charge) */
-    s->regs[0x0B] = (4 << 5) | (2 << 3);
+    /* REG0B: Not charging, no USB input */
+    s->regs[0x0B] = 0x00;
     /* REG0E: Battery voltage ADC ~ 3.8V (0x1E = offset from 2.304V base) */
     s->regs[0x0E] = 0x1E;
     /* REG14: Part number / revision */
@@ -526,6 +526,88 @@ static const TypeInfo tdeck_cst328_info = {
 };
 
 /* ========================================================================= */
+/* BHI260AP IMU (stub - ACK only)                                            */
+/* ========================================================================= */
+
+#define TYPE_TDECK_BHI260AP "tdeck-bhi260ap"
+OBJECT_DECLARE_SIMPLE_TYPE(TdeckBhi260apState, TDECK_BHI260AP)
+
+struct TdeckBhi260apState {
+    I2CSlave parent_obj;
+};
+
+static int tdeck_bhi260ap_event(I2CSlave *i2c, enum i2c_event event)
+{
+    return 0;
+}
+
+static uint8_t tdeck_bhi260ap_recv(I2CSlave *i2c)
+{
+    return 0;
+}
+
+static int tdeck_bhi260ap_send(I2CSlave *i2c, uint8_t data)
+{
+    return 0;
+}
+
+static void tdeck_bhi260ap_class_init(ObjectClass *klass, void *data)
+{
+    I2CSlaveClass *sc = I2C_SLAVE_CLASS(klass);
+    sc->event = tdeck_bhi260ap_event;
+    sc->recv = tdeck_bhi260ap_recv;
+    sc->send = tdeck_bhi260ap_send;
+}
+
+static const TypeInfo tdeck_bhi260ap_info = {
+    .name = TYPE_TDECK_BHI260AP,
+    .parent = TYPE_I2C_SLAVE,
+    .instance_size = sizeof(TdeckBhi260apState),
+    .class_init = tdeck_bhi260ap_class_init,
+};
+
+/* ========================================================================= */
+/* LTR-553 Light/Proximity Sensor (stub - ACK only)                          */
+/* ========================================================================= */
+
+#define TYPE_TDECK_LTR553 "tdeck-ltr553"
+OBJECT_DECLARE_SIMPLE_TYPE(TdeckLtr553State, TDECK_LTR553)
+
+struct TdeckLtr553State {
+    I2CSlave parent_obj;
+};
+
+static int tdeck_ltr553_event(I2CSlave *i2c, enum i2c_event event)
+{
+    return 0;
+}
+
+static uint8_t tdeck_ltr553_recv(I2CSlave *i2c)
+{
+    return 0;
+}
+
+static int tdeck_ltr553_send(I2CSlave *i2c, uint8_t data)
+{
+    return 0;
+}
+
+static void tdeck_ltr553_class_init(ObjectClass *klass, void *data)
+{
+    I2CSlaveClass *sc = I2C_SLAVE_CLASS(klass);
+    sc->event = tdeck_ltr553_event;
+    sc->recv = tdeck_ltr553_recv;
+    sc->send = tdeck_ltr553_send;
+}
+
+static const TypeInfo tdeck_ltr553_info = {
+    .name = TYPE_TDECK_LTR553,
+    .parent = TYPE_I2C_SLAVE,
+    .instance_size = sizeof(TdeckLtr553State),
+    .class_init = tdeck_ltr553_class_init,
+};
+
+/* ========================================================================= */
 /* Registration                                                              */
 /* ========================================================================= */
 
@@ -535,6 +617,8 @@ static void tdeck_i2c_devices_register_types(void)
     type_register_static(&tdeck_bq27220_info);
     type_register_static(&tdeck_tca8418_info);
     type_register_static(&tdeck_cst328_info);
+    type_register_static(&tdeck_bhi260ap_info);
+    type_register_static(&tdeck_ltr553_info);
 }
 
 type_init(tdeck_i2c_devices_register_types)
