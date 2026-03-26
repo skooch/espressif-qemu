@@ -171,9 +171,12 @@ void tdeck_uc8253_spi_receive(TdeckUc8253State *s, const uint8_t *data,
 
     if (!dc_level) {
         /* DC LOW = command byte */
+        
         tdeck_uc8253_command(s, data[0]);
     } else {
         /* DC HIGH = data bytes for current command */
+        if (s->current_cmd == UC8253_CMD_DTM2 && s->data_idx == 0) {
+        }
         tdeck_uc8253_data(s, data, len);
     }
 }

@@ -243,6 +243,16 @@ static void esp32s3_gpio_write(void *opaque, hwaddr addr,
             (addr - GPIO_PIN0_REG) % 4 == 0) {
             int pin = (addr - GPIO_PIN0_REG) / 4;
             s->pin_reg[pin] = (uint32_t)value;
+
+            /* Re-evaluate level interrupts: if the current pin level
+             * already satisfies the newly configured interrupt type,
+             * fire the interrupt immediately. This is needed for
+             * wait_for_high/wait_for_low on pins that are already
+             * at the target level. */
+            int idx = pin / 32;
+            int bit = pin % 32;
+            bool level = (s->in_levels[idx] >> bit) & 1;
+            esp32s3_gpio_check_int(s, pin, level, level);
         }
         /* Input function select */
         else if (addr >= GPIO_FUNC_IN_SEL_CFG_REG(0) &&
