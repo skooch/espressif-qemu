@@ -41,6 +41,14 @@
 #define GPIO_STATUS1_W1TS_REG 0x054
 #define GPIO_STATUS1_W1TC_REG 0x058
 
+/* Per-CPU interrupt status (read-only, mirrors STATUS for the current CPU) */
+#define GPIO_PCPU_INT_REG    0x05C
+#define GPIO_PCPU_NMI_INT_REG 0x060
+#define GPIO_CPUSDIO_INT_REG 0x064
+#define GPIO_PCPU_INT1_REG   0x068
+#define GPIO_PCPU_NMI_INT1_REG 0x06C
+#define GPIO_CPUSDIO_INT1_REG 0x070
+
 /* Per-pin config: GPIO_PINn at 0x74 + n*4, for n=0..48 */
 #define GPIO_PIN0_REG        0x074
 #define GPIO_PIN_REG(n)      (GPIO_PIN0_REG + (n) * 4)

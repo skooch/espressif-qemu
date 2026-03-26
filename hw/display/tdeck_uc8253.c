@@ -58,6 +58,13 @@ static void tdeck_uc8253_render(TdeckUc8253State *s)
         }
     }
 
+    /* Count non-0xFF bytes to verify framebuffer has content */
+    int non_white = 0;
+    for (int i = 0; i < UC8253_BUF_SIZE; i++) {
+        if (s->current[i] != 0xFF) non_white++;
+    }
+    qemu_log("UC8253: render %dx%d, non-white=%d/%d bytes\n",
+             UC8253_WIDTH, UC8253_HEIGHT, non_white, UC8253_BUF_SIZE);
     dpy_gfx_update(s->con, 0, 0, UC8253_WIDTH, UC8253_HEIGHT);
 }
 
@@ -171,12 +178,9 @@ void tdeck_uc8253_spi_receive(TdeckUc8253State *s, const uint8_t *data,
 
     if (!dc_level) {
         /* DC LOW = command byte */
-        
         tdeck_uc8253_command(s, data[0]);
     } else {
         /* DC HIGH = data bytes for current command */
-        if (s->current_cmd == UC8253_CMD_DTM2 && s->data_idx == 0) {
-        }
         tdeck_uc8253_data(s, data, len);
     }
 }

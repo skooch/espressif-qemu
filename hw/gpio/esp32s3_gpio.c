@@ -34,7 +34,7 @@
 static void esp32s3_gpio_update_irq(ESP32S3GPIOState *s)
 {
     bool irq = (s->status[0] != 0) || (s->status[1] != 0);
-    qemu_set_irq(s->irq_cpu0, irq ? 1 : 0);
+    qemu_set_irq(s->parent.irq, irq ? 1 : 0);
 }
 
 /*
@@ -136,11 +136,17 @@ static uint64_t esp32s3_gpio_read(void *opaque, hwaddr addr, unsigned int size)
         r = s->parent.strap_mode;
         break;
 
-    /* Interrupt status */
+    /* Interrupt status (GPIO_STATUS and per-CPU mirrors) */
     case GPIO_STATUS_REG:
+    case GPIO_PCPU_INT_REG:
+    case GPIO_PCPU_NMI_INT_REG:
+    case GPIO_CPUSDIO_INT_REG:
         r = s->status[0];
         break;
     case GPIO_STATUS1_REG:
+    case GPIO_PCPU_INT1_REG:
+    case GPIO_PCPU_NMI_INT1_REG:
+    case GPIO_CPUSDIO_INT1_REG:
         r = s->status[1];
         break;
 
@@ -315,8 +321,8 @@ static void esp32s3_gpio_init(Object *obj)
     memory_region_init_io(&s->parent.iomem, obj, &esp32s3_gpio_ops, s,
                           TYPE_ESP32S3_GPIO, ESP32S3_GPIO_IO_SIZE);
 
-    /* IRQ output to interrupt matrix */
-    sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->irq_cpu0);
+    /* IRQ output: reuse parent's irq (sysbus IRQ 0), already initialized
+     * by parent esp32_gpio_init. Connected to ETS_GPIO_INTR_SOURCE. */
 }
 
 static void esp32s3_gpio_class_init(ObjectClass *klass, void *data)
