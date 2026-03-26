@@ -13,6 +13,7 @@
 #define ESP32_I2C_MEM_SIZE 0x100
 #define ESP32_I2C_FIFO_LENGTH 32
 #define ESP32_I2C_CMD_COUNT 16
+#define ESP32_I2C_REG_COUNT (ESP32_I2C_MEM_SIZE / 4)
 
 
 typedef struct Esp32I2CState {
@@ -25,19 +26,10 @@ typedef struct Esp32I2CState {
     Fifo8 tx_fifo;
     bool trans_ongoing;
 
-    uint32_t ctr_reg;
-    uint32_t timeout_reg;
-    uint32_t int_ena_reg;
-    uint32_t int_raw_reg;
-    uint32_t sda_hold_reg;
-    uint32_t sda_sample_reg;
-    uint32_t high_period_reg;
-    uint32_t low_period_reg;
-    uint32_t start_hold_reg;
-    uint32_t rstart_setup_reg;
-    uint32_t stop_hold_reg;
-    uint32_t stop_setup_reg;
-    uint32_t cmd_reg[ESP32_I2C_CMD_COUNT];
+    /* Generic register storage: all I2C registers are stored here.
+     * Special registers (CTR, INT_*, STATUS, CMD, FIFO) have custom
+     * read/write handlers but still use this array for storage. */
+    uint32_t regs[ESP32_I2C_REG_COUNT];
 
     /* Timer for deferred IRQ update — prevents synchronous re-entrancy
      * when transactions complete instantly in QEMU */
@@ -45,10 +37,12 @@ typedef struct Esp32I2CState {
     int pending_irq;
 } Esp32I2CState;
 
-
+/* Register offsets */
+REG32(I2C_LOW_PERIOD, 0x00);
 REG32(I2C_CTR, 0x04);
     FIELD(I2C_CTR, MS_MODE, 4, 1);
     FIELD(I2C_CTR, TRANS_START, 5, 1);
+    FIELD(I2C_CTR, CONF_UPGATE, 3, 1);
 
 REG32(I2C_STATUS, 0x08);
     FIELD(I2C_STATUS, BUS_BUSY, 4, 1);
@@ -87,7 +81,6 @@ REG32(I2C_INT_ST, 0x2c);
 REG32(I2C_SDA_HOLD, 0x30);
 REG32(I2C_SDA_SAMPLE, 0x34);
 REG32(I2C_HIGH_PERIOD, 0x38);
-REG32(I2C_LOW_PERIOD, 0x00);  // 0x00 is not a typo
 REG32(I2C_START_HOLD, 0x40);
 REG32(I2C_RSTART_SETUP, 0x44);
 REG32(I2C_STOP_HOLD, 0x48);
@@ -102,7 +95,7 @@ REG32(I2C_CMD, 0x58);
     FIELD(I2C_CMD, DONE, 31, 1);
 /* 15 more command registers omitted */
 
-/* I2C_CMD.OPCODE values — ESP32 numbering */
+/* I2C_CMD.OPCODE values -- ESP32 numbering */
 typedef enum {
     I2C_OPCODE_RSTART = 0,
     I2C_OPCODE_WRITE  = 1,
@@ -112,5 +105,8 @@ typedef enum {
     /* ESP32-S3 uses different numbering (RSTART=6, STOP=2, READ=3) */
     I2C_OPCODE_S3_RSTART = 6,
 } i2c_opcode_t;
+
+/* Convenience macros for accessing regs[] by register offset */
+#define I2C_REG(s, offset) ((s)->regs[(offset) / 4])
 
 #endif /* ESP32_I2C_H */

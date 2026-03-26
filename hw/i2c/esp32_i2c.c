@@ -9,13 +9,10 @@
 static void esp32_i2c_do_transaction(Esp32I2CState * s);
 static void esp32_i2c_update_irq(Esp32I2CState * s);
 
-/* Deferred IRQ callback — fires after the current TB exits */
+/* Deferred IRQ callback */
 static void esp32_i2c_irq_timer_cb(void *opaque)
 {
     Esp32I2CState *s = Esp32_I2C(opaque);
-    /* Fire the saved IRQ state from when update_irq was called.
-     * We cannot recompute it here because the firmware may have
-     * already cleared int_raw via polling before the timer fires. */
     qemu_set_irq(s->irq, s->pending_irq);
 }
 
@@ -26,31 +23,14 @@ static void esp32_i2c_reset_hold(Object *obj, ResetType type)
     fifo8_reset(&s->rx_fifo);
     fifo8_reset(&s->tx_fifo);
     s->trans_ongoing = false;
-    s->ctr_reg = 0;
-    s->timeout_reg = 0;
-    s->int_ena_reg = 0;
-    s->int_raw_reg = 0;
-    s->sda_hold_reg = 0;
-    s->sda_sample_reg = 0;
-    s->high_period_reg = 0;
-    s->low_period_reg = 0;
-    s->start_hold_reg = 0;
-    s->rstart_setup_reg = 0;
-    s->stop_hold_reg = 0;
-    s->stop_setup_reg = 0;
-    memset(s->cmd_reg, 0, sizeof(s->cmd_reg));
-
-    fifo8_reset(&s->tx_fifo);
-    fifo8_reset(&s->rx_fifo);
+    memset(s->regs, 0, sizeof(s->regs));
 }
 
 static uint32_t esp32_i2c_get_status_reg(Esp32I2CState* s)
 {
     uint32_t res = 0;
-    /* Bit 0 (RESP_REC): set when last byte received ACK from slave.
-     * ESP32-S3 esp-hal checks this after TRANS_COMPLETE to detect data NACKs.
-     * Since our slave models always ACK, report 1 (ACK received) when not
-     * in an active transaction (i.e., transaction completed successfully). */
+    /* Bit 0 (RESP_REC): 1 = ACK received from slave.
+     * Set when not in an active transaction (completed successfully). */
     if (!s->trans_ongoing) {
         res |= 1; /* RESP_REC = 1 */
     }
@@ -62,7 +42,7 @@ static uint32_t esp32_i2c_get_status_reg(Esp32I2CState* s)
 
 static void esp32_i2c_update_irq(Esp32I2CState * s)
 {
-    int irq_state = !!(s->int_raw_reg & s->int_ena_reg);
+    int irq_state = !!(I2C_REG(s, A_I2C_INT_RAW) & I2C_REG(s, A_I2C_INT_ENA));
     qemu_set_irq(s->irq, irq_state);
 }
 
@@ -71,8 +51,6 @@ static uint64_t esp32_i2c_read(void * opaque, hwaddr addr, unsigned int size)
     Esp32I2CState * s = Esp32_I2C(opaque);
 
     switch(addr) {
-    case A_I2C_CTR:
-        return s->ctr_reg;
     case A_I2C_STATUS:
         return esp32_i2c_get_status_reg(s);
     case A_I2C_FIFO_DATA: {
@@ -80,36 +58,15 @@ static uint64_t esp32_i2c_read(void * opaque, hwaddr addr, unsigned int size)
             error_report("esp32_i2c: read I2C FIFO while it is empty");
             return 0xee;
         }
-        uint8_t res = fifo8_pop(&s->rx_fifo);
-        return res;
+        return fifo8_pop(&s->rx_fifo);
     }
-    case A_I2C_INT_RAW:
-        return s->int_raw_reg;
-    case A_I2C_INT_ENA:
-        return s->int_ena_reg;
     case A_I2C_INT_ST:
-        return s->int_raw_reg & s->int_ena_reg;
-    case A_I2C_CMD ... (A_I2C_CMD + ESP32_I2C_CMD_COUNT * 4):
-        return s->cmd_reg[(addr - A_I2C_CMD) / 4];
-    case A_I2C_TIMEOUT:
-        return s->timeout_reg;
-    case A_I2C_SDA_HOLD:
-        return s->sda_hold_reg;
-    case A_I2C_SDA_SAMPLE:
-        return s->sda_sample_reg;
-    case A_I2C_HIGH_PERIOD:
-        return s->high_period_reg;
-    case A_I2C_LOW_PERIOD:
-        return s->low_period_reg;
-    case A_I2C_START_HOLD:
-        return s->start_hold_reg;
-    case A_I2C_RSTART_SETUP:
-        return s->rstart_setup_reg;
-    case A_I2C_STOP_HOLD:
-        return s->stop_hold_reg;
-    case A_I2C_STOP_SETUP:
-        return s->stop_setup_reg;
+        return I2C_REG(s, A_I2C_INT_RAW) & I2C_REG(s, A_I2C_INT_ENA);
     default:
+        /* All other registers: return stored value */
+        if (addr / 4 < ESP32_I2C_REG_COUNT) {
+            return s->regs[addr / 4];
+        }
         return 0;
     }
 }
@@ -118,6 +75,12 @@ static void esp32_i2c_write(void * opaque, hwaddr addr, uint64_t value, unsigned
 {
     Esp32I2CState * s = Esp32_I2C(opaque);
 
+    /* Store all writes to the register array for generic read-back */
+    if (addr / 4 < ESP32_I2C_REG_COUNT) {
+        s->regs[addr / 4] = (uint32_t)value;
+    }
+
+    /* Special handling for specific registers */
     switch(addr) {
     case A_I2C_CTR:
         if (FIELD_EX32(value, I2C_CTR, MS_MODE) != 1) {
@@ -125,9 +88,14 @@ static void esp32_i2c_write(void * opaque, hwaddr addr, uint64_t value, unsigned
         }
         if (FIELD_EX32(value, I2C_CTR, TRANS_START)) {
             esp32_i2c_do_transaction(s);
-            value &= ~ R_I2C_CTR_TRANS_START_MASK;
+            /* Auto-clear WT bits: TRANS_START, CONF_UPGATE */
+            value &= ~(R_I2C_CTR_TRANS_START_MASK | R_I2C_CTR_CONF_UPGATE_MASK);
+            s->regs[addr / 4] = (uint32_t)value;
+        } else {
+            /* Auto-clear CONF_UPGATE even without TRANS_START */
+            value &= ~R_I2C_CTR_CONF_UPGATE_MASK;
+            s->regs[addr / 4] = (uint32_t)value;
         }
-        s->ctr_reg = value;
         break;
     case A_I2C_FIFO_CONF:
         if (FIELD_EX32(value, I2C_FIFO_CONF, NONFIFO_EN)) {
@@ -139,6 +107,9 @@ static void esp32_i2c_write(void * opaque, hwaddr addr, uint64_t value, unsigned
         if (FIELD_EX32(value, I2C_FIFO_CONF, TX_FIFO_RST)) {
             fifo8_reset(&s->tx_fifo);
         }
+        /* Auto-clear reset bits */
+        value &= ~(R_I2C_FIFO_CONF_RX_FIFO_RST_MASK | R_I2C_FIFO_CONF_TX_FIFO_RST_MASK);
+        s->regs[addr / 4] = (uint32_t)value;
         break;
     case A_I2C_FIFO_DATA:
         if (fifo8_num_free(&s->tx_fifo) == 0) {
@@ -148,44 +119,14 @@ static void esp32_i2c_write(void * opaque, hwaddr addr, uint64_t value, unsigned
         }
         break;
     case A_I2C_INT_CLR:
-        s->int_raw_reg &= ~value;
+        I2C_REG(s, A_I2C_INT_RAW) &= ~(uint32_t)value;
         esp32_i2c_update_irq(s);
         break;
     case A_I2C_INT_ENA:
-        s->int_ena_reg = value;
         esp32_i2c_update_irq(s);
         break;
-    case A_I2C_CMD ... (A_I2C_CMD + ESP32_I2C_CMD_COUNT * 4):
-        s->cmd_reg[(addr - A_I2C_CMD) / 4] = value;
-        break;
-    case A_I2C_TIMEOUT:
-        s->timeout_reg = value;
-        break;
-    case A_I2C_SDA_HOLD:
-        s->sda_hold_reg = value;
-        break;
-    case A_I2C_SDA_SAMPLE:
-        s->sda_sample_reg = value;
-        break;
-    case A_I2C_HIGH_PERIOD:
-        s->high_period_reg = value;
-        break;
-    case A_I2C_LOW_PERIOD:
-        s->low_period_reg = value;
-        break;
-    case A_I2C_START_HOLD:
-        s->start_hold_reg = value;
-        break;
-    case A_I2C_RSTART_SETUP:
-        s->rstart_setup_reg = value;
-        break;
-    case A_I2C_STOP_HOLD:
-        s->stop_hold_reg = value;
-        break;
-    case A_I2C_STOP_SETUP:
-        s->stop_setup_reg = value;
-        break;
     default:
+        /* Value already stored above */
         break;
     }
 }
@@ -194,30 +135,20 @@ static void esp32_i2c_do_transaction(Esp32I2CState * s)
 {
     bool stop_or_end = false;
     for (int i_cmd = 0; i_cmd < ESP32_I2C_CMD_COUNT && !stop_or_end; ++i_cmd) {
-        uint32_t cmd = s->cmd_reg[i_cmd];
+        uint32_t cmd = s->regs[(A_I2C_CMD / 4) + i_cmd];
         int opcode = FIELD_EX32(cmd, I2C_CMD, OPCODE);
 
-        /* Normalize ESP32-S3 opcodes to ESP32 numbering:
-         *   S3 RSTART(6) -> RSTART(0)
-         *   S3 STOP(2)   -> STOP(3)
-         *   S3 READ(3)   -> READ(2)
-         * WRITE(1) and END(4) are the same on both. */
+        /* Normalize ESP32-S3 opcodes to ESP32 numbering */
         if (opcode == 6) {
             opcode = I2C_OPCODE_RSTART;
         } else if (opcode == 2) {
-            /* Ambiguous: ESP32 READ=2 or ESP32-S3 STOP=2.
-             * Heuristic: STOP has BYTE_NUM=0, READ has BYTE_NUM>0. */
             if (FIELD_EX32(cmd, I2C_CMD, BYTE_NUM) == 0) {
                 opcode = I2C_OPCODE_STOP;
             }
-            /* else keep as READ=2 (ESP32 convention) */
         } else if (opcode == 3) {
-            /* Ambiguous: ESP32 STOP=3 or ESP32-S3 READ=3.
-             * Heuristic: STOP has BYTE_NUM=0, READ has BYTE_NUM>0. */
             if (FIELD_EX32(cmd, I2C_CMD, BYTE_NUM) > 0) {
                 opcode = I2C_OPCODE_READ;
             }
-            /* else keep as STOP=3 (ESP32 convention) */
         }
 
         switch (opcode) {
@@ -237,13 +168,15 @@ static void esp32_i2c_do_transaction(Esp32I2CState * s)
                         /* NACK */
                         if (FIELD_EX32(cmd, I2C_CMD, ACK_CHECK_EN)
                             && FIELD_EX32(cmd, I2C_CMD, ACK_EXP) == 0) {
-                            s->int_raw_reg = FIELD_DP32(s->int_raw_reg, I2C_INT_RAW, ACK_ERR, 1);
+                            I2C_REG(s, A_I2C_INT_RAW) = FIELD_DP32(
+                                I2C_REG(s, A_I2C_INT_RAW), I2C_INT_RAW, ACK_ERR, 1);
                             stop_or_end = true;
                         }
                         s->trans_ongoing = false;
                         break;
                     }
-                    s->int_raw_reg = FIELD_DP32(s->int_raw_reg, I2C_INT_RAW, ACK_ERR, 0);
+                    I2C_REG(s, A_I2C_INT_RAW) = FIELD_DP32(
+                        I2C_REG(s, A_I2C_INT_RAW), I2C_INT_RAW, ACK_ERR, 0);
                     length -= 1;
                 }
                 for (size_t nbytes = 0; nbytes < length; ++nbytes) {
@@ -267,18 +200,21 @@ static void esp32_i2c_do_transaction(Esp32I2CState * s)
             case I2C_OPCODE_STOP:
                 i2c_end_transfer(s->bus);
                 s->trans_ongoing = false;
-                s->int_raw_reg = FIELD_DP32(s->int_raw_reg, I2C_INT_RAW, TRANS_COMPLETE, 1);
+                I2C_REG(s, A_I2C_INT_RAW) = FIELD_DP32(
+                    I2C_REG(s, A_I2C_INT_RAW), I2C_INT_RAW, TRANS_COMPLETE, 1);
                 stop_or_end = true;
                 break;
             case I2C_OPCODE_END:
-                s->int_raw_reg = FIELD_DP32(s->int_raw_reg, I2C_INT_RAW, END_DETECT, 1);
+                I2C_REG(s, A_I2C_INT_RAW) = FIELD_DP32(
+                    I2C_REG(s, A_I2C_INT_RAW), I2C_INT_RAW, END_DETECT, 1);
                 stop_or_end = true;
                 break;
             default:
                 error_report("esp32_i2c: Invalid command %d opcode %d", i_cmd, opcode);
                 break;
         }
-        s->cmd_reg[i_cmd] = FIELD_DP32(s->cmd_reg[i_cmd], I2C_CMD, DONE, 1);
+        s->regs[(A_I2C_CMD / 4) + i_cmd] = FIELD_DP32(
+            s->regs[(A_I2C_CMD / 4) + i_cmd], I2C_CMD, DONE, 1);
     }
     esp32_i2c_update_irq(s);
 }
@@ -306,7 +242,7 @@ static void esp32_i2c_init(Object * obj)
     s->irq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, esp32_i2c_irq_timer_cb, s);
 }
 
-static void esp32_i2c_class_init(ObjectClass * klass, void * data)
+static void esp32_i2c_class_init(ObjectClass *klass, void *data)
 {
     ResettableClass *rc = RESETTABLE_CLASS(klass);
     rc->phases.hold = esp32_i2c_reset_hold;
@@ -317,7 +253,7 @@ static const TypeInfo esp32_i2c_type_info = {
     .parent = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(Esp32I2CState),
     .instance_init = esp32_i2c_init,
-    .class_init = esp32_i2c_class_init,
+    .class_init = esp32_i2c_class_init
 };
 
 static void esp32_i2c_register_types(void)
