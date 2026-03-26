@@ -62,6 +62,7 @@
 #include "hw/timer/esp32s3_systimer.h"
 #include "hw/gpio/esp32s3_gpio.h"
 #include "hw/i2c/esp32_i2c.h"
+#include "hw/ssi/esp32s3_gpspi.h"
 #include "hw/misc/esp32s3_xts_aes.h"
 #include "hw/misc/esp32s3_pms.h"
 #include "hw/net/can/esp32s3_twai.h"
@@ -151,6 +152,7 @@ typedef struct Esp32s3SocState {
 
     ESP32C3UsbJtagState jtag;
     Esp32I2CState i2c[ESP32S3_I2C_COUNT];
+    Esp32s3GpSpiState gpspi[2];  /* SPI2 and SPI3 */
     ESPRgbState rgb;
 
     MemoryRegion iomem;
@@ -578,6 +580,9 @@ static void esp32s3_soc_init(Object *obj)
         object_initialize_child(obj, name, &s->i2c[i], TYPE_ESP32_I2C);
     }
 
+    object_initialize_child(obj, "spi2", &s->gpspi[0], TYPE_ESP32S3_GPSPI);
+    object_initialize_child(obj, "spi3", &s->gpspi[1], TYPE_ESP32S3_GPSPI);
+
     object_initialize_child(obj, "intmatrix", &s->intmatrix, TYPE_ESP32S3_INTMATRIX);
 
     object_initialize_child(obj, "rtc_cntl", &s->rtc_cntl, TYPE_ESP32S3_RTC_CNTL);
@@ -831,11 +836,22 @@ static void esp32s3_machine_init(MachineState *machine)
         }
     }
 
+    /* GP-SPI (SPI2/SPI3) realization */
+    {
+        const hwaddr spi_base[] = {DR_REG_SPI2_BASE, DR_REG_SPI3_BASE};
+        for (int i = 0; i < 2; i++) {
+            sysbus_realize(SYS_BUS_DEVICE(&ss->gpspi[i]), &error_fatal);
+            MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->gpspi[i]), 0);
+            memory_region_add_subregion_overlap(sys_mem, spi_base[i], mr, 0);
+            sysbus_connect_irq(SYS_BUS_DEVICE(&ss->gpspi[i]), 0,
+                               qdev_get_gpio_in(intmatrix_dev, ETS_SPI2_INTR_SOURCE + i));
+        }
+    }
+
     {
         qdev_realize(DEVICE(&ss->rng), &ss->periph_bus, &error_fatal);
         esp32s3_soc_add_periph_device(sys_mem, &ss->rng, ESP32S3_RNG_BASE);
     }
-
 
     /* GDMA Realization */
     {
