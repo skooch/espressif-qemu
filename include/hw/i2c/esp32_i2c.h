@@ -38,6 +38,11 @@ typedef struct Esp32I2CState {
     uint32_t stop_hold_reg;
     uint32_t stop_setup_reg;
     uint32_t cmd_reg[ESP32_I2C_CMD_COUNT];
+
+    /* Timer for deferred IRQ update — prevents synchronous re-entrancy
+     * when transactions complete instantly in QEMU */
+    QEMUTimer *irq_timer;
+    int pending_irq;
 } Esp32I2CState;
 
 

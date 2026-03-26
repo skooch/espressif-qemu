@@ -2,11 +2,22 @@
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qemu/error-report.h"
+#include "qemu/timer.h"
 #include "hw/i2c/esp32_i2c.h"
 #include "hw/irq.h"
 
 static void esp32_i2c_do_transaction(Esp32I2CState * s);
 static void esp32_i2c_update_irq(Esp32I2CState * s);
+
+/* Deferred IRQ callback — fires after the current TB exits */
+static void esp32_i2c_irq_timer_cb(void *opaque)
+{
+    Esp32I2CState *s = Esp32_I2C(opaque);
+    /* Fire the saved IRQ state from when update_irq was called.
+     * We cannot recompute it here because the firmware may have
+     * already cleared int_raw via polling before the timer fires. */
+    qemu_set_irq(s->irq, s->pending_irq);
+}
 
 static void esp32_i2c_reset_hold(Object *obj, ResetType type)
 {
@@ -51,16 +62,13 @@ static uint32_t esp32_i2c_get_status_reg(Esp32I2CState* s)
 
 static void esp32_i2c_update_irq(Esp32I2CState * s)
 {
-    /* Do not fire I2C interrupt. The firmware's async I2C driver polls
-     * INT_RAW directly for completion checking. Firing the IRQ causes
-     * an interrupt storm because transactions complete synchronously
-     * in QEMU (instant I2C), creating re-entrant interrupt loops that
-     * overflow the stack or starve other tasks.
-     *
-     * The firmware recovers because its I2C future checks int_raw on
-     * each poll and finds TRANS_COMPLETE/END_DETECT already set. */
-    int irq_state = 0;  /* force IRQ OFF */
-    qemu_set_irq(s->irq, irq_state);
+    /* Defer the IRQ to break synchronous re-entrancy. Save the computed
+     * state now because the firmware may clear int_raw via polling before
+     * the timer fires. The 1us delay ensures the interrupt fires after
+     * the current CPU instruction completes. */
+    s->pending_irq = !!(s->int_raw_reg & s->int_ena_reg);
+    timer_mod_ns(s->irq_timer,
+                 qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 1000);
 }
 
 static uint64_t esp32_i2c_read(void * opaque, hwaddr addr, unsigned int size)
@@ -299,6 +307,8 @@ static void esp32_i2c_init(Object * obj)
 
     fifo8_create(&s->tx_fifo, ESP32_I2C_FIFO_LENGTH);
     fifo8_create(&s->rx_fifo, ESP32_I2C_FIFO_LENGTH);
+
+    s->irq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, esp32_i2c_irq_timer_cb, s);
 }
 
 static void esp32_i2c_class_init(ObjectClass * klass, void * data)
