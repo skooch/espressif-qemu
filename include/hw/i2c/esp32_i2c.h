@@ -97,13 +97,15 @@ REG32(I2C_CMD, 0x58);
     FIELD(I2C_CMD, DONE, 31, 1);
 /* 15 more command registers omitted */
 
-/* I2C_CMD.OPCODE values */
+/* I2C_CMD.OPCODE values — ESP32 numbering */
 typedef enum {
     I2C_OPCODE_RSTART = 0,
     I2C_OPCODE_WRITE  = 1,
     I2C_OPCODE_READ   = 2,
     I2C_OPCODE_STOP   = 3,
     I2C_OPCODE_END    = 4,
+    /* ESP32-S3 uses different numbering (RSTART=6, STOP=2, READ=3) */
+    I2C_OPCODE_S3_RSTART = 6,
 } i2c_opcode_t;
 
 #endif /* ESP32_I2C_H */

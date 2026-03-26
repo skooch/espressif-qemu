@@ -36,6 +36,13 @@ static void esp32_i2c_reset_hold(Object *obj, ResetType type)
 static uint32_t esp32_i2c_get_status_reg(Esp32I2CState* s)
 {
     uint32_t res = 0;
+    /* Bit 0 (RESP_REC): set when last byte received ACK from slave.
+     * ESP32-S3 esp-hal checks this after TRANS_COMPLETE to detect data NACKs.
+     * Since our slave models always ACK, report 1 (ACK received) when not
+     * in an active transaction (i.e., transaction completed successfully). */
+    if (!s->trans_ongoing) {
+        res |= 1; /* RESP_REC = 1 */
+    }
     res = FIELD_DP32(res, I2C_STATUS, BUS_BUSY, s->trans_ongoing);
     res = FIELD_DP32(res, I2C_STATUS, RXFIFO_CNT, fifo8_num_used(&s->rx_fifo));
     res = FIELD_DP32(res, I2C_STATUS, TXFIFO_CNT, fifo8_num_used(&s->tx_fifo));
@@ -177,7 +184,31 @@ static void esp32_i2c_do_transaction(Esp32I2CState * s)
     bool stop_or_end = false;
     for (int i_cmd = 0; i_cmd < ESP32_I2C_CMD_COUNT && !stop_or_end; ++i_cmd) {
         uint32_t cmd = s->cmd_reg[i_cmd];
-        char opcode = FIELD_EX32(cmd, I2C_CMD, OPCODE);
+        int opcode = FIELD_EX32(cmd, I2C_CMD, OPCODE);
+
+        /* Normalize ESP32-S3 opcodes to ESP32 numbering:
+         *   S3 RSTART(6) -> RSTART(0)
+         *   S3 STOP(2)   -> STOP(3)
+         *   S3 READ(3)   -> READ(2)
+         * WRITE(1) and END(4) are the same on both. */
+        if (opcode == 6) {
+            opcode = I2C_OPCODE_RSTART;
+        } else if (opcode == 2) {
+            /* Ambiguous: ESP32 READ=2 or ESP32-S3 STOP=2.
+             * Heuristic: STOP has BYTE_NUM=0, READ has BYTE_NUM>0. */
+            if (FIELD_EX32(cmd, I2C_CMD, BYTE_NUM) == 0) {
+                opcode = I2C_OPCODE_STOP;
+            }
+            /* else keep as READ=2 (ESP32 convention) */
+        } else if (opcode == 3) {
+            /* Ambiguous: ESP32 STOP=3 or ESP32-S3 READ=3.
+             * Heuristic: STOP has BYTE_NUM=0, READ has BYTE_NUM>0. */
+            if (FIELD_EX32(cmd, I2C_CMD, BYTE_NUM) > 0) {
+                opcode = I2C_OPCODE_READ;
+            }
+            /* else keep as STOP=3 (ESP32 convention) */
+        }
+
         switch (opcode) {
             case I2C_OPCODE_RSTART:
                 i2c_end_transfer(s->bus);
@@ -190,7 +221,8 @@ static void esp32_i2c_do_transaction(Esp32I2CState * s)
                     uint8_t data = fifo8_pop(&s->tx_fifo);
                     uint8_t addr = data >> 1;
                     uint8_t is_read = data & 0x1;
-                    if (i2c_start_transfer(s->bus, addr, is_read) != 0) {
+                    int xfer_result = i2c_start_transfer(s->bus, addr, is_read);
+                    if (xfer_result != 0) {
                         /* NACK */
                         if (FIELD_EX32(cmd, I2C_CMD, ACK_CHECK_EN)
                             && FIELD_EX32(cmd, I2C_CMD, ACK_EXP) == 0) {
