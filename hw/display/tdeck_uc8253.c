@@ -121,24 +121,25 @@ static void tdeck_panel_click(TdeckUc8253State *s, int px, int py)
     }
     /* [Call] button: around (8-48, 136-152) */
     else if (px >= 8 && px <= 48 && py >= 136 && py <= 152) {
-        if (s->modem) {
+        if (s->modem && tdeck_modem_get_power_state(s->modem) == MODEM_READY) {
             tdeck_modem_incoming_call(s->modem);
         }
     }
     /* [SMS] button: around (8-48, 156-172) */
     else if (px >= 8 && px <= 48 && py >= 156 && py <= 172) {
-        if (s->modem) {
+        if (s->modem && tdeck_modem_get_power_state(s->modem) == MODEM_READY) {
             tdeck_modem_receive_sms(s->modem);
         }
     }
     /* [Signal] button: around (8-72, 176-192) */
     else if (px >= 8 && px <= 72 && py >= 176 && py <= 192) {
+        if (!s->modem || tdeck_modem_get_power_state(s->modem) != MODEM_READY) {
+            return;
+        }
         if (s->panel_signal == 20) s->panel_signal = 10;
         else if (s->panel_signal == 10) s->panel_signal = 0;
         else s->panel_signal = 20;
-        if (s->modem) {
-            tdeck_modem_set_signal(s->modem, s->panel_signal);
-        }
+        tdeck_modem_set_signal(s->modem, s->panel_signal);
     }
     else {
         return;  /* no button hit */
@@ -197,9 +198,23 @@ static void tdeck_panel_render(TdeckUc8253State *s)
 
     /* Cellular section */
     panel_puts(pixels, stride, px + 8, 116, "Cellular", fg, bg);
-    panel_puts(pixels, stride, px + 8, 136, "[Call]", fg, btn_bg);
-    panel_puts(pixels, stride, px + 8, 156, "[SMS]", fg, btn_bg);
-    panel_puts(pixels, stride, px + 8, 176, "[Signal]", fg, btn_bg);
+
+    /* Modem power state */
+    const char *power_str;
+    switch (tdeck_modem_get_power_state(s->modem)) {
+    case MODEM_POWER_OFF:     power_str = "Modem: OFF";      break;
+    case MODEM_POWER_RAIL_ON: power_str = "Modem: Rail On";  break;
+    case MODEM_BOOTING:       power_str = "Modem: Booting";  break;
+    case MODEM_READY:         power_str = "Modem: Ready";    break;
+    default:                  power_str = "Modem: ???";      break;
+    }
+    panel_puts(pixels, stride, px + 80, 116, power_str, fg, bg);
+
+    uint32_t cell_btn = (tdeck_modem_get_power_state(s->modem) == MODEM_READY)
+                        ? btn_bg : 0x00C0C0C0;
+    panel_puts(pixels, stride, px + 8, 136, "[Call]", fg, cell_btn);
+    panel_puts(pixels, stride, px + 8, 156, "[SMS]", fg, cell_btn);
+    panel_puts(pixels, stride, px + 8, 176, "[Signal]", fg, cell_btn);
     snprintf(buf, sizeof(buf), "CSQ: %d", s->panel_signal);
     panel_puts(pixels, stride, px + 80, 176, buf, fg, bg);
 }
