@@ -76,6 +76,17 @@
 /* GPIO region covers 0x000 to 0x700 */
 #define ESP32S3_GPIO_IO_SIZE  0x700
 
+/* Callback for output pin level changes */
+typedef void (*gpio_output_cb_fn)(void *opaque, int pin, int level);
+
+#define ESP32S3_GPIO_MAX_OUTPUT_CBS 8
+
+typedef struct {
+    gpio_output_cb_fn fn;
+    void *opaque;
+    int pin;  /* -1 = all pins */
+} ESP32S3GPIOOutputCb;
+
 typedef struct ESP32S3GPIOState {
     Esp32GpioState parent;
 
@@ -102,6 +113,13 @@ typedef struct ESP32S3GPIOState {
 
     /* Deferred IRQ timer to prevent re-entrant interrupt processing */
     QEMUTimer irq_timer;
+
+    /* Output change callbacks */
+    ESP32S3GPIOOutputCb output_cbs[ESP32S3_GPIO_MAX_OUTPUT_CBS];
+    int output_cb_count;
+
+    /* RTC_CNTL reference for wakeup notification */
+    struct Esp32s3RtcCntlState *rtc_cntl;
 } ESP32S3GPIOState;
 
 typedef struct ESP32S3GPIOClass {
@@ -110,3 +128,9 @@ typedef struct ESP32S3GPIOClass {
 
 /* Public API for device models to set input pin levels */
 void esp32s3_gpio_set_input(ESP32S3GPIOState *s, int gpio_num, bool level);
+
+/* Register a callback for when a GPIO output pin changes level */
+void esp32s3_gpio_register_output_cb(ESP32S3GPIOState *s,
+                                      int pin,
+                                      gpio_output_cb_fn fn,
+                                      void *opaque);

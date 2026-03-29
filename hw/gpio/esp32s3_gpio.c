@@ -29,6 +29,7 @@
 #include "hw/irq.h"
 #include "hw/qdev-properties.h"
 #include "hw/gpio/esp32s3_gpio.h"
+#include "hw/misc/esp32s3_rtc_cntl.h"
 
 
 /* Deferred GPIO IRQ callback */
@@ -124,6 +125,53 @@ void esp32s3_gpio_set_input(ESP32S3GPIOState *s, int gpio_num, bool level)
     }
 
     esp32s3_gpio_check_int(s, gpio_num, old_level, level);
+
+    /* Notify RTC_CNTL if this pin has wakeup_enable set and we are sleeping */
+    if (s->rtc_cntl) {
+        uint32_t pin_cfg = s->pin_reg[gpio_num];
+        bool wakeup_enable = (pin_cfg >> 10) & 1;
+        int int_type = (pin_cfg >> GPIO_PIN_INT_TYPE_SHIFT) & 0x7;
+        if (wakeup_enable && int_type == GPIO_INT_LOW && !level) {
+            esp32s3_rtc_gpio_wakeup_notify(s->rtc_cntl, gpio_num);
+        }
+    }
+}
+
+void esp32s3_gpio_register_output_cb(ESP32S3GPIOState *s,
+                                      int pin,
+                                      gpio_output_cb_fn fn,
+                                      void *opaque)
+{
+    assert(s->output_cb_count < ESP32S3_GPIO_MAX_OUTPUT_CBS);
+    ESP32S3GPIOOutputCb *cb = &s->output_cbs[s->output_cb_count++];
+    cb->fn = fn;
+    cb->opaque = opaque;
+    cb->pin = pin;
+}
+
+static void esp32s3_gpio_notify_output(ESP32S3GPIOState *s, int pin, int level)
+{
+    for (int i = 0; i < s->output_cb_count; i++) {
+        ESP32S3GPIOOutputCb *cb = &s->output_cbs[i];
+        if (cb->pin == -1 || cb->pin == pin) {
+            cb->fn(cb->opaque, pin, level);
+        }
+    }
+}
+
+static void esp32s3_gpio_check_output_change(ESP32S3GPIOState *s,
+                                               int bank,
+                                               uint32_t old_val,
+                                               uint32_t new_val)
+{
+    uint32_t changed = old_val ^ new_val;
+    while (changed) {
+        int bit = ctz32(changed);
+        int pin = bank * 32 + bit;
+        int level = (new_val >> bit) & 1;
+        esp32s3_gpio_notify_output(s, pin, level);
+        changed &= changed - 1;
+    }
 }
 
 static uint64_t esp32s3_gpio_read(void *opaque, hwaddr addr, unsigned int size)
@@ -211,24 +259,42 @@ static void esp32s3_gpio_write(void *opaque, hwaddr addr,
 
     switch (addr) {
     /* Output data: direct write, set, clear */
-    case GPIO_OUT_REG:
+    case GPIO_OUT_REG: {
+        uint32_t old = s->out[0];
         s->out[0] = (uint32_t)value;
+        esp32s3_gpio_check_output_change(s, 0, old, s->out[0]);
         break;
-    case GPIO_OUT_W1TS_REG:
+    }
+    case GPIO_OUT_W1TS_REG: {
+        uint32_t old = s->out[0];
         s->out[0] |= (uint32_t)value;
+        esp32s3_gpio_check_output_change(s, 0, old, s->out[0]);
         break;
-    case GPIO_OUT_W1TC_REG:
+    }
+    case GPIO_OUT_W1TC_REG: {
+        uint32_t old = s->out[0];
         s->out[0] &= ~(uint32_t)value;
+        esp32s3_gpio_check_output_change(s, 0, old, s->out[0]);
         break;
-    case GPIO_OUT1_REG:
+    }
+    case GPIO_OUT1_REG: {
+        uint32_t old = s->out[1];
         s->out[1] = (uint32_t)value;
+        esp32s3_gpio_check_output_change(s, 1, old, s->out[1]);
         break;
-    case GPIO_OUT1_W1TS_REG:
+    }
+    case GPIO_OUT1_W1TS_REG: {
+        uint32_t old = s->out[1];
         s->out[1] |= (uint32_t)value;
+        esp32s3_gpio_check_output_change(s, 1, old, s->out[1]);
         break;
-    case GPIO_OUT1_W1TC_REG:
+    }
+    case GPIO_OUT1_W1TC_REG: {
+        uint32_t old = s->out[1];
         s->out[1] &= ~(uint32_t)value;
+        esp32s3_gpio_check_output_change(s, 1, old, s->out[1]);
         break;
+    }
 
     /* Output enable: direct write, set, clear */
     case GPIO_ENABLE_REG:
