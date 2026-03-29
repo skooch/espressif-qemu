@@ -84,6 +84,8 @@ void tdeck_bq25896_set_fuel_gauge(I2CSlave *charger, I2CSlave *gauge);
 #include "hw/misc/esp32c3_jtag.h"
 #include "hw/display/esp_rgb.h"
 #include "hw/display/tdeck_uc8253.h"
+#include "hw/ssi/tdeck_sd_spi.h"
+#include "hw/sd/sdcard_legacy.h"
 
 #define TYPE_ESP32S3_SOC "xtensa.esp32s3"
 #define ESP32S3_SOC(obj) OBJECT_CHECK(Esp32s3SocState, (obj), TYPE_ESP32S3_SOC)
@@ -168,6 +170,7 @@ typedef struct Esp32s3SocState {
     Esp32s3GpSpiState gpspi[2];  /* SPI2 and SPI3 */
     ESPRgbState rgb;
     TdeckUc8253State epd;
+    TdeckSdSpiState sd_spi;
 
     MemoryRegion iomem;
     DWCSDMMCState sdmmc;
@@ -334,19 +337,16 @@ static void esp32s3_machine_init_psram(Esp32s3SocState *ms, uint32_t size_mbytes
                                 qdev_get_gpio_in_named(psram, SSI_GPIO_CS, 0));
 }
 
-static void esp32s3_machine_init_sd(Esp32s3SocState* ss)
+static void esp32s3_machine_init_sd(Esp32s3SocState *ss)
 {
     DriveInfo *dinfo = drive_get(IF_SD, 0, 0);
     if (dinfo) {
-        DeviceState *card;
-
-        card = qdev_new(TYPE_SD_CARD);
-        qdev_prop_set_drive_err(card, "drive", blk_by_legacy_dinfo(dinfo),
-                                &error_fatal);
-        /* See the comment on not using sysbus-default in esp32_machine_init_i2c */
-        DeviceState *sdmmc = DEVICE(&ss->sdmmc);
-        SDBus* sd_bus = SD_BUS(qdev_get_child_bus(sdmmc, "sd-bus"));
-        qdev_realize_and_unref(card, BUS(sd_bus), &error_fatal);
+        BlockBackend *blk = blk_by_legacy_dinfo(dinfo);
+        ss->sd_spi.sd = sd_init(blk, true);  /* true = SPI mode */
+        ss->sd_spi.inserted = true;
+    } else {
+        ss->sd_spi.sd = NULL;
+        ss->sd_spi.inserted = false;
     }
 }
 
@@ -993,6 +993,9 @@ static void esp32s3_machine_init(MachineState *machine)
 
         /* Connect SPI2 to EPD for data routing */
         ss->gpspi[0].epd = &ss->epd;
+
+        /* Wire SD card SPI slave into GP-SPI for CS routing */
+        ss->gpspi[0].sd_spi = &ss->sd_spi;
     }
 
     {
