@@ -105,10 +105,16 @@ static void tdeck_bq25896_class_init(ObjectClass *klass, void *data)
     sc->send = tdeck_bq25896_send;
 }
 
+static void tdeck_bq25896_instance_init(Object *obj)
+{
+    tdeck_bq25896_reset(DEVICE(obj));
+}
+
 static const TypeInfo tdeck_bq25896_info = {
     .name = TYPE_TDECK_BQ25896,
     .parent = TYPE_I2C_SLAVE,
     .instance_size = sizeof(TdeckBq25896State),
+    .instance_init = tdeck_bq25896_instance_init,
     .class_init = tdeck_bq25896_class_init,
 };
 
@@ -283,6 +289,11 @@ static void tdeck_bq27220_exec_subcmd(TdeckBq27220State *s, uint16_t subcmd)
         s->ctrl_result = 0;
         return;
     case 0x0041: /* RESET */
+        /* Reset reinitializes the gauge: back to sealed, INITCOMP stays set */
+        s->security_mode = 3;
+        s->config_update = false;
+        s->pending_subcmd = 0;
+        tdeck_bq27220_update_op_status(s);
         s->ctrl_result = 0;
         return;
     case 0x0090: /* SET_CFGUPDATE */
@@ -332,10 +343,16 @@ static void tdeck_bq27220_class_init(ObjectClass *klass, void *data)
     sc->send = tdeck_bq27220_send;
 }
 
+static void tdeck_bq27220_instance_init(Object *obj)
+{
+    tdeck_bq27220_reset(DEVICE(obj));
+}
+
 static const TypeInfo tdeck_bq27220_info = {
     .name = TYPE_TDECK_BQ27220,
     .parent = TYPE_I2C_SLAVE,
     .instance_size = sizeof(TdeckBq27220State),
+    .instance_init = tdeck_bq27220_instance_init,
     .class_init = tdeck_bq27220_class_init,
 };
 
@@ -448,15 +465,21 @@ void tdeck_tca8418_inject_char(TdeckTca8418State *s, char c)
     tdeck_tca8418_inject_key(s, code, false);
 }
 
-static void tdeck_tca8418_reset(DeviceState *dev)
+/* Initialize data fields only (no GPIO/IRQ ops - safe for instance_init) */
+static void tdeck_tca8418_init_state(TdeckTca8418State *s)
 {
-    TdeckTca8418State *s = TDECK_TCA8418(dev);
     memset(s->regs, 0, sizeof(s->regs));
     s->reg_addr = 0;
     s->addr_set = false;
     s->fifo_count = 0;
     s->fifo_head = 0;
     s->fifo_tail = 0;
+}
+
+static void tdeck_tca8418_reset(DeviceState *dev)
+{
+    TdeckTca8418State *s = TDECK_TCA8418(dev);
+    tdeck_tca8418_init_state(s);
     /* INT is active LOW; deassert (HIGH) when idle */
     qemu_set_irq(s->int_pin, 1);
 }
@@ -536,10 +559,17 @@ static void tdeck_tca8418_class_init(ObjectClass *klass, void *data)
     sc->send = tdeck_tca8418_send;
 }
 
+static void tdeck_tca8418_instance_init(Object *obj)
+{
+    TdeckTca8418State *s = TDECK_TCA8418(obj);
+    tdeck_tca8418_init_state(s);
+}
+
 static const TypeInfo tdeck_tca8418_info = {
     .name = TYPE_TDECK_TCA8418,
     .parent = TYPE_I2C_SLAVE,
     .instance_size = sizeof(TdeckTca8418State),
+    .instance_init = tdeck_tca8418_instance_init,
     .class_init = tdeck_tca8418_class_init,
 };
 
@@ -608,9 +638,9 @@ void tdeck_cst328_inject_touch(TdeckCst328State *s,
     }
 }
 
-static void tdeck_cst328_reset(DeviceState *dev)
+/* Initialize data fields only (no GPIO/timer ops - safe for instance_init) */
+static void tdeck_cst328_init_state(TdeckCst328State *s)
 {
-    TdeckCst328State *s = TDECK_CST328(dev);
     s->reg_addr = 0;
     s->addr_set = false;
     s->read_idx = 0;
@@ -618,6 +648,12 @@ static void tdeck_cst328_reset(DeviceState *dev)
     s->x = 0;
     s->y = 0;
     s->currently_pressed = false;
+}
+
+static void tdeck_cst328_reset(DeviceState *dev)
+{
+    TdeckCst328State *s = TDECK_CST328(dev);
+    tdeck_cst328_init_state(s);
     if (s->touch_timer) {
         timer_del(s->touch_timer);
     }
@@ -693,10 +729,17 @@ static void tdeck_cst328_class_init(ObjectClass *klass, void *data)
     sc->send = tdeck_cst328_send;
 }
 
+static void tdeck_cst328_instance_init(Object *obj)
+{
+    TdeckCst328State *s = TDECK_CST328(obj);
+    tdeck_cst328_init_state(s);
+}
+
 static const TypeInfo tdeck_cst328_info = {
     .name = TYPE_TDECK_CST328,
     .parent = TYPE_I2C_SLAVE,
     .instance_size = sizeof(TdeckCst328State),
+    .instance_init = tdeck_cst328_instance_init,
     .class_init = tdeck_cst328_class_init,
 };
 
