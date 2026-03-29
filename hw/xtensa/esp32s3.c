@@ -938,6 +938,7 @@ static void esp32s3_machine_init(MachineState *machine)
             ss->epd.bq25896 = (TdeckBq25896State *)bq25896;
             ss->epd.bq27220 = (TdeckBq27220State *)bq27220;
             ss->epd.modem = ss->modem;
+            ss->epd.sd_spi = &ss->sd_spi;
 
             /* Wire GPIO output callbacks for modem power control */
             esp32s3_gpio_register_output_cb(&ss->gpio, 41, esp32s3_modem_gpio_cb, ss->modem);

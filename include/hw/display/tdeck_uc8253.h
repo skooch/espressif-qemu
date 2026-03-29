@@ -40,6 +40,7 @@ typedef struct ESP32S3GPIOState ESP32S3GPIOState;
 typedef struct TdeckModemChardev TdeckModemChardev;
 typedef struct TdeckBq27220State TdeckBq27220State;
 typedef struct TdeckBq25896State TdeckBq25896State;
+typedef struct TdeckSdSpiState TdeckSdSpiState;
 
 typedef struct TdeckUc8253State {
     DeviceState parent_obj;
@@ -90,6 +91,9 @@ typedef struct TdeckUc8253State {
     TdeckModemChardev *modem;
     TdeckBq27220State *bq27220;
     TdeckBq25896State *bq25896;
+    TdeckSdSpiState *sd_spi;
+
+    int panel_sd_inserted;    /* 0=ejected, 1=inserted */
 } TdeckUc8253State;
 
 /* Called by GP-SPI model to deliver SPI bytes */

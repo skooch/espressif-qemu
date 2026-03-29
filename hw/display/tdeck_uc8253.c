@@ -18,6 +18,7 @@
 #include "qemu/module.h"
 #include "hw/irq.h"
 #include "hw/display/tdeck_uc8253.h"
+#include "hw/ssi/tdeck_sd_spi.h"
 #include "hw/char/tdeck_modem.h"
 #include "ui/vgafont.h"
 
@@ -140,6 +141,13 @@ static void tdeck_panel_click(TdeckUc8253State *s, int px, int py)
         else s->panel_signal = 20;
         tdeck_modem_set_signal(s->modem, s->panel_signal);
     }
+    /* [Eject/Insert] SD card: around (8-56, 220-236) */
+    else if (px >= 8 && px <= 56 && py >= 220 && py <= 236) {
+        if (s->sd_spi && s->sd_spi->sd) {
+            s->panel_sd_inserted = !s->panel_sd_inserted;
+            tdeck_sd_spi_set_inserted(s->sd_spi, s->panel_sd_inserted);
+        }
+    }
     else {
         return;  /* no button hit */
     }
@@ -216,6 +224,17 @@ static void tdeck_panel_render(TdeckUc8253State *s)
     panel_puts(pixels, stride, px + 8, 176, "[Signal]", fg, cell_btn);
     snprintf(buf, sizeof(buf), "CSQ: %d", s->panel_signal);
     panel_puts(pixels, stride, px + 80, 176, buf, fg, bg);
+
+    /* SD Card section */
+    panel_puts(pixels, stride, px + 8, 200, "SD Card", fg, bg);
+    if (s->sd_spi && s->sd_spi->sd) {
+        const char *sd_btn = s->panel_sd_inserted ? "[Eject]" : "[Insert]";
+        const char *sd_status = s->panel_sd_inserted ? "Inserted" : "Ejected";
+        panel_puts(pixels, stride, px + 8, 220, sd_btn, fg, btn_bg);
+        panel_puts(pixels, stride, px + 72, 220, sd_status, fg, bg);
+    } else {
+        panel_puts(pixels, stride, px + 8, 220, "No image", fg, bg);
+    }
 }
 
 /* Expand 1bpp framebuffer to 32bpp XRGB on the GraphicConsole surface */
@@ -585,6 +604,7 @@ static void tdeck_uc8253_reset_hold(Object *obj, ResetType type)
     s->panel_soc = 85;
     s->panel_charger = 0;
     s->panel_signal = 20;
+    s->panel_sd_inserted = (s->sd_spi && s->sd_spi->inserted) ? 1 : 0;
 
     /* BUSY starts HIGH (ready) */
     qemu_set_irq(s->busy_pin, 1);
