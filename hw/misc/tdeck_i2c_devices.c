@@ -142,6 +142,13 @@ struct TdeckBq27220State {
     uint8_t security_mode; /* 0=unknown, 1=full_access, 2=unsealed, 3=sealed */
     uint16_t pending_subcmd; /* First half of 2-word unseal key */
     bool config_update;
+    /* Data memory parameter cache for MAC readback */
+    struct {
+        uint16_t address;
+        uint8_t data[4];
+        uint8_t len;
+    } dm_cache[32];
+    uint8_t dm_cache_count;
 };
 
 /* Deferred definition: needs TdeckBq27220State to be complete */
@@ -313,6 +320,43 @@ static void tdeck_bq27220_exec_subcmd(TdeckBq27220State *s, uint16_t subcmd)
     s->pending_subcmd = 0;
 }
 
+static void tdeck_bq27220_cache_dm_write(TdeckBq27220State *s)
+{
+    uint8_t length = s->regs[0x61];
+    if (length < 5) return;
+    uint8_t data_len = length - 4;
+    if (data_len > 4) data_len = 4;
+
+    uint16_t dm_addr = (uint16_t)s->regs[0x3E] | ((uint16_t)s->regs[0x3F] << 8);
+
+    int slot = -1;
+    for (int i = 0; i < s->dm_cache_count; i++) {
+        if (s->dm_cache[i].address == dm_addr) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0 && s->dm_cache_count < 32) {
+        slot = s->dm_cache_count++;
+    }
+    if (slot >= 0) {
+        s->dm_cache[slot].address = dm_addr;
+        s->dm_cache[slot].len = data_len;
+        memcpy(s->dm_cache[slot].data, &s->regs[0x40], data_len);
+    }
+}
+
+static void tdeck_bq27220_load_dm_cache(TdeckBq27220State *s)
+{
+    uint16_t dm_addr = (uint16_t)s->regs[0x3E] | ((uint16_t)s->regs[0x3F] << 8);
+    for (int i = 0; i < s->dm_cache_count; i++) {
+        if (s->dm_cache[i].address == dm_addr) {
+            memcpy(&s->regs[0x40], s->dm_cache[i].data, s->dm_cache[i].len);
+            return;
+        }
+    }
+}
+
 static int tdeck_bq27220_send(I2CSlave *i2c, uint8_t data)
 {
     TdeckBq27220State *s = TDECK_BQ27220(i2c);
@@ -327,6 +371,16 @@ static int tdeck_bq27220_send(I2CSlave *i2c, uint8_t data)
             tdeck_bq27220_exec_subcmd(s, subcmd);
         } else if (s->reg_addr < sizeof(s->regs)) {
             s->regs[s->reg_addr] = data;
+            /* DM write complete: MAC_DATA_LEN (0x61) is the last byte written.
+             * Firmware sends [0x60, checksum, length] — trigger on 0x61
+             * so both checksum and length are in regs when we cache. */
+            if (s->reg_addr == 0x61) {
+                tdeck_bq27220_cache_dm_write(s);
+            }
+            /* DM read setup: writing addr_hi to 0x3F completes address setup */
+            if (s->reg_addr == 0x3F) {
+                tdeck_bq27220_load_dm_cache(s);
+            }
         }
         s->reg_addr++;
     }
