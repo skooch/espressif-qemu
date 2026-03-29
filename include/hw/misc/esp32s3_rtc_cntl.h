@@ -98,6 +98,9 @@ typedef struct Esp32s3RtcCntlState {
     uint32_t reg_store[0x200 / 4];
 } Esp32s3RtcCntlState;
 
+/* Called by GPIO model when a wakeup-configured pin triggers */
+void esp32s3_rtc_gpio_wakeup_notify(Esp32s3RtcCntlState *s, int gpio_num);
+
 REG32(RTC_CNTL_OPTIONS0, 0x00)
     FIELD(RTC_CNTL_OPTIONS0, SW_SYS_RESET, 31, 1)
     FIELD(RTC_CNTL_OPTIONS0, SW_PROCPU_RESET, 5, 1)

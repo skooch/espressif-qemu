@@ -20,9 +20,79 @@
 #include "hw/qdev-properties.h"
 #include "hw/misc/esp32s3_reg.h"
 #include "hw/misc/esp32s3_rtc_cntl.h"
+#include "hw/gpio/esp32s3_gpio.h"
 
 static void esp32s3_rtc_update_cpu_stall(Esp32s3RtcCntlState* s);
 static void esp32s3_rtc_update_clk(Esp32s3RtcCntlState* s);
+
+static void esp32s3_rtc_slp_timer_cb(void *opaque)
+{
+    Esp32s3RtcCntlState *s = ESP32S3_RTC_CNTL(opaque);
+    if (!s->sleeping) {
+        return;
+    }
+    s->sleeping = false;
+    s->slp_wakeup_cause = R_RTC_CNTL_SLP_WAKEUP_CAUSE_TIMER_MASK;
+    s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK;
+}
+
+void esp32s3_rtc_gpio_wakeup_notify(Esp32s3RtcCntlState *s, int gpio_num)
+{
+    if (!s->sleeping) {
+        return;
+    }
+    uint32_t wakeup_state = s->reg_store[A_RTC_CNTL_WAKEUP_STATE / 4];
+    if (!FIELD_EX32(wakeup_state, RTC_CNTL_WAKEUP_STATE, GPIO_WAKEUP_EN)) {
+        return;
+    }
+    s->sleeping = false;
+    s->slp_wakeup_cause = R_RTC_CNTL_SLP_WAKEUP_CAUSE_GPIO_MASK;
+    s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK;
+    timer_del(&s->slp_timer);
+}
+
+static void esp32s3_rtc_enter_sleep(Esp32s3RtcCntlState *s)
+{
+    uint32_t wakeup_state = s->reg_store[A_RTC_CNTL_WAKEUP_STATE / 4];
+    bool timer_en = FIELD_EX32(wakeup_state, RTC_CNTL_WAKEUP_STATE, TIMER_WAKEUP_EN);
+    bool gpio_en = FIELD_EX32(wakeup_state, RTC_CNTL_WAKEUP_STATE, GPIO_WAKEUP_EN);
+
+    /* Check for immediate reject: GPIO wakeup pin already at trigger level */
+    if (gpio_en && s->gpio) {
+        uint32_t reject_conf = s->reg_store[A_RTC_CNTL_SLP_REJECT_CONF / 4];
+        bool reject_en = FIELD_EX32(reject_conf, RTC_CNTL_SLP_REJECT_CONF,
+                                     LIGHT_SLP_REJECT_EN);
+        if (reject_en) {
+            int bank = 15 / 32;
+            int bit = 15 % 32;
+            uint32_t pin_cfg = s->gpio->pin_reg[15];
+            int int_type = (pin_cfg >> GPIO_PIN_INT_TYPE_SHIFT) & 0x7;
+            bool wakeup_enable = (pin_cfg >> 10) & 1;
+            if (wakeup_enable && int_type == GPIO_INT_LOW) {
+                bool pin_level = (s->gpio->in_levels[bank] >> bit) & 1;
+                if (!pin_level) {
+                    s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_REJECT_MASK;
+                    return;
+                }
+            }
+        }
+    }
+
+    s->sleeping = true;
+
+    if (timer_en) {
+        uint32_t alarm_lo = s->reg_store[A_RTC_CNTL_SLP_TIMER0 / 4];
+        uint32_t alarm_hi = s->reg_store[A_RTC_CNTL_SLP_TIMER1 / 4];
+        bool alarm_en = FIELD_EX32(alarm_hi, RTC_CNTL_SLP_TIMER1, MAIN_TIMER_ALARM_EN);
+        if (alarm_en) {
+            uint64_t alarm_ticks = ((uint64_t)(alarm_hi & 0xFFFF) << 32) | alarm_lo;
+            int64_t alarm_ns = muldiv64(alarm_ticks, NANOSECONDS_PER_SECOND,
+                                         s->rtc_slowclk_freq);
+            int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+            timer_mod(&s->slp_timer, now + alarm_ns);
+        }
+    }
+}
 
 static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int size)
 {
@@ -71,6 +141,14 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
     case A_RTC_CNTL_STORE6:
     case A_RTC_CNTL_STORE7:
         r = s->scratch_reg[(addr - A_RTC_CNTL_STORE4) / 4 + 4];
+        break;
+
+    case A_RTC_CNTL_INT_RAW:
+        r = s->int_raw;
+        break;
+
+    case A_RTC_CNTL_SLP_WAKEUP_CAUSE:
+        r = s->slp_wakeup_cause;
         break;
 
     default:
@@ -150,6 +228,25 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
         s->scratch_reg[(addr - A_RTC_CNTL_STORE4) / 4 + 4] = value;
         break;
 
+    case A_RTC_CNTL_STATE0: {
+        s->reg_store[addr / 4] = value;
+        bool sleep_en = FIELD_EX32(value, RTC_CNTL_STATE0, SLEEP_EN);
+        bool slp_wakeup = FIELD_EX32(value, RTC_CNTL_STATE0, SLP_WAKEUP);
+        if (sleep_en && slp_wakeup) {
+            esp32s3_rtc_enter_sleep(s);
+        }
+        break;
+    }
+
+    case A_RTC_CNTL_INT_CLR:
+        s->int_raw &= ~(uint32_t)value;
+        break;
+
+    case A_RTC_CNTL_WDTWPROTECT:
+    case A_RTC_CNTL_SWD_WPROTECT:
+        s->reg_store[addr / 4] = value;
+        break;
+
     default:
         /* Fallback: store value for unhandled registers (enables read-back) */
         if (addr < sizeof(s->reg_store)) {
@@ -227,6 +324,9 @@ static void esp32s3_rtc_cntl_init(Object *obj)
     s->xtal_apb_freq = 40000000;
     s->pll_apb_freq = 80000000;
     esp32s3_rtc_update_clk(s);
+
+    timer_init_ns(&s->slp_timer, QEMU_CLOCK_VIRTUAL,
+                  esp32s3_rtc_slp_timer_cb, s);
 }
 
 static Property esp32s3_rtc_cntl_properties[] = {
