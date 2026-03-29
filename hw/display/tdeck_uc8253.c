@@ -71,6 +71,7 @@ static void tdeck_panel_render(TdeckUc8253State *s);
 /* External I2C register accessors from tdeck_i2c_devices.c */
 void tdeck_bq27220_set_reg(TdeckBq27220State *s, uint8_t addr, uint8_t val);
 void tdeck_bq25896_set_reg(TdeckBq25896State *s, uint8_t addr, uint8_t val);
+void tdeck_tca8418_inject_key(TdeckTca8418State *s, uint8_t raw_code, bool pressed);
 
 /* Update BQ27220 SOC and voltage registers from panel state */
 static void tdeck_panel_update_battery(TdeckUc8253State *s)
@@ -146,6 +147,21 @@ static void tdeck_panel_click(TdeckUc8253State *s, int px, int py)
         if (s->sd_spi && s->sd_spi->sd) {
             s->panel_sd_inserted = !s->panel_sd_inserted;
             tdeck_sd_spi_set_inserted(s->sd_spi, s->panel_sd_inserted);
+        }
+    }
+    /* [Lock] button: around (8-48, 252-268) */
+    else if (px >= 8 && px <= 48 && py >= 252 && py <= 268) {
+        if (s->kbd) {
+            /* Inject Space+Enter hold combo to trigger firmware lock.
+             * Press both, hold briefly (timer handles async), release both. */
+#define R3_SPACE (3 * 10 + (9 - 2) + 1)  /* Space at row3 col2 */
+#define R2_ENTER (2 * 10 + (9 - 9) + 1)  /* Enter at row2 col9 */
+            tdeck_tca8418_inject_key(s->kbd, R3_SPACE, true);
+            tdeck_tca8418_inject_key(s->kbd, R2_ENTER, true);
+            tdeck_tca8418_inject_key(s->kbd, R2_ENTER, false);
+            tdeck_tca8418_inject_key(s->kbd, R3_SPACE, false);
+#undef R3_SPACE
+#undef R2_ENTER
         }
     }
     else {
@@ -235,6 +251,12 @@ static void tdeck_panel_render(TdeckUc8253State *s)
     } else {
         panel_puts(pixels, stride, px + 8, 220, "No image", fg, bg);
     }
+
+    /* Device control section */
+    for (int col = px; col < CONSOLE_WIDTH; col++) {
+        pixels[244 * stride + col] = fg;  /* divider */
+    }
+    panel_puts(pixels, stride, px + 8, 252, "[Lock]", fg, btn_bg);
 }
 
 /* Expand 1bpp framebuffer to 32bpp XRGB on the GraphicConsole surface */
