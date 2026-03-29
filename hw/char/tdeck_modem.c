@@ -244,6 +244,10 @@ static int tdeck_modem_chr_write(Chardev *chr, const uint8_t *buf, int len)
 {
     TdeckModemChardev *s = CHARDEV_TDECK_MODEM(chr);
 
+    if (s->power_state != MODEM_READY) {
+        return len;
+    }
+
     for (int i = 0; i < len; i++) {
         uint8_t c = buf[i];
 
@@ -287,10 +291,59 @@ static void tdeck_modem_chr_open(Chardev *chr,
     *be_opened = true;
 }
 
+/* Power state machine */
+
+static void tdeck_modem_boot_timer_cb(void *opaque)
+{
+    TdeckModemChardev *s = CHARDEV_TDECK_MODEM(opaque);
+    if (s->power_state == MODEM_BOOTING) {
+        s->power_state = MODEM_READY;
+    }
+}
+
+static void tdeck_modem_reset_state(TdeckModemChardev *s)
+{
+    s->cmd_len = 0;
+    s->call_state = MODEM_CALL_IDLE;
+    s->sms_input_mode = false;
+    s->signal_quality = 20;
+    /* Keep SMS store intact across power cycles for persistence */
+}
+
+void tdeck_modem_gpio_en(TdeckModemChardev *s, int level)
+{
+    if (level && s->power_state == MODEM_POWER_OFF) {
+        s->power_state = MODEM_POWER_RAIL_ON;
+    } else if (!level && s->power_state != MODEM_POWER_OFF) {
+        s->power_state = MODEM_POWER_OFF;
+        timer_del(s->boot_timer);
+        tdeck_modem_reset_state(s);
+    }
+}
+
+void tdeck_modem_gpio_pwrkey(TdeckModemChardev *s, int level)
+{
+    /* Detect falling edge (HIGH -> LOW) while rail is on */
+    if (s->pwrkey_level && !level && s->power_state == MODEM_POWER_RAIL_ON) {
+        s->power_state = MODEM_BOOTING;
+        timer_mod(s->boot_timer,
+                  qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 2 * NANOSECONDS_PER_SECOND);
+    }
+    s->pwrkey_level = level;
+}
+
+ModemPowerState tdeck_modem_get_power_state(TdeckModemChardev *s)
+{
+    return s->power_state;
+}
+
 /* Public API */
 
 void tdeck_modem_incoming_call(TdeckModemChardev *s)
 {
+    if (s->power_state != MODEM_READY) {
+        return;
+    }
     if (s->call_state != MODEM_CALL_IDLE) {
         return;
     }
@@ -301,6 +354,9 @@ void tdeck_modem_incoming_call(TdeckModemChardev *s)
 
 void tdeck_modem_receive_sms(TdeckModemChardev *s)
 {
+    if (s->power_state != MODEM_READY) {
+        return;
+    }
     int idx = modem_sms_alloc(s);
     if (idx < 0) {
         return;
@@ -317,6 +373,9 @@ void tdeck_modem_receive_sms(TdeckModemChardev *s)
 
 void tdeck_modem_set_signal(TdeckModemChardev *s, int quality)
 {
+    if (s->power_state != MODEM_READY) {
+        return;
+    }
     if (quality < 0) {
         quality = 0;
     }
@@ -336,12 +395,17 @@ static void tdeck_modem_instance_init(Object *obj)
     s->sms_input_mode = false;
     s->call_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
                                   modem_call_connect_cb, s);
+    s->power_state = MODEM_POWER_OFF;
+    s->pwrkey_level = true;  /* PWRKEY is active-low, idle HIGH */
+    s->boot_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
+                                  tdeck_modem_boot_timer_cb, s);
 }
 
 static void tdeck_modem_instance_finalize(Object *obj)
 {
     TdeckModemChardev *s = CHARDEV_TDECK_MODEM(obj);
     timer_free(s->call_timer);
+    timer_free(s->boot_timer);
 }
 
 static void tdeck_modem_class_init(ObjectClass *oc, void *data)

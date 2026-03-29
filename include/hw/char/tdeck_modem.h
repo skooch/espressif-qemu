@@ -23,6 +23,13 @@
 #define MODEM_SMS_SENDER_LEN 20
 
 typedef enum {
+    MODEM_POWER_OFF,      /* GPIO41 LOW - no response */
+    MODEM_POWER_RAIL_ON,  /* GPIO41 HIGH, awaiting PWRKEY toggle */
+    MODEM_BOOTING,        /* PWRKEY toggled, waiting boot delay */
+    MODEM_READY           /* Responds to AT commands */
+} ModemPowerState;
+
+typedef enum {
     MODEM_CALL_IDLE,
     MODEM_CALL_DIALING,
     MODEM_CALL_RINGING,
@@ -62,11 +69,21 @@ struct TdeckModemChardev {
     /* SMS send state: waiting for body after > prompt */
     bool sms_input_mode;
     char sms_send_dest[MODEM_SMS_SENDER_LEN];
+
+    /* Power state machine */
+    ModemPowerState power_state;
+    QEMUTimer *boot_timer;
+    bool pwrkey_level;  /* Track GPIO40 for edge detection */
 };
 
 /* Public API for control panel */
 void tdeck_modem_incoming_call(TdeckModemChardev *s);
 void tdeck_modem_receive_sms(TdeckModemChardev *s);
 void tdeck_modem_set_signal(TdeckModemChardev *s, int quality);
+
+/* Power state machine (driven by GPIO model) */
+void tdeck_modem_gpio_en(TdeckModemChardev *s, int level);
+void tdeck_modem_gpio_pwrkey(TdeckModemChardev *s, int level);
+ModemPowerState tdeck_modem_get_power_state(TdeckModemChardev *s);
 
 #endif /* HW_CHAR_TDECK_MODEM_H */
