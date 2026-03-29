@@ -56,6 +56,10 @@
 #define SPI_CMD_UPDATE_BIT  (1 << 23)
 #define SPI_CMD_USR_BIT     (1 << 24)
 
+/* USER register bits */
+#define SPI_USR_MOSI_BIT    (1 << 27)
+#define SPI_USR_MISO_BIT    (1 << 28)
+
 /* DMA_INT bit positions */
 #define SPI_INT_TRANS_DONE  (1 << 12)
 
@@ -150,10 +154,15 @@ static void esp32s3_gpspi_write(void *opaque, hwaddr addr,
                         uint8_t *tx_buf = g_malloc(byte_count);
                         uint8_t *rx_buf = g_malloc0(byte_count);
 
-                        /* Read TX DMA data if available, else send 0xFF.
-                         * Use _data variant (no interrupt trigger) to avoid
-                         * crashing the firmware with unexpected OUT interrupts. */
-                        if (has_tx) {
+                        /* Read TX DMA data only if MOSI phase is active.
+                         * Read-only transfers (USR_MISO set, USR_MOSI clear)
+                         * send 0xFF on MOSI — the SD card ignores these bytes
+                         * and just returns response/data. Using stale DMA data
+                         * for read-only transfers causes spurious command starts
+                         * in the SD SPI state machine. */
+                        uint32_t user_reg = s->regs[SPI_USER_REG / 4];
+                        bool mosi_active = user_reg & SPI_USR_MOSI_BIT;
+                        if (has_tx && mosi_active) {
                             if (!esp_gdma_read_channel_data(s->gdma, tx_chan,
                                                             tx_buf, byte_count)) {
                                 memset(tx_buf, 0xFF, byte_count);
@@ -161,7 +170,6 @@ static void esp32s3_gpspi_write(void *opaque, hwaddr addr,
                         } else {
                             memset(tx_buf, 0xFF, byte_count);
                         }
-
                         for (uint32_t i = 0; i < byte_count; i++) {
                             rx_buf[i] = tdeck_sd_spi_transfer(s->sd_spi,
                                                                tx_buf[i]);

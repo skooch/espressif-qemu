@@ -11,6 +11,7 @@
 #include "qemu/osdep.h"
 #include "hw/ssi/tdeck_sd_spi.h"
 #include "hw/sd/sd.h"
+#include "hw/sd/sdcard_legacy.h"
 #include "qemu/log.h"
 #include "qom/object.h"
 #include "qapi/error.h"
@@ -41,32 +42,18 @@ static void reset_state(TdeckSdSpiState *s)
     s->busy_cycles = 0;
 }
 
-static int sd_card_do_command(SDState *sd, SDRequest *req, uint8_t *response)
-{
-    SDCardClass *sc = SD_CARD_GET_CLASS(sd);
-    return sc->do_command(sd, req, response);
-}
-
-static uint8_t sd_card_read_byte(SDState *sd)
-{
-    SDCardClass *sc = SD_CARD_GET_CLASS(sd);
-    return sc->read_byte(sd);
-}
-
-static void sd_card_write_byte(SDState *sd, uint8_t value)
-{
-    SDCardClass *sc = SD_CARD_GET_CLASS(sd);
-    sc->write_byte(sd, value);
-}
-
-static bool sd_card_data_ready(SDState *sd)
+/* Use legacy API directly from sdcard_legacy.h:
+ *   sd_do_command, sd_read_byte, sd_write_byte
+ * These are the proper public API for non-qdevified callers.
+ * sd_data_ready is not in the legacy API, use virtual dispatch. */
+static bool sd_data_ready(SDState *sd)
 {
     SDCardClass *sc = SD_CARD_GET_CLASS(sd);
     return sc->data_ready(sd);
 }
 
 /*
- * Build the SPI R1 byte from the card status returned by sd_card_do_command.
+ * Build the SPI R1 byte from the card status returned by sd_do_command.
  * In idle state (before ACMD41 completes), bit 0 is set.
  */
 static uint8_t make_r1(uint8_t *response, int rsplen, bool in_idle)
@@ -116,8 +103,6 @@ static void process_command(TdeckSdSpiState *s)
     SDRequest req;
     uint8_t response[16];
     int rsplen;
-    bool was_app_cmd = s->app_cmd;
-    bool card_ready;
 
     s->app_cmd = false;
 
@@ -134,11 +119,11 @@ static void process_command(TdeckSdSpiState *s)
     req.arg = arg;
     req.crc = s->cmd_buf[5];
 
-    DPRINTF("%sCMD%d arg=0x%08x\n", was_app_cmd ? "A" : "", cmd, arg);
+    DPRINTF("%sCMD%d arg=0x%08x\n", s->app_cmd ? "A" : "", cmd, arg);
 
     if (cmd == 55) {
         /* CMD55: next command is app command */
-        rsplen = sd_card_do_command(s->sd, &req, response);
+        rsplen = sd_do_command(s->sd, &req, response);
         (void)rsplen;
         s->app_cmd = true;
         /* R1 response */
@@ -150,7 +135,7 @@ static void process_command(TdeckSdSpiState *s)
     }
 
     /* Forward command to SDState */
-    rsplen = sd_card_do_command(s->sd, &req, response);
+    rsplen = sd_do_command(s->sd, &req, response);
 
     if (rsplen <= 0) {
         /* Command failed */
@@ -159,22 +144,6 @@ static void process_command(TdeckSdSpiState *s)
         s->resp_idx = 0;
         s->state = SD_SPI_RESPONDING;
         DPRINTF("CMD%d failed (rsplen=%d)\n", cmd, rsplen);
-        return;
-    }
-
-    /*
-     * Determine if card is in idle state.
-     * After successful ACMD41, card transitions out of idle.
-     */
-    if (was_app_cmd && cmd == 41) {
-        /* ACMD41: check if card is ready from the OCR */
-        card_ready = (rsplen >= 4) &&
-                     (response[0] & 0x80); /* busy bit set = ready */
-        s->resp_buf[0] = card_ready ? 0x00 : 0x01;
-        s->resp_len = 1;
-        s->resp_idx = 0;
-        s->state = SD_SPI_RESPONDING;
-        DPRINTF("ACMD41: card_ready=%d\n", card_ready);
         return;
     }
 
@@ -252,7 +221,7 @@ static SdSpiProtoState post_response_state(TdeckSdSpiState *s)
     switch (cmd) {
     case 9:  /* SEND_CSD: 16 bytes of data */
     case 17: /* READ_SINGLE_BLOCK: 512 bytes */
-        if (s->sd && sd_card_data_ready(s->sd)) {
+        if (s->sd && sd_data_ready(s->sd)) {
             return SD_SPI_READING_DATA;
         }
         return SD_SPI_IDLE;
@@ -271,6 +240,10 @@ uint8_t tdeck_sd_spi_transfer(TdeckSdSpiState *s, uint8_t mosi)
         return SD_SPI_IDLE_BYTE;
     }
 
+    /* After response/data phases complete, the byte that triggers the
+     * transition must be re-processed in the new state (not consumed).
+     * The retry label handles this without recursion. */
+retry:
     switch (s->state) {
     case SD_SPI_IDLE:
         if ((mosi & 0xC0) == 0x40) {
@@ -291,36 +264,46 @@ uint8_t tdeck_sd_spi_transfer(TdeckSdSpiState *s, uint8_t mosi)
         }
         return SD_SPI_IDLE_BYTE;
 
-    case SD_SPI_RESPONDING:
+    case SD_SPI_RESPONDING: {
         if (s->resp_idx < s->resp_len) {
-            return s->resp_buf[s->resp_idx++];
-        }
-        /* Response fully sent, transition */
-        s->state = post_response_state(s);
-        if (s->state == SD_SPI_READING_DATA) {
-            /* Prepare data buffer: token + data + CRC */
-            uint8_t cmd = s->cmd_buf[0] & 0x3F;
-            uint16_t data_bytes = (cmd == 9) ? 16 : 512;
-            uint16_t i;
-
-            s->data_buf[0] = SD_SPI_DATA_TOKEN;
-            for (i = 0; i < data_bytes; i++) {
-                s->data_buf[1 + i] = sd_card_read_byte(s->sd);
+            uint8_t val = s->resp_buf[s->resp_idx++];
+            /* If this was the last response byte, transition now
+             * but still return the byte. Next call sees new state. */
+            if (s->resp_idx >= s->resp_len) {
+                s->state = post_response_state(s);
+                if (s->state == SD_SPI_READING_DATA) {
+                    uint8_t cmd = s->cmd_buf[0] & 0x3F;
+                    uint16_t data_bytes = (cmd == 9) ? 16 : 512;
+                    uint16_t i;
+                    s->data_buf[0] = SD_SPI_DATA_TOKEN;
+                    for (i = 0; i < data_bytes; i++) {
+                        s->data_buf[1 + i] = sd_read_byte(s->sd);
+                    }
+                    s->data_buf[1 + data_bytes] = 0x00;
+                    s->data_buf[2 + data_bytes] = 0x00;
+                    s->data_len = 1 + data_bytes + 2;
+                    s->data_idx = 0;
+                }
             }
-            /* CRC16 placeholder (not checked by most firmware) */
-            s->data_buf[1 + data_bytes] = 0x00;
-            s->data_buf[2 + data_bytes] = 0x00;
-            s->data_len = 1 + data_bytes + 2;
-            s->data_idx = 0;
+            return val;
         }
-        return SD_SPI_IDLE_BYTE;
+        /* Response already exhausted on a previous call.
+         * Re-process this byte in the new state. */
+        s->state = post_response_state(s);
+        goto retry;
+    }
 
     case SD_SPI_READING_DATA:
         if (s->data_idx < s->data_len) {
-            return s->data_buf[s->data_idx++];
+            uint8_t val = s->data_buf[s->data_idx++];
+            if (s->data_idx >= s->data_len) {
+                s->state = SD_SPI_IDLE;
+            }
+            return val;
         }
+        /* Data already exhausted, re-process in IDLE */
         s->state = SD_SPI_IDLE;
-        return SD_SPI_IDLE_BYTE;
+        goto retry;
 
     case SD_SPI_WAIT_WRITE_TOKEN:
         if (mosi == SD_SPI_DATA_TOKEN) {
@@ -340,7 +323,7 @@ uint8_t tdeck_sd_spi_transfer(TdeckSdSpiState *s, uint8_t mosi)
             /* Write data to SD card */
             uint16_t i;
             for (i = 0; i < 512; i++) {
-                sd_card_write_byte(s->sd, s->data_buf[i]);
+                sd_write_byte(s->sd, s->data_buf[i]);
             }
             s->busy_cycles = SD_SPI_BUSY_CYCLES;
             s->state = SD_SPI_BUSY;
@@ -354,7 +337,7 @@ uint8_t tdeck_sd_spi_transfer(TdeckSdSpiState *s, uint8_t mosi)
             return 0x00;
         }
         s->state = SD_SPI_IDLE;
-        return SD_SPI_IDLE_BYTE;
+        goto retry;
     }
 
     return SD_SPI_IDLE_BYTE;

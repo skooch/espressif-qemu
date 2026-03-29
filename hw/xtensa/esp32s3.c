@@ -343,6 +343,9 @@ static void esp32s3_machine_init_sd(Esp32s3SocState *ss)
     if (dinfo) {
         BlockBackend *blk = blk_by_legacy_dinfo(dinfo);
         ss->sd_spi.sd = sd_init(blk, true);  /* true = SPI mode */
+        /* sd_init bypasses normal QOM lifecycle, so the card may not
+         * be reset. Explicitly reset to ensure idle state + valid CSD. */
+        device_cold_reset(DEVICE(ss->sd_spi.sd));
         ss->sd_spi.inserted = true;
     } else {
         ss->sd_spi.sd = NULL;
