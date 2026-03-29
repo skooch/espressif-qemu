@@ -593,6 +593,19 @@ static void esp_systimer_reset_hold(Object *obj, ResetType type)
         comp->irq = irq;
         comp->systimer = s;
     }
+
+    /* Initialize counter base timestamps to current virtual time.
+     * Without this, the first esp_systimer_update_counter() call computes
+     * elapsed_ns = now - 0, producing a massive tick count that corrupts
+     * the counter value and breaks all timer comparisons. */
+    const int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    for (int i = 0; i < ESP_SYSTIMER_COUNTER_COUNT; i++) {
+        s->counter[i].value = 0;
+        s->counter[i].base = now;
+        s->counter[i].flushed = 0;
+        s->counter[i].toload = 0;
+    }
+
     esp_systimer_default_conf(s);
 }
 
