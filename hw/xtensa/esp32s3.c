@@ -62,6 +62,7 @@ typedef struct TdeckBq27220State TdeckBq27220State;
 #define TDECK_TCA8418(obj) ((TdeckTca8418State *)(obj))
 #define TDECK_CST328(obj)  ((TdeckCst328State *)(obj))
 void tdeck_tca8418_inject_char(TdeckTca8418State *s, char c);
+void tdeck_bq25896_set_fuel_gauge(I2CSlave *charger, I2CSlave *gauge);
 #include "hw/xtensa/esp32s3_clk.h"
 #include "hw/dma/esp32s3_gdma.h"
 #include "hw/misc/esp32s3_sha.h"
@@ -903,6 +904,8 @@ static void esp32s3_machine_init(MachineState *machine)
         if (i2c_bus) {
             I2CSlave *bq25896 = i2c_slave_create_simple(i2c_bus, "tdeck-bq25896", 0x6B);
             I2CSlave *bq27220 = i2c_slave_create_simple(i2c_bus, "tdeck-bq27220", 0x55);
+            /* Cross-reference charger to fuel gauge for ADC simulation */
+            tdeck_bq25896_set_fuel_gauge(bq25896, bq27220);
             I2CSlave *kbd = i2c_slave_create_simple(i2c_bus, "tdeck-tca8418", 0x34);
             I2CSlave *touch = i2c_slave_create_simple(i2c_bus, "tdeck-cst328",  0x1A);
             i2c_slave_create_simple(i2c_bus, "tdeck-bhi260ap", 0x28);

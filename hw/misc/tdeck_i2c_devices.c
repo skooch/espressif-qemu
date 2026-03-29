@@ -27,11 +27,15 @@
 #define TYPE_TDECK_BQ25896 "tdeck-bq25896"
 OBJECT_DECLARE_SIMPLE_TYPE(TdeckBq25896State, TDECK_BQ25896)
 
+/* Forward declaration for cross-reference */
+struct TdeckBq27220State;
+
 struct TdeckBq25896State {
     I2CSlave parent_obj;
     uint8_t regs[0x15];  /* 21 registers (0x00-0x14) */
     uint8_t reg_addr;
     bool addr_set;
+    struct TdeckBq27220State *fuel_gauge;
 };
 
 static void tdeck_bq25896_reset(DeviceState *dev)
@@ -68,6 +72,8 @@ static uint8_t tdeck_bq25896_recv(I2CSlave *i2c)
     return val;
 }
 
+static void tdeck_bq25896_run_adc(TdeckBq25896State *s);
+
 static int tdeck_bq25896_send(I2CSlave *i2c, uint8_t data)
 {
     TdeckBq25896State *s = TDECK_BQ25896(i2c);
@@ -77,6 +83,11 @@ static int tdeck_bq25896_send(I2CSlave *i2c, uint8_t data)
     } else {
         if (s->reg_addr < sizeof(s->regs) && s->reg_addr != 0x14) {
             s->regs[s->reg_addr] = data;
+        }
+        /* ADC one-shot conversion trigger */
+        if (s->reg_addr == 0x02 && (data & 0x80)) {
+            tdeck_bq25896_run_adc(s);
+            s->regs[0x02] &= ~0x80;  /* Auto-clear CONV_START */
         }
         s->reg_addr++;
     }
@@ -100,6 +111,13 @@ static const TypeInfo tdeck_bq25896_info = {
     .class_init = tdeck_bq25896_class_init,
 };
 
+/* Called from machine init to wire charger -> fuel gauge cross-reference */
+void tdeck_bq25896_set_fuel_gauge(I2CSlave *charger, I2CSlave *gauge)
+{
+    TdeckBq25896State *s = TDECK_BQ25896(charger);
+    s->fuel_gauge = (struct TdeckBq27220State *)gauge;
+}
+
 /* ========================================================================= */
 /* BQ27220 Fuel Gauge                                                        */
 /* ========================================================================= */
@@ -118,6 +136,40 @@ struct TdeckBq27220State {
     uint16_t pending_subcmd; /* First half of 2-word unseal key */
     bool config_update;
 };
+
+/* Deferred definition: needs TdeckBq27220State to be complete */
+static void tdeck_bq25896_run_adc(TdeckBq25896State *s)
+{
+    /* REG0E: BATV - derive from fuel gauge voltage */
+    uint16_t bat_mv = 3800; /* default */
+    if (s->fuel_gauge) {
+        bat_mv = s->fuel_gauge->regs[0x08] |
+                 ((uint16_t)s->fuel_gauge->regs[0x09] << 8);
+    }
+    /* REG0E[6:0] = (mV - 2304) / 20, clamped */
+    int batv_code = ((int)bat_mv - 2304) / 20;
+    if (batv_code < 0) batv_code = 0;
+    if (batv_code > 127) batv_code = 127;
+    s->regs[0x0E] = (uint8_t)batv_code;
+
+    /* REG11: VBUSV - 5V if USB connected, 0 otherwise */
+    uint8_t vbus_stat = (s->regs[0x0B] >> 5) & 0x07;
+    if (vbus_stat != 0) {
+        /* USB connected: ~5000mV -> (5000-2600)/100 = 24 */
+        s->regs[0x11] = 24;
+    } else {
+        s->regs[0x11] = 0;
+    }
+
+    /* REG12: ICHGR - ~500mA if fast charging, 0 otherwise */
+    uint8_t chrg_stat = (s->regs[0x0B] >> 3) & 0x03;
+    if (chrg_stat == 0x02) {
+        /* Fast charge: 500mA / 50 = 10 */
+        s->regs[0x12] = 10;
+    } else {
+        s->regs[0x12] = 0;
+    }
+}
 
 static void tdeck_bq27220_reset(DeviceState *dev)
 {
