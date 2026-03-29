@@ -25,6 +25,13 @@
 static void esp32s3_rtc_update_cpu_stall(Esp32s3RtcCntlState* s);
 static void esp32s3_rtc_update_clk(Esp32s3RtcCntlState* s);
 
+/* EXT1 wakeup register offsets within RTC_CNTL region */
+#define A_RTC_EXT_WAKEUP1      0xE0   /* EXT_WAKEUP1_SEL bitmap [21:0] */
+#define A_RTC_EXT_WAKEUP_CONF  0x64   /* EXT_WAKEUP1_LV at bit 0 */
+
+/* wakeup_ena bits (at [31:15] of WAKEUP_STATE, so trigger bit N = reg bit N+15) */
+#define WAKEUP_ENA_EXT1_BIT    (1 << 16)  /* ExtEvent1Trig = trigger bit 1 */
+
 static void esp32s3_rtc_slp_timer_cb(void *opaque)
 {
     Esp32s3RtcCntlState *s = ESP32S3_RTC_CNTL(opaque);
@@ -42,13 +49,30 @@ void esp32s3_rtc_gpio_wakeup_notify(Esp32s3RtcCntlState *s, int gpio_num)
         return;
     }
     uint32_t wakeup_state = s->reg_store[A_RTC_CNTL_WAKEUP_STATE / 4];
-    if (!FIELD_EX32(wakeup_state, RTC_CNTL_WAKEUP_STATE, GPIO_WAKEUP_EN)) {
+    bool gpio_en = FIELD_EX32(wakeup_state, RTC_CNTL_WAKEUP_STATE, GPIO_WAKEUP_EN);
+    bool ext1_en = wakeup_state & WAKEUP_ENA_EXT1_BIT;
+
+    /* Check digital GPIO wakeup */
+    if (gpio_en) {
+        s->sleeping = false;
+        s->slp_wakeup_cause = R_RTC_CNTL_SLP_WAKEUP_CAUSE_GPIO_MASK;
+        s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK;
+        timer_del(&s->slp_timer);
         return;
     }
-    s->sleeping = false;
-    s->slp_wakeup_cause = R_RTC_CNTL_SLP_WAKEUP_CAUSE_GPIO_MASK;
-    s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK;
-    timer_del(&s->slp_timer);
+
+    /* Check EXT1 wakeup: is the notified pin in the EXT1 selection bitmap? */
+    if (ext1_en) {
+        uint32_t ext1_sel = s->reg_store[A_RTC_EXT_WAKEUP1 / 4] & 0x3FFFFF;
+        int rtc_pin = gpio_num;  /* RTC GPIO N = GPIO N on ESP32-S3 */
+        if (rtc_pin < 22 && (ext1_sel & (1 << rtc_pin))) {
+            s->sleeping = false;
+            s->slp_wakeup_cause = R_RTC_CNTL_SLP_WAKEUP_CAUSE_GPIO_MASK;
+            s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK;
+            timer_del(&s->slp_timer);
+            return;
+        }
+    }
 }
 
 static void esp32s3_rtc_enter_sleep(Esp32s3RtcCntlState *s)
@@ -56,6 +80,7 @@ static void esp32s3_rtc_enter_sleep(Esp32s3RtcCntlState *s)
     uint32_t wakeup_state = s->reg_store[A_RTC_CNTL_WAKEUP_STATE / 4];
     bool timer_en = FIELD_EX32(wakeup_state, RTC_CNTL_WAKEUP_STATE, TIMER_WAKEUP_EN);
     bool gpio_en = FIELD_EX32(wakeup_state, RTC_CNTL_WAKEUP_STATE, GPIO_WAKEUP_EN);
+    bool ext1_en = wakeup_state & WAKEUP_ENA_EXT1_BIT;
 
     /* Check for immediate reject: GPIO wakeup pin already at trigger level */
     if (gpio_en && s->gpio) {
@@ -74,6 +99,36 @@ static void esp32s3_rtc_enter_sleep(Esp32s3RtcCntlState *s)
                     s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_REJECT_MASK;
                     return;
                 }
+            }
+        }
+    }
+
+    /* Check EXT1: if selected pin is already at trigger level, wake immediately.
+     * The firmware configures GPIO15 (RTC_GPIO15) for EXT1 LOW-level wake.
+     * EXT1 operates in the RTC always-on domain, independent of digital GPIO. */
+    if (ext1_en && s->gpio) {
+        uint32_t ext1_sel = s->reg_store[A_RTC_EXT_WAKEUP1 / 4] & 0x3FFFFF;
+        uint32_t ext1_conf = s->reg_store[A_RTC_EXT_WAKEUP_CONF / 4];
+        bool wake_on_low = !(ext1_conf & 1);  /* bit 0: 0=LOW, 1=HIGH */
+
+        /* Check each selected RTC GPIO pin.
+         * RTC_GPIO15 = GPIO15 on ESP32-S3 (direct mapping for GPIOs 0-21). */
+        for (int rtc_pin = 0; rtc_pin < 22; rtc_pin++) {
+            if (!(ext1_sel & (1 << rtc_pin))) {
+                continue;
+            }
+            int gpio_num = rtc_pin;  /* RTC GPIO N = GPIO N on ESP32-S3 */
+            int bank = gpio_num / 32;
+            int bit = gpio_num % 32;
+            bool pin_level = (s->gpio->in_levels[bank] >> bit) & 1;
+            if (wake_on_low ? !pin_level : pin_level) {
+                /* Pin is already at wake level — immediate wake, not reject.
+                 * This is the normal case: TCA8418 holds INT low when events
+                 * are pending, and the firmware disables GPIO interrupt before
+                 * configuring EXT1 so no race. */
+                s->slp_wakeup_cause = R_RTC_CNTL_SLP_WAKEUP_CAUSE_GPIO_MASK;
+                s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK;
+                return;
             }
         }
     }
