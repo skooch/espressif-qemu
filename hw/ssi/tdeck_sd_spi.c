@@ -171,8 +171,10 @@ static void process_command(TdeckSdSpiState *s)
         break;
 
     case 58:
-        /* CMD58 (READ_OCR): R3 = R1 + 4 bytes OCR */
-        s->resp_buf[0] = make_r1(response, rsplen, in_idle);
+        /* CMD58 (READ_OCR): R3 = R1 + 4 bytes OCR.
+         * R3 response contains OCR, not card status — cannot use make_r1
+         * which interprets the response as card status error bits. */
+        s->resp_buf[0] = in_idle ? 0x01 : 0x00;
         if (rsplen >= 4) {
             memcpy(&s->resp_buf[1], response, 4);
         } else {

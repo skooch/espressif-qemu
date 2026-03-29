@@ -170,13 +170,14 @@ static void esp32s3_gpspi_write(void *opaque, hwaddr addr,
                         } else {
                             memset(tx_buf, 0xFF, byte_count);
                         }
+                        bool miso_active = user_reg & SPI_USR_MISO_BIT;
                         for (uint32_t i = 0; i < byte_count; i++) {
                             rx_buf[i] = tdeck_sd_spi_transfer(s->sd_spi,
                                                                tx_buf[i]);
                         }
 
                         /* Write MISO data back via RX DMA channel */
-                        if (has_rx) {
+                        if (has_rx && miso_active) {
                             esp_gdma_write_channel(s->gdma, rx_chan,
                                                    rx_buf, byte_count);
                         }
