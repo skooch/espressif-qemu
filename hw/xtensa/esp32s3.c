@@ -694,6 +694,16 @@ static void esp32s3_kbd_receive(void *opaque, const uint8_t *buf, int size)
     }
 }
 
+static void esp32s3_modem_gpio_cb(void *opaque, int pin, int level)
+{
+    TdeckModemChardev *modem = opaque;
+    if (pin == 41) {
+        tdeck_modem_gpio_en(modem, level);
+    } else if (pin == 40) {
+        tdeck_modem_gpio_pwrkey(modem, level);
+    }
+}
+
 static void esp32s3_machine_init(MachineState *machine)
 {
     DriveInfo *dinfo = drive_get(IF_MTD, 0, 0);
@@ -925,6 +935,16 @@ static void esp32s3_machine_init(MachineState *machine)
             ss->epd.bq25896 = (TdeckBq25896State *)bq25896;
             ss->epd.bq27220 = (TdeckBq27220State *)bq27220;
             ss->epd.modem = ss->modem;
+
+            /* Wire GPIO output callbacks for modem power control */
+            esp32s3_gpio_register_output_cb(&ss->gpio, 41, esp32s3_modem_gpio_cb, ss->modem);
+            esp32s3_gpio_register_output_cb(&ss->gpio, 40, esp32s3_modem_gpio_cb, ss->modem);
+
+            /* Give RTC_CNTL a reference to GPIO for wakeup pin checking */
+            ss->rtc_cntl.gpio = &ss->gpio;
+
+            /* Give GPIO a reference to RTC_CNTL for wakeup notification */
+            ss->gpio.rtc_cntl = &ss->rtc_cntl;
 
             /* Connect serial port 3 as keyboard input channel.
              * Characters received are injected into TCA8418 FIFO.
