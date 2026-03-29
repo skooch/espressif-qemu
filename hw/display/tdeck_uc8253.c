@@ -301,6 +301,13 @@ static void tdeck_uc8253_data(TdeckUc8253State *s, const uint8_t *data,
             }
             break;
 
+        case 0xE5: /* ForceTemperature */
+            if (s->data_idx == 0) {
+                s->force_temp = data[i];
+            }
+            s->data_idx++;
+            break;
+
         default:
             /* Silently consume data for unhandled commands */
             s->data_idx++;
@@ -316,10 +323,21 @@ static void tdeck_uc8253_command(TdeckUc8253State *s, uint8_t cmd)
     s->data_idx = 0;
 
     switch (cmd) {
-    case UC8253_CMD_REFRESH:
+    case UC8253_CMD_REFRESH: {
         tdeck_uc8253_render(s);
-        tdeck_uc8253_assert_busy(s, UC8253_BUSY_REFRESH_MS);
+        int busy_ms;
+        if (s->partial_mode) {
+            busy_ms = 200;   /* Turbo/partial */
+        } else if (s->force_temp == 0x6E) {
+            busy_ms = 2000;  /* Full refresh */
+        } else if (s->force_temp == 0x79) {
+            busy_ms = 500;   /* Fast refresh */
+        } else {
+            busy_ms = 200;   /* Default */
+        }
+        tdeck_uc8253_assert_busy(s, busy_ms);
         break;
+    }
 
     case UC8253_CMD_POWER_ON:
         s->power_on = true;
@@ -558,6 +576,7 @@ static void tdeck_uc8253_reset_hold(Object *obj, ResetType type)
     s->data_idx = 0;
     s->power_on = false;
     s->partial_mode = false;
+    s->force_temp = 0;
     s->partial_x_start = 0;
     s->partial_x_end = 0;
     s->partial_y_start = 0;

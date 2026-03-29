@@ -51,6 +51,7 @@ typedef struct TdeckUc8253State {
     uint32_t data_idx;         /* Byte index within current command data */
     bool power_on;
     bool partial_mode;
+    uint8_t force_temp;  /* ForceTemperature value: 0x6E=full, 0x79=fast */
 
     /* Partial window */
     uint16_t partial_x_start;
