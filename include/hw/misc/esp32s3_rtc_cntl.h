@@ -85,6 +85,15 @@ typedef struct Esp32s3RtcCntlState {
     Esp32s3ResetCause reset_cause[ESP32S3_CPU_COUNT];
     bool stat_vector_sel[ESP32S3_CPU_COUNT];
 
+    /* Sleep state machine */
+    bool sleeping;
+    uint32_t int_raw;
+    uint32_t slp_wakeup_cause;
+    QEMUTimer slp_timer;
+
+    /* GPIO model reference for wakeup pin checking */
+    struct ESP32S3GPIOState *gpio;
+
     /* Generic register storage for unhandled registers (write-store, read-back) */
     uint32_t reg_store[0x200 / 4];
 } Esp32s3RtcCntlState;
@@ -127,5 +136,42 @@ REG32(RTC_CNTL_STORE5, 0xc4)
 REG32(RTC_CNTL_STORE6, 0xc8)
 REG32(RTC_CNTL_STORE7, 0xcc)
 REG32(RTC_CNTL_DATE,   0x1fc)
+
+/* Sleep/wake registers */
+REG32(RTC_CNTL_SLP_TIMER0, 0x04)
+REG32(RTC_CNTL_SLP_TIMER1, 0x08)
+    FIELD(RTC_CNTL_SLP_TIMER1, MAIN_TIMER_ALARM_EN, 16, 1)
+
+REG32(RTC_CNTL_STATE0, 0x18)
+    FIELD(RTC_CNTL_STATE0, SLEEP_EN, 29, 1)
+    FIELD(RTC_CNTL_STATE0, SLP_WAKEUP, 28, 1)
+    FIELD(RTC_CNTL_STATE0, SLP_REJECT_CAUSE_CLR, 1, 1)
+
+REG32(RTC_CNTL_WAKEUP_STATE, 0x3c)
+    FIELD(RTC_CNTL_WAKEUP_STATE, GPIO_WAKEUP_EN, 17, 1)
+    FIELD(RTC_CNTL_WAKEUP_STATE, TIMER_WAKEUP_EN, 18, 1)
+
+REG32(RTC_CNTL_INT_RAW, 0x44)
+    FIELD(RTC_CNTL_INT_RAW, SLP_WAKEUP, 0, 1)
+    FIELD(RTC_CNTL_INT_RAW, SLP_REJECT, 1, 1)
+
+REG32(RTC_CNTL_INT_CLR, 0x4c)
+
+REG32(RTC_CNTL_SLP_REJECT_CONF, 0x68)
+    FIELD(RTC_CNTL_SLP_REJECT_CONF, DEEP_SLP_REJECT_EN, 29, 1)
+    FIELD(RTC_CNTL_SLP_REJECT_CONF, LIGHT_SLP_REJECT_EN, 30, 1)
+
+REG32(RTC_CNTL_SLP_WAKEUP_CAUSE, 0x130)
+    FIELD(RTC_CNTL_SLP_WAKEUP_CAUSE, GPIO, 2, 1)
+    FIELD(RTC_CNTL_SLP_WAKEUP_CAUSE, TIMER, 3, 1)
+
+/* WDT write-protect registers */
+REG32(RTC_CNTL_WDTWPROTECT, 0xb0)
+REG32(RTC_CNTL_SWD_CONF, 0xb4)
+REG32(RTC_CNTL_SWD_WPROTECT, 0xb8)
+
+/* Pad hold registers */
+REG32(RTC_CNTL_PAD_HOLD, 0xd8)
+REG32(RTC_CNTL_DIG_PAD_HOLD, 0xdc)
 
 #define ESP32S3_RTC_CNTL_SIZE (A_RTC_CNTL_DATE + 4)
