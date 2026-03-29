@@ -22,7 +22,6 @@
 #include "ui/vgafont.h"
 
 #define UC8253_BUSY_POWER_MS   10
-#define UC8253_BUSY_REFRESH_MS 200
 
 /* Timer callback: deassert BUSY (set HIGH = ready) */
 static void tdeck_uc8253_busy_cb(void *opaque)

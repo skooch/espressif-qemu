@@ -109,10 +109,14 @@ OBJECT_DECLARE_SIMPLE_TYPE(TdeckBq27220State, TDECK_BQ27220)
 
 struct TdeckBq27220State {
     I2CSlave parent_obj;
-    uint8_t regs[0x40];  /* 64 bytes of register space (16-bit LE) */
+    uint8_t regs[0x62];  /* Expanded: covers through MAC_DATA_LEN (0x61) */
     uint8_t reg_addr;
     bool addr_set;
     uint16_t ctrl_result; /* Result of last Control subcmd */
+    /* Security and config state */
+    uint8_t security_mode; /* 0=unknown, 1=full_access, 2=unsealed, 3=sealed */
+    uint16_t pending_subcmd; /* First half of 2-word unseal key */
+    bool config_update;
 };
 
 static void tdeck_bq27220_reset(DeviceState *dev)
@@ -129,6 +133,12 @@ static void tdeck_bq27220_reset(DeviceState *dev)
     /* DesignCapacity: 3000mAh (0x3C) */
     s->regs[0x3C] = 3000 & 0xFF;
     s->regs[0x3D] = (3000 >> 8) & 0xFF;
+    /* OperationStatus: Sealed (bits[2:1]=0b11) + INITCOMP (bit 5) */
+    s->regs[0x3A] = 0x26;  /* bits: 00100110 = INITCOMP|Sealed */
+    s->regs[0x3B] = 0x00;
+    s->security_mode = 3;   /* Sealed */
+    s->config_update = false;
+    s->pending_subcmd = 0;
     s->ctrl_result = 0;
     s->reg_addr = 0;
     s->addr_set = false;
@@ -162,6 +172,83 @@ static uint8_t tdeck_bq27220_recv(I2CSlave *i2c)
     return val;
 }
 
+static void tdeck_bq27220_update_op_status(TdeckBq27220State *s)
+{
+    uint16_t status = 0;
+    status |= (s->security_mode & 0x3) << 1;  /* bits [2:1] */
+    status |= (1 << 5);                        /* INITCOMP always set */
+    if (s->config_update) {
+        status |= (1 << 10);                   /* CFGUPDATE */
+    }
+    s->regs[0x3A] = status & 0xFF;
+    s->regs[0x3B] = (status >> 8) & 0xFF;
+}
+
+static void tdeck_bq27220_exec_subcmd(TdeckBq27220State *s, uint16_t subcmd)
+{
+    switch (subcmd) {
+    case 0x0001: /* DEVICE_NUMBER */
+        s->ctrl_result = 0x0220;
+        s->regs[0x40] = 0x02;
+        s->regs[0x41] = 0x20;
+        break;
+    case 0x0002: /* FW_VERSION */
+        s->ctrl_result = 0x0109;
+        s->regs[0x40] = 0x01;
+        s->regs[0x41] = 0x09;
+        break;
+    case 0x0000: /* CONTROL_STATUS */
+        s->ctrl_result = 0x0000;
+        s->regs[0x40] = 0x00;
+        s->regs[0x41] = 0x00;
+        break;
+    case 0x0414: /* UNSEAL_KEY_WORD1 */
+        s->pending_subcmd = 0x0414;
+        s->ctrl_result = 0;
+        return;
+    case 0x3672: /* UNSEAL_KEY_WORD2 */
+        if (s->pending_subcmd == 0x0414) {
+            s->security_mode = 2;
+            tdeck_bq27220_update_op_status(s);
+        }
+        s->pending_subcmd = 0;
+        s->ctrl_result = 0;
+        return;
+    case 0xFFFF: /* FULL_ACCESS_KEY */
+        if (s->pending_subcmd == 0xFFFF) {
+            s->security_mode = 1;
+            tdeck_bq27220_update_op_status(s);
+            s->pending_subcmd = 0;
+        } else {
+            s->pending_subcmd = 0xFFFF;
+        }
+        s->ctrl_result = 0;
+        return;
+    case 0x0030: /* SEAL */
+        s->security_mode = 3;
+        tdeck_bq27220_update_op_status(s);
+        s->ctrl_result = 0;
+        return;
+    case 0x0041: /* RESET */
+        s->ctrl_result = 0;
+        return;
+    case 0x0090: /* SET_CFGUPDATE */
+        s->config_update = true;
+        tdeck_bq27220_update_op_status(s);
+        s->ctrl_result = 0;
+        return;
+    case 0x0091: /* EXIT_CFGUPDATE */
+        s->config_update = false;
+        tdeck_bq27220_update_op_status(s);
+        s->ctrl_result = 0;
+        return;
+    default:
+        s->ctrl_result = 0;
+        break;
+    }
+    s->pending_subcmd = 0;
+}
+
 static int tdeck_bq27220_send(I2CSlave *i2c, uint8_t data)
 {
     TdeckBq27220State *s = TDECK_BQ27220(i2c);
@@ -170,16 +257,10 @@ static int tdeck_bq27220_send(I2CSlave *i2c, uint8_t data)
         s->addr_set = true;
     } else {
         if (s->reg_addr == 0x00) {
-            /* Control subcmd low byte — store for 2-byte subcmd */
             s->ctrl_result = data;
         } else if (s->reg_addr == 0x01) {
-            /* Control subcmd high byte */
             uint16_t subcmd = s->ctrl_result | ((uint16_t)data << 8);
-            switch (subcmd) {
-            case 0x0001: s->ctrl_result = 0x0220; break; /* DEVICE_NUMBER */
-            case 0x0002: s->ctrl_result = 0x0109; break; /* FW_VERSION */
-            default:     s->ctrl_result = 0x0000; break;
-            }
+            tdeck_bq27220_exec_subcmd(s, subcmd);
         } else if (s->reg_addr < sizeof(s->regs)) {
             s->regs[s->reg_addr] = data;
         }
