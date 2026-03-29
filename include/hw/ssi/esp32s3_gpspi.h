@@ -8,6 +8,7 @@
 typedef struct ESPGdmaState ESPGdmaState;
 typedef struct ESP32S3GPIOState ESP32S3GPIOState;
 typedef struct TdeckUc8253State TdeckUc8253State;
+typedef struct TdeckSdSpiState TdeckSdSpiState;
 
 typedef struct Esp32s3GpSpiState {
     SysBusDevice parent_obj;
@@ -19,5 +20,6 @@ typedef struct Esp32s3GpSpiState {
     ESPGdmaState *gdma;
     ESP32S3GPIOState *gpio;
     TdeckUc8253State *epd;       /* UC8253 EPD slave (optional) */
+    TdeckSdSpiState *sd_spi;     /* SD card SPI slave (optional) */
     int gdma_periph_id;          /* GDMA peripheral ID for this SPI (0=SPI2, 1=SPI3) */
 } Esp32s3GpSpiState;

@@ -27,6 +27,7 @@
 #include "hw/dma/esp_gdma.h"
 #include "hw/gpio/esp32s3_gpio.h"
 #include "hw/display/tdeck_uc8253.h"
+#include "hw/ssi/tdeck_sd_spi.h"
 
 #define ESP32S3_GPSPI(obj) OBJECT_CHECK(Esp32s3GpSpiState, (obj), TYPE_ESP32S3_GPSPI)
 
@@ -126,6 +127,45 @@ static void esp32s3_gpspi_write(void *opaque, hwaddr addr,
                                                          byte_count, dc);
                             }
                             g_free(buf);
+                        }
+                    }
+                }
+            }
+
+            /* SD card: check GPIO48 (CS) LOW = selected */
+            if (s->gdma && s->gpio && s->sd_spi) {
+                bool sd_cs = !(s->gpio->out[1] & (1 << 16));  /* GPIO48 = 32+16 */
+                if (sd_cs) {
+                    uint32_t ms_dlen = s->regs[SPI_MS_DLEN_REG / 4];
+                    uint32_t byte_count = (ms_dlen + 1) / 8;
+                    if (byte_count > 0 && byte_count <= 16384) {
+                        uint32_t tx_chan, rx_chan;
+                        bool has_tx = esp_gdma_get_channel_periph(s->gdma,
+                            (GdmaPeripheral)s->gdma_periph_id,
+                            ESP_GDMA_OUT_IDX, &tx_chan);
+                        bool has_rx = esp_gdma_get_channel_periph(s->gdma,
+                            (GdmaPeripheral)s->gdma_periph_id,
+                            ESP_GDMA_IN_IDX, &rx_chan);
+
+                        if (has_tx) {
+                            uint8_t *tx_buf = g_malloc0(byte_count);
+                            uint8_t *rx_buf = g_malloc0(byte_count);
+
+                            esp_gdma_read_channel_data(s->gdma, tx_chan,
+                                                       tx_buf, byte_count);
+
+                            for (uint32_t i = 0; i < byte_count; i++) {
+                                rx_buf[i] = tdeck_sd_spi_transfer(s->sd_spi,
+                                                                   tx_buf[i]);
+                            }
+
+                            if (has_rx) {
+                                esp_gdma_write_channel(s->gdma, rx_chan,
+                                                       rx_buf, byte_count);
+                            }
+
+                            g_free(tx_buf);
+                            g_free(rx_buf);
                         }
                     }
                 }
