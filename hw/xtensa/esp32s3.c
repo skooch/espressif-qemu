@@ -256,6 +256,13 @@ static void esp32s3_soc_reset(DeviceState *dev)
 
 static void esp32s3_cpu_stall(void* opaque, int n, int level)
 {
+    Esp32s3SocState *s = (Esp32s3SocState *)opaque;
+    CPUState *cpu = CPU(&s->cpu[n]);
+    if (level) {
+        cpu_pause(cpu);
+    } else {
+        cpu_resume(cpu);
+    }
 }
 
 static void esp32s3_clk_update(void* opaque, int n, int level)
@@ -816,6 +823,9 @@ static void esp32s3_machine_init(MachineState *machine)
             sysbus_connect_irq(SYS_BUS_DEVICE(&ss->clock), i,
                            qdev_get_gpio_in(intmatrix_dev, ETS_FROM_CPU_INTR0_SOURCE + i));
         }
+        /* Pass CPU references for RUNSTALL support */
+        ss->clock.cpu[0] = CPU(&ss->cpu[0]);
+        ss->clock.cpu[1] = CPU(&ss->cpu[1]);
     }
     /* Timer Groups realization */
     {

@@ -12,6 +12,7 @@
 #include "hw/hw.h"
 #include "hw/sysbus.h"
 #include "hw/registerfields.h"
+#include "hw/core/cpu.h"
 
 #define TYPE_ESP32S3_CLOCK "esp32s3.soc.clk"
 #define ESP32S3_CLOCK(obj) OBJECT_CHECK(ESP32S3ClockState, (obj), TYPE_ESP32S3_CLOCK)
@@ -59,6 +60,10 @@ typedef struct ESP32S3ClockState {
     uint32_t app_cpu_addr;
     
     uint32_t sys_ext_dev_enc_dec_ctrl;
+
+    /* CPU references for RUNSTALL */
+    CPUState *cpu[2];  /* [0]=procpu, [1]=appcpu */
+    uint32_t core1_control0;
 } ESP32S3ClockState;
 
 typedef struct ESP32S3ClockClass {

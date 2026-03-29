@@ -52,6 +52,9 @@ static uint64_t esp32s3_clock_read(void *opaque, hwaddr addr, unsigned int size)
     uint64_t r = 0;
 
     switch(addr) {
+        case A_SYSTEM_CORE_1_CONTROL_0_REG:
+            r = s->core1_control0;
+            break;
         case A_SYSTEM_CORE_1_CONTROL_1_REG:
                 r = s->app_cpu_addr;
             break;
@@ -85,6 +88,19 @@ static void esp32s3_clock_write(void *opaque, hwaddr addr, uint64_t value,
     ESP32S3ClockState *s = ESP32S3_CLOCK(opaque);
 
     switch(addr) {
+        case A_SYSTEM_CORE_1_CONTROL_0_REG: {
+            uint32_t old = s->core1_control0;
+            s->core1_control0 = (uint32_t)value;
+            /* Bit 0 = RUNSTALL for Core 1 */
+            bool stall_new = value & 1;
+            bool stall_old = old & 1;
+            if (stall_new && !stall_old && s->cpu[1]) {
+                cpu_pause(s->cpu[1]);
+            } else if (!stall_new && stall_old && s->cpu[1]) {
+                cpu_resume(s->cpu[1]);
+            }
+            break;
+        }
         case A_SYSTEM_CORE_1_CONTROL_1_REG:
                 s->app_cpu_addr = (uint32_t)value;
             break;
