@@ -188,6 +188,8 @@ static void process_command(TdeckSdSpiState *s)
     switch (cmd) {
     case 8:
         /* CMD8 (SEND_IF_COND): R7 = R1 + 4 bytes */
+        DPRINTF("CMD8: rsplen=%d resp=[%02x %02x %02x %02x] arg=0x%08x\n",
+                rsplen, response[0], response[1], response[2], response[3], arg);
         s->resp_buf[0] = make_r1(response, rsplen, in_idle);
         if (rsplen >= 4) {
             memcpy(&s->resp_buf[1], response, 4);
@@ -282,6 +284,9 @@ uint8_t tdeck_sd_spi_transfer(TdeckSdSpiState *s, uint8_t mosi)
     case SD_SPI_RECEIVING_CMD:
         s->cmd_buf[s->cmd_idx++] = mosi;
         if (s->cmd_idx >= 6) {
+            DPRINTF("CMD frame: [%02x %02x %02x %02x %02x %02x]\n",
+                    s->cmd_buf[0], s->cmd_buf[1], s->cmd_buf[2],
+                    s->cmd_buf[3], s->cmd_buf[4], s->cmd_buf[5]);
             process_command(s);
         }
         return SD_SPI_IDLE_BYTE;

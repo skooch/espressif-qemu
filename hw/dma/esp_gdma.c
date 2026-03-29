@@ -572,8 +572,11 @@ bool esp_gdma_write_channel(ESPGdmaState *s, uint32_t chan, uint8_t* buffer, uin
          * This can be used in the ISR to know which buffer has just been processed. */
         state->suc_eof_desc_addr = in_addr;
 
-        /* Set the transfer as completed for both the IN and OUT link */
-        esp_gdma_set_status(&state->int_state, R_GDMA_INTERRUPT_IN_DONE_MASK);
+        /* Set the transfer as completed: IN_DONE + IN_SUC_EOF.
+         * The firmware (esp-hal DMA RX future) waits for SUC_EOF, not DONE. */
+        esp_gdma_set_status(&state->int_state,
+                            R_GDMA_INTERRUPT_IN_DONE_MASK |
+                            R_GDMA_INTERRUPT_IN_SUC_EOF_MASK);
     }
 
     return !error;

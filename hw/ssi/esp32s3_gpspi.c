@@ -147,26 +147,34 @@ static void esp32s3_gpspi_write(void *opaque, hwaddr addr,
                             (GdmaPeripheral)s->gdma_periph_id,
                             ESP_GDMA_IN_IDX, &rx_chan);
 
+                        uint8_t *tx_buf = g_malloc(byte_count);
+                        uint8_t *rx_buf = g_malloc0(byte_count);
+
+                        /* Read TX DMA data if available, else send 0xFF.
+                         * Use _data variant (no interrupt trigger) to avoid
+                         * crashing the firmware with unexpected OUT interrupts. */
                         if (has_tx) {
-                            uint8_t *tx_buf = g_malloc0(byte_count);
-                            uint8_t *rx_buf = g_malloc0(byte_count);
-
-                            esp_gdma_read_channel_data(s->gdma, tx_chan,
-                                                       tx_buf, byte_count);
-
-                            for (uint32_t i = 0; i < byte_count; i++) {
-                                rx_buf[i] = tdeck_sd_spi_transfer(s->sd_spi,
-                                                                   tx_buf[i]);
+                            if (!esp_gdma_read_channel_data(s->gdma, tx_chan,
+                                                            tx_buf, byte_count)) {
+                                memset(tx_buf, 0xFF, byte_count);
                             }
-
-                            if (has_rx) {
-                                esp_gdma_write_channel(s->gdma, rx_chan,
-                                                       rx_buf, byte_count);
-                            }
-
-                            g_free(tx_buf);
-                            g_free(rx_buf);
+                        } else {
+                            memset(tx_buf, 0xFF, byte_count);
                         }
+
+                        for (uint32_t i = 0; i < byte_count; i++) {
+                            rx_buf[i] = tdeck_sd_spi_transfer(s->sd_spi,
+                                                               tx_buf[i]);
+                        }
+
+                        /* Write MISO data back via RX DMA channel */
+                        if (has_rx) {
+                            esp_gdma_write_channel(s->gdma, rx_chan,
+                                                   rx_buf, byte_count);
+                        }
+
+                        g_free(tx_buf);
+                        g_free(rx_buf);
                     }
                 }
             }
