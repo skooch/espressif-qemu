@@ -839,28 +839,74 @@ static const TypeInfo tdeck_bhi260ap_info = {
 };
 
 /* ========================================================================= */
-/* LTR-553 Light/Proximity Sensor (stub - ACK only)                          */
+/* LTR-553 Light/Proximity Sensor                                           */
 /* ========================================================================= */
 
 #define TYPE_TDECK_LTR553 "tdeck-ltr553"
 OBJECT_DECLARE_SIMPLE_TYPE(TdeckLtr553State, TDECK_LTR553)
 
+/* Key registers */
+#define LTR553_REG_ALS_CONTR    0x80
+#define LTR553_REG_PS_CONTR     0x81
+#define LTR553_REG_PART_ID      0x86
+#define LTR553_REG_MANUFAC_ID   0x87
+#define LTR553_REG_ALS_DATA_0   0x88  /* ALS data low byte */
+#define LTR553_REG_ALS_DATA_1   0x89  /* ALS data high byte */
+#define LTR553_REG_PS_DATA_0    0x8D  /* PS data low byte */
+#define LTR553_REG_PS_DATA_1    0x8E  /* PS data high byte */
+#define LTR553_REG_ALS_PS_STATUS 0x8C
+
 struct TdeckLtr553State {
     I2CSlave parent_obj;
+    uint8_t reg_addr;
+    bool addr_set;
 };
 
 static int tdeck_ltr553_event(I2CSlave *i2c, enum i2c_event event)
 {
+    TdeckLtr553State *s = TDECK_LTR553(i2c);
+    if (event == I2C_START_SEND) {
+        s->addr_set = false;
+    }
     return 0;
 }
 
 static uint8_t tdeck_ltr553_recv(I2CSlave *i2c)
 {
-    return 0;
+    TdeckLtr553State *s = TDECK_LTR553(i2c);
+    uint8_t val = 0;
+    switch (s->reg_addr) {
+    case LTR553_REG_PART_ID:
+        val = 0x92;  /* LTR-553ALS-WA */
+        break;
+    case LTR553_REG_MANUFAC_ID:
+        val = 0x05;  /* Lite-On */
+        break;
+    case LTR553_REG_ALS_DATA_0:
+        val = 0xC8;  /* ~200 raw → moderate indoor light */
+        break;
+    case LTR553_REG_ALS_DATA_1:
+        val = 0x00;
+        break;
+    case LTR553_REG_ALS_PS_STATUS:
+        val = 0x04;  /* ALS data valid (bit 2) */
+        break;
+    default:
+        val = 0;
+        break;
+    }
+    s->reg_addr++;
+    return val;
 }
 
 static int tdeck_ltr553_send(I2CSlave *i2c, uint8_t data)
 {
+    TdeckLtr553State *s = TDECK_LTR553(i2c);
+    if (!s->addr_set) {
+        s->reg_addr = data;
+        s->addr_set = true;
+    }
+    /* Config writes accepted silently */
     return 0;
 }
 
