@@ -38,6 +38,14 @@ typedef struct Esp32I2CState {
      * when transactions complete instantly in QEMU */
     QEMUTimer *irq_timer;
     int pending_irq;
+
+    /* Deferred transaction completion: INT_RAW bits to set after a
+     * brief timer delay. This makes the async I2C future yield at
+     * least once before seeing the completion, preventing one task
+     * from monopolizing the embassy executor with back-to-back
+     * synchronous I2C transactions. */
+    QEMUTimer *completion_timer;
+    uint32_t deferred_int_raw;
 } Esp32I2CState;
 
 /* Register offsets */

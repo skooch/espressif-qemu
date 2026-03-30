@@ -9,6 +9,18 @@
 static void esp32_i2c_do_transaction(Esp32I2CState * s);
 static void esp32_i2c_update_irq(Esp32I2CState * s);
 
+/* Deferred transaction completion callback.
+ * Sets INT_RAW bits and fires the IRQ after a brief delay, so the
+ * firmware's async I2C future returns Pending on first poll and the
+ * executor can run other tasks before the transaction "completes". */
+static void esp32_i2c_completion_timer_cb(void *opaque)
+{
+    Esp32I2CState *s = Esp32_I2C(opaque);
+    I2C_REG(s, A_I2C_INT_RAW) |= s->deferred_int_raw;
+    s->deferred_int_raw = 0;
+    esp32_i2c_update_irq(s);
+}
+
 /* Deferred IRQ callback */
 static void esp32_i2c_irq_timer_cb(void *opaque)
 {
@@ -229,13 +241,13 @@ static void esp32_i2c_do_transaction(Esp32I2CState * s)
             case I2C_OPCODE_STOP:
                 i2c_end_transfer(s->bus);
                 s->trans_ongoing = false;
-                I2C_REG(s, A_I2C_INT_RAW) = FIELD_DP32(
-                    I2C_REG(s, A_I2C_INT_RAW), I2C_INT_RAW, TRANS_COMPLETE, 1);
+                /* Defer TRANS_COMPLETE so the async future yields before completion */
+                s->deferred_int_raw |= R_I2C_INT_RAW_TRANS_COMPLETE_MASK;
                 stop_or_end = true;
                 break;
             case I2C_OPCODE_END:
-                I2C_REG(s, A_I2C_INT_RAW) = FIELD_DP32(
-                    I2C_REG(s, A_I2C_INT_RAW), I2C_INT_RAW, END_DETECT, 1);
+                /* Defer END_DETECT so the async future yields before completion */
+                s->deferred_int_raw |= R_I2C_INT_RAW_END_DETECT_MASK;
                 stop_or_end = true;
                 break;
             default:
@@ -245,7 +257,14 @@ static void esp32_i2c_do_transaction(Esp32I2CState * s)
         s->regs[(A_I2C_CMD / 4) + i_cmd] = FIELD_DP32(
             s->regs[(A_I2C_CMD / 4) + i_cmd], I2C_CMD, DONE, 1);
     }
-    esp32_i2c_update_irq(s);
+
+    /* Schedule deferred completion: set INT_RAW bits after 2us.
+     * This ensures the async I2C future returns Pending on first poll,
+     * giving the embassy executor a chance to run other tasks. */
+    if (s->deferred_int_raw) {
+        timer_mod_ns(s->completion_timer,
+                     qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 2000);
+    }
 }
 
 static const MemoryRegionOps esp32_i2c_ops = {
@@ -269,6 +288,8 @@ static void esp32_i2c_init(Object * obj)
     fifo8_create(&s->rx_fifo, ESP32_I2C_FIFO_LENGTH);
 
     s->irq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, esp32_i2c_irq_timer_cb, s);
+    s->completion_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, esp32_i2c_completion_timer_cb, s);
+    s->deferred_int_raw = 0;
 }
 
 static void esp32_i2c_class_init(ObjectClass *klass, void *data)
