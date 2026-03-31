@@ -259,6 +259,53 @@ static void tdeck_panel_render(TdeckUc8253State *s)
     panel_puts(pixels, stride, px + 8, 252, "[Lock]", fg, btn_bg);
 }
 
+/* Grey level to XRGB lookup table for 2bpp resolved frames */
+static const uint32_t grey_lut_2bpp[4] = {
+    0x00FFFFFF,  /* 0 = white */
+    0x00AAAAAA,  /* 1 = light grey */
+    0x00555555,  /* 2 = dark grey */
+    0x00000000,  /* 3 = black */
+};
+
+/* Render a resolved greyscale frame to the GraphicConsole */
+static void tdeck_uc8253_render_resolved(TdeckUc8253State *s)
+{
+    DisplaySurface *surface = qemu_console_surface(s->con);
+    if (!surface) {
+        return;
+    }
+
+    uint32_t *pixels = (uint32_t *)surface_data(surface);
+
+    if (s->resolved_format == 1) {
+        /* 1bpp: same as normal render but from resolved buffer */
+        for (int row = 0; row < UC8253_HEIGHT; row++) {
+            for (int col_byte = 0; col_byte < UC8253_WIDTH / 8; col_byte++) {
+                uint8_t byte = s->resolved[row * (UC8253_WIDTH / 8) + col_byte];
+                for (int bit = 7; bit >= 0; bit--) {
+                    int col = col_byte * 8 + (7 - bit);
+                    pixels[row * CONSOLE_WIDTH + col] =
+                        (byte & (1 << bit)) ? 0x00FFFFFF : 0x00000000;
+                }
+            }
+        }
+    } else if (s->resolved_format == 2) {
+        /* 2bpp: 4 pixels per byte, MSB-first */
+        for (int row = 0; row < UC8253_HEIGHT; row++) {
+            for (int col = 0; col < UC8253_WIDTH; col++) {
+                int pixel_idx = row * UC8253_WIDTH + col;
+                int byte_idx = pixel_idx / 4;
+                int shift = 6 - (pixel_idx % 4) * 2;
+                uint8_t level = (s->resolved[byte_idx] >> shift) & 0x03;
+                pixels[row * CONSOLE_WIDTH + col] = grey_lut_2bpp[level];
+            }
+        }
+    }
+
+    tdeck_panel_render(s);
+    dpy_gfx_update(s->con, 0, 0, CONSOLE_WIDTH, UC8253_HEIGHT);
+}
+
 /* Expand 1bpp framebuffer to 32bpp XRGB on the GraphicConsole surface */
 static void tdeck_uc8253_render(TdeckUc8253State *s)
 {
@@ -341,6 +388,23 @@ static void tdeck_uc8253_data(TdeckUc8253State *s, const uint8_t *data,
             }
             break;
 
+        case UC8253_CMD_RESOLVED:
+            if (s->data_idx == 0) {
+                s->resolved_format = data[i];
+                s->resolved_expected = (data[i] == 2)
+                    ? UC8253_RESOLVED_MAX : UC8253_BUF_SIZE;
+            } else {
+                uint32_t buf_idx = s->data_idx - 1;
+                if (buf_idx < UC8253_RESOLVED_MAX) {
+                    s->resolved[buf_idx] = data[i];
+                }
+            }
+            s->data_idx++;
+            if (s->data_idx >= s->resolved_expected + 1) {
+                s->has_resolved = true;
+            }
+            break;
+
         case 0xE5: /* ForceTemperature */
             if (s->data_idx == 0) {
                 s->force_temp = data[i];
@@ -363,8 +427,17 @@ static void tdeck_uc8253_command(TdeckUc8253State *s, uint8_t cmd)
     s->data_idx = 0;
 
     switch (cmd) {
+    case UC8253_CMD_RESOLVED:
+        s->has_resolved = false;
+        break;
+
     case UC8253_CMD_REFRESH: {
-        tdeck_uc8253_render(s);
+        if (s->has_resolved) {
+            tdeck_uc8253_render_resolved(s);
+            s->has_resolved = false;
+        } else {
+            tdeck_uc8253_render(s);
+        }
         int busy_ms;
         if (s->partial_mode) {
             busy_ms = 200;   /* Turbo/partial */
@@ -617,6 +690,10 @@ static void tdeck_uc8253_reset_hold(Object *obj, ResetType type)
     s->power_on = false;
     s->partial_mode = false;
     s->force_temp = 0;
+    s->resolved_format = 1;
+    s->resolved_expected = 0;
+    s->has_resolved = false;
+    memset(s->resolved, 0xFF, UC8253_RESOLVED_MAX);
     s->partial_x_start = 0;
     s->partial_x_end = 0;
     s->partial_y_start = 0;

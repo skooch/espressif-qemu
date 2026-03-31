@@ -32,6 +32,8 @@
 #define UC8253_CMD_PARTIAL_WIN  0x90  /* Partial Window (7 bytes data) */
 #define UC8253_CMD_PARTIAL_IN   0x91
 #define UC8253_CMD_PARTIAL_OUT  0x92
+#define UC8253_CMD_RESOLVED     0xE1  /* Vendor: resolved greyscale frame */
+#define UC8253_RESOLVED_MAX     (UC8253_WIDTH * UC8253_HEIGHT / 4)  /* 19200 bytes (2bpp) */
 
 /* Forward declarations for input device types */
 typedef struct TdeckTca8418State TdeckTca8418State;
@@ -94,6 +96,12 @@ typedef struct TdeckUc8253State {
     TdeckSdSpiState *sd_spi;
 
     int panel_sd_inserted;    /* 0=ejected, 1=inserted */
+
+    /* Resolved greyscale frame (vendor extension) */
+    uint8_t resolved_format;
+    uint8_t resolved[UC8253_RESOLVED_MAX];
+    uint32_t resolved_expected;
+    bool has_resolved;
 } TdeckUc8253State;
 
 /* Called by GP-SPI model to deliver SPI bytes */
