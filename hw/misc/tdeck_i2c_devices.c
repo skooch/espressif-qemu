@@ -806,20 +806,44 @@ OBJECT_DECLARE_SIMPLE_TYPE(TdeckBhi260apState, TDECK_BHI260AP)
 
 struct TdeckBhi260apState {
     I2CSlave parent_obj;
+    uint8_t reg_addr;
+    bool addr_set;
 };
 
 static int tdeck_bhi260ap_event(I2CSlave *i2c, enum i2c_event event)
 {
+    TdeckBhi260apState *s = TDECK_BHI260AP(i2c);
+    if (event == I2C_START_SEND) {
+        s->addr_set = false;
+    }
     return 0;
 }
 
 static uint8_t tdeck_bhi260ap_recv(I2CSlave *i2c)
 {
-    return 0;
+    TdeckBhi260apState *s = TDECK_BHI260AP(i2c);
+    uint8_t val = 0;
+    switch (s->reg_addr) {
+    case 0x1C: val = 0x89; break;  /* PRODUCT_ID */
+    case 0x25: val = 0x30; break;  /* BOOT_STATUS: READY | FW_VERIFY_DONE */
+    case 0x2D: val = 0x00; break;  /* INT_STATUS: no interrupts */
+    /* FIFO channels: return 0 (empty) */
+    case 0x01: case 0x02: case 0x03:
+        val = 0x00; break;
+    default: val = 0x00; break;
+    }
+    s->reg_addr++;
+    return val;
 }
 
 static int tdeck_bhi260ap_send(I2CSlave *i2c, uint8_t data)
 {
+    TdeckBhi260apState *s = TDECK_BHI260AP(i2c);
+    if (!s->addr_set) {
+        s->reg_addr = data;
+        s->addr_set = true;
+    }
+    /* All other writes (commands, firmware upload) silently consumed */
     return 0;
 }
 
