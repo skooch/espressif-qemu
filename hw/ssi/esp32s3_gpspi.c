@@ -28,6 +28,7 @@
 #include "hw/gpio/esp32s3_gpio.h"
 #include "hw/display/tdeck_uc8253.h"
 #include "hw/ssi/tdeck_sd_spi.h"
+#include "hw/ssi/tdeck_lora_sx1262.h"
 
 #define ESP32S3_GPSPI(obj) OBJECT_CHECK(Esp32s3GpSpiState, (obj), TYPE_ESP32S3_GPSPI)
 
@@ -177,6 +178,51 @@ static void esp32s3_gpspi_write(void *opaque, hwaddr addr,
                         }
 
                         /* Write MISO data back via RX DMA channel */
+                        if (has_rx && miso_active) {
+                            esp_gdma_write_channel(s->gdma, rx_chan,
+                                                   rx_buf, byte_count);
+                        }
+
+                        g_free(tx_buf);
+                        g_free(rx_buf);
+                    }
+                }
+            }
+
+            /* LoRa SX1262: check GPIO3 (CS) LOW = selected */
+            if (s->gdma && s->gpio && s->lora) {
+                bool lora_cs = !(s->gpio->out[0] & (1 << 3));  /* GPIO3 */
+                if (lora_cs) {
+                    uint32_t ms_dlen = s->regs[SPI_MS_DLEN_REG / 4];
+                    uint32_t byte_count = (ms_dlen + 1) / 8;
+                    if (byte_count > 0 && byte_count <= 16384) {
+                        uint32_t tx_chan, rx_chan;
+                        bool has_tx = esp_gdma_get_channel_periph(s->gdma,
+                            (GdmaPeripheral)s->gdma_periph_id,
+                            ESP_GDMA_OUT_IDX, &tx_chan);
+                        bool has_rx = esp_gdma_get_channel_periph(s->gdma,
+                            (GdmaPeripheral)s->gdma_periph_id,
+                            ESP_GDMA_IN_IDX, &rx_chan);
+
+                        uint8_t *tx_buf = g_malloc(byte_count);
+                        uint8_t *rx_buf = g_malloc0(byte_count);
+
+                        uint32_t user_reg = s->regs[SPI_USER_REG / 4];
+                        bool mosi_active = user_reg & SPI_USR_MOSI_BIT;
+                        if (has_tx && mosi_active) {
+                            if (!esp_gdma_read_channel_data(s->gdma, tx_chan,
+                                                            tx_buf, byte_count)) {
+                                memset(tx_buf, 0x00, byte_count);
+                            }
+                        } else {
+                            memset(tx_buf, 0x00, byte_count);
+                        }
+
+                        bool miso_active = user_reg & SPI_USR_MISO_BIT;
+                        for (uint32_t i = 0; i < byte_count; i++) {
+                            rx_buf[i] = tdeck_lora_spi_transfer(s->lora, tx_buf[i]);
+                        }
+
                         if (has_rx && miso_active) {
                             esp_gdma_write_channel(s->gdma, rx_chan,
                                                    rx_buf, byte_count);

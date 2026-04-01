@@ -85,6 +85,7 @@ void tdeck_bq25896_set_fuel_gauge(I2CSlave *charger, I2CSlave *gauge);
 #include "hw/display/esp_rgb.h"
 #include "hw/display/tdeck_uc8253.h"
 #include "hw/ssi/tdeck_sd_spi.h"
+#include "hw/ssi/tdeck_lora_sx1262.h"
 #include "hw/sd/sdcard_legacy.h"
 
 #define TYPE_ESP32S3_SOC "xtensa.esp32s3"
@@ -171,6 +172,7 @@ typedef struct Esp32s3SocState {
     ESPRgbState rgb;
     TdeckUc8253State epd;
     TdeckSdSpiState sd_spi;
+    TdeckLoraSx1262State lora;
 
     MemoryRegion iomem;
     DWCSDMMCState sdmmc;
@@ -634,6 +636,7 @@ static void esp32s3_soc_init(Object *obj)
 
     object_initialize_child(obj, "sdmmc", &s->sdmmc, TYPE_DWC_SDMMC);
     object_initialize_child(obj, "epd", &s->epd, TYPE_TDECK_UC8253);
+    object_initialize_child(obj, "lora", &s->lora, TYPE_TDECK_LORA_SX1262);
 }
 
 static Property esp32s3_soc_properties[] = {
@@ -1000,6 +1003,25 @@ static void esp32s3_machine_init(MachineState *machine)
 
         /* Wire SD card SPI slave into GP-SPI for CS routing */
         ss->gpspi[0].sd_spi = &ss->sd_spi;
+    }
+
+    /* LoRa SX1262 SPI slave model */
+    {
+        qdev_realize(DEVICE(&ss->lora), NULL, &error_fatal);
+        ss->gpspi[0].lora = &ss->lora;
+        ss->lora.loopback_enabled = true;
+
+        /* Connect BUSY output to GPIO6 */
+        qdev_connect_gpio_out_named(DEVICE(&ss->lora), "busy", 0,
+            qemu_allocate_irq(
+                (void (*)(void *, int, int))esp32s3_gpio_set_input,
+                &ss->gpio, 6));
+
+        /* Connect DIO1 output to GPIO5 */
+        qdev_connect_gpio_out_named(DEVICE(&ss->lora), "dio1", 0,
+            qemu_allocate_irq(
+                (void (*)(void *, int, int))esp32s3_gpio_set_input,
+                &ss->gpio, 5));
     }
 
     {
