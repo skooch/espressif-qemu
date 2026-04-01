@@ -10,6 +10,7 @@
 
 #include "qemu/osdep.h"
 #include "hw/ssi/tdeck_lora_sx1262.h"
+#include "hw/irq.h"
 #include "qemu/log.h"
 #include "qemu/timer.h"
 #include "qom/object.h"
