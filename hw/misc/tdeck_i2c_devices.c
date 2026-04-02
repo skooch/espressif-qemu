@@ -647,6 +647,8 @@ struct TdeckCst328State {
     qemu_irq int_pin;
     QEMUTimer *touch_timer;
     bool currently_pressed;
+    bool int_asserted;   /* INT line is currently LOW */
+    bool data_acked;     /* firmware wrote 0xAB ACK, ready for next sample */
 };
 
 #define CST328_TOUCH_PERIOD_MS 10
@@ -657,17 +659,25 @@ static void tdeck_cst328_touch_timer_cb(void *opaque)
     if (!s->currently_pressed) {
         return;
     }
-    /* Re-assert INT LOW (new touch data available) */
-    qemu_set_irq(s->int_pin, 0);
-    /* Schedule next pulse */
+    /*
+     * Re-assert INT LOW after ACK cleared it.  The real CST328 generates
+     * new touch data every ~10 ms while the finger is down and the
+     * previous data has been acknowledged.
+     */
+    if (s->data_acked) {
+        s->data_acked = false;
+        qemu_set_irq(s->int_pin, 0);
+    }
+    /* Schedule next check */
     timer_mod(s->touch_timer,
               qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
               CST328_TOUCH_PERIOD_MS * NANOSECONDS_PER_SECOND / 1000);
 }
 
 /*
- * Inject a touch event. The CST328 fires INT LOW when touched and
- * re-asserts it periodically (~10ms) until released, matching real HW.
+ * Inject a touch event.  INT goes LOW once on press.  It stays LOW
+ * until the firmware reads + ACKs (writes 0xAB to reg 0x00).  If the
+ * finger is still down after ACK, the periodic timer re-asserts INT.
  * On release, finger_state goes to 0 and INT goes HIGH.
  */
 void tdeck_cst328_inject_touch(TdeckCst328State *s,
@@ -678,17 +688,23 @@ void tdeck_cst328_inject_touch(TdeckCst328State *s,
     s->finger_state = pressed ? 6 : 0;
     s->currently_pressed = pressed;
 
-    /* INT is active LOW when touch data is available */
-    qemu_set_irq(s->int_pin, pressed ? 0 : 1);
-
     if (pressed) {
+        if (!s->int_asserted) {
+            /* First press or after ACK -- assert INT */
+            s->int_asserted = true;
+            s->data_acked = false;
+            qemu_set_irq(s->int_pin, 0);
+        }
         /* Start periodic re-assertion timer */
         timer_mod(s->touch_timer,
                   qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
                   CST328_TOUCH_PERIOD_MS * NANOSECONDS_PER_SECOND / 1000);
     } else {
-        /* Stop timer on release */
+        /* Release: deassert INT */
+        s->int_asserted = false;
+        s->data_acked = false;
         timer_del(s->touch_timer);
+        qemu_set_irq(s->int_pin, 1);
     }
 }
 
@@ -702,6 +718,8 @@ static void tdeck_cst328_init_state(TdeckCst328State *s)
     s->x = 0;
     s->y = 0;
     s->currently_pressed = false;
+    s->int_asserted = false;
+    s->data_acked = false;
 }
 
 static void tdeck_cst328_reset(DeviceState *dev)
@@ -724,6 +742,18 @@ static int tdeck_cst328_event(I2CSlave *i2c, enum i2c_event event)
     }
     if (event == I2C_START_RECV) {
         s->read_idx = 0;
+    }
+    if (event == I2C_FINISH) {
+        /*
+         * Deassert INT after the firmware completes an I2C read.
+         * Real CST328 deasserts INT once touch data is consumed.
+         * Timer will re-assert if finger is still down.
+         */
+        if (s->int_asserted) {
+            s->int_asserted = false;
+            s->data_acked = true;
+            qemu_set_irq(s->int_pin, 1);
+        }
     }
     return 0;
 }
@@ -755,8 +785,10 @@ static int tdeck_cst328_send(I2CSlave *i2c, uint8_t data)
         s->reg_addr = data;
         s->addr_set = true;
     } else {
-        /* ACK write: briefly raise INT (timer will re-assert if still pressed) */
-        if (s->reg_addr == 0x00 && data == 0xAB && s->currently_pressed) {
+        /* ACK write: deassert INT.  Timer will re-assert if still pressed. */
+        if (s->reg_addr == 0x00 && data == 0xAB) {
+            s->int_asserted = false;
+            s->data_acked = true;
             qemu_set_irq(s->int_pin, 1); /* HIGH = no data */
         }
     }
