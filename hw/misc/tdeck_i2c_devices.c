@@ -666,6 +666,7 @@ static void tdeck_cst328_touch_timer_cb(void *opaque)
      */
     if (s->data_acked) {
         s->data_acked = false;
+        s->int_asserted = true;
         qemu_set_irq(s->int_pin, 0);
     }
     /* Schedule next check */
@@ -743,18 +744,6 @@ static int tdeck_cst328_event(I2CSlave *i2c, enum i2c_event event)
     if (event == I2C_START_RECV) {
         s->read_idx = 0;
     }
-    if (event == I2C_FINISH) {
-        /*
-         * Deassert INT after the firmware completes an I2C read.
-         * Real CST328 deasserts INT once touch data is consumed.
-         * Timer will re-assert if finger is still down.
-         */
-        if (s->int_asserted) {
-            s->int_asserted = false;
-            s->data_acked = true;
-            qemu_set_irq(s->int_pin, 1);
-        }
-    }
     return 0;
 }
 
@@ -786,7 +775,7 @@ static int tdeck_cst328_send(I2CSlave *i2c, uint8_t data)
         s->addr_set = true;
     } else {
         /* ACK write: deassert INT.  Timer will re-assert if still pressed. */
-        if (s->reg_addr == 0x00 && data == 0xAB) {
+        if (s->reg_addr == 0x00 && data == 0xAB && s->int_asserted) {
             s->int_asserted = false;
             s->data_acked = true;
             qemu_set_irq(s->int_pin, 1); /* HIGH = no data */
