@@ -13,6 +13,7 @@
 #include "hw/sysbus.h"
 #include "hw/registerfields.h"
 #include "chardev/char-fe.h"
+#include "qemu/fifo8.h"
 
 #define TYPE_ESP32C3_JTAG "misc.esp32c3.usb_serial_jtag"
 #define ESP32C3_JTAG(obj) OBJECT_CHECK(ESP32C3UsbJtagState, (obj), TYPE_ESP32C3_JTAG)
@@ -28,15 +29,21 @@
 #define USB_SERIAL_JTAG_INT_CLR_REG     0x14
 
 #define USB_SERIAL_JTAG_TX_BUF_SIZE     64
+#define USB_SERIAL_JTAG_RX_BUF_SIZE     64
+
+#define USB_SERIAL_JTAG_INT_RX_AVAIL    (1 << 0)
+#define USB_SERIAL_JTAG_INT_TX_DONE     (1 << 1)
 
 typedef struct ESP32C3UsbJtagState {
     SysBusDevice parent_object;
     MemoryRegion iomem;
     CharBackend chr;
+    qemu_irq irq;
 
     /* TX FIFO buffer */
     uint8_t tx_buf[USB_SERIAL_JTAG_TX_BUF_SIZE];
     uint32_t tx_buf_pos;
+    Fifo8 rx_fifo;
 
     /* Interrupt registers */
     uint32_t int_raw;

@@ -46,6 +46,43 @@ static uint32_t esp32s3_clock_get_ext_dev_enc_dec_ctrl(ESP32S3ClockState *s)
     return s->sys_ext_dev_enc_dec_ctrl;
 }
 
+uint32_t esp32s3_clock_get_xtal_freq(ESP32S3ClockState *s)
+{
+    uint32_t mhz = FIELD_EX32(s->sysclk, SYSTEM_SYSCLK_CONF, CLK_XTAL_FREQ);
+
+    if (mhz == 0) {
+        mhz = 40;
+    }
+
+    return mhz * 1000000u;
+}
+
+uint32_t esp32s3_clock_get_cpu_freq(ESP32S3ClockState *s)
+{
+    switch (FIELD_EX32(s->sysclk, SYSTEM_SYSCLK_CONF, SOC_CLK_SEL)) {
+    case ESP32S3_CLK_SEL_XTAL:
+        return esp32s3_clock_get_xtal_freq(s);
+    case ESP32S3_CLK_SEL_RCFAST:
+        return 17500000u;
+    case ESP32S3_CLK_SEL_PLL:
+    default:
+        switch (FIELD_EX32(s->cpuperconf, SYSTEM_CPU_PER_CONF, CPUPERIOD_SEL)) {
+        case ESP32S3_PERIOD_SEL_160:
+            return 160000000u;
+        case ESP32S3_PERIOD_SEL_80:
+        default:
+            return 80000000u;
+        }
+    }
+}
+
+uint32_t esp32s3_clock_get_apb_freq(ESP32S3ClockState *s)
+{
+    uint32_t cpu_hz = esp32s3_clock_get_cpu_freq(s);
+
+    return MIN(cpu_hz, 80000000u);
+}
+
 static uint64_t esp32s3_clock_read(void *opaque, hwaddr addr, unsigned int size)
 {
     ESP32S3ClockState *s = ESP32S3_CLOCK(opaque);
@@ -103,6 +140,12 @@ static void esp32s3_clock_write(void *opaque, hwaddr addr, uint64_t value,
         }
         case A_SYSTEM_CORE_1_CONTROL_1_REG:
                 s->app_cpu_addr = (uint32_t)value;
+            break;
+        case A_SYSTEM_CPU_PER_CONF:
+            s->cpuperconf = (uint32_t)value;
+            break;
+        case A_SYSTEM_SYSCLK_CONF:
+            s->sysclk = (uint32_t)value;
             break;
         case A_SYSTEM_CPU_INTR_FROM_CPU_0:
         case A_SYSTEM_CPU_INTR_FROM_CPU_1:

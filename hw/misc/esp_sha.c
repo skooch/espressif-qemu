@@ -66,6 +66,15 @@ static ESPHashAlg esp_sha_algs[] = {
     },
 };
 
+static void esp_sha_update_irq(ESPShaState *s)
+{
+    if (s->int_raw && s->int_ena) {
+        qemu_irq_raise(s->irq);
+    } else {
+        qemu_irq_lower(s->irq);
+    }
+}
+
 
 static void esp_sha_write_digest(ESPShaMode mode, uint32_t* hash, ESPHashContext* context, size_t len)
 {
@@ -148,10 +157,8 @@ static void esp_sha_continue_dma(ESPShaState *s)
 
     g_free(buffer);
 
-    /* Trigger an interrupt if enabled! */
-    if (s->int_ena) {
-        qemu_irq_raise(s->irq);
-    }
+    s->int_raw = true;
+    esp_sha_update_irq(s);
 }
 
 
@@ -175,6 +182,8 @@ static void esp_sha_start(ESPShaState *s, ESPShaOperation op, uint32_t mode, uin
         esp_sha_continue_dma(s);
     } else {
         esp_sha_continue_hash(s, mode, message, hash);
+        s->int_raw = true;
+        esp_sha_update_irq(s);
     }
 }
 
@@ -296,11 +305,13 @@ static void esp_sha_write(void *opaque, hwaddr addr,
         break;
 
     case A_SHA_CLEAR_IRQ:
-        qemu_irq_lower(s->irq);
+        s->int_raw = false;
+        esp_sha_update_irq(s);
         break;
 
     case A_SHA_IRQ_ENA:
         s->int_ena = FIELD_EX32(value, SHA_IRQ_ENA, INTERRUPT_ENA) != 0;
+        esp_sha_update_irq(s);
         break;
 
     default:
@@ -326,8 +337,9 @@ static void esp_sha_reset_hold(Object *obj, ResetType type)
     memset(s->message, 0, ESP_SHA_MAX_MESSAGE_WORDS * sizeof(uint32_t));
 
     s->block = 0;
+    s->int_raw = false;
     s->int_ena = 0;
-    qemu_irq_lower(s->irq);
+    esp_sha_update_irq(s);
 }
 
 

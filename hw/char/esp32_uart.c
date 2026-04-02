@@ -23,11 +23,31 @@
 #include "hw/qdev-properties.h"
 #include "hw/qdev-properties-system.h"
 #include "hw/char/esp32_uart.h"
+#include "hw/xtensa/esp32s3_clk.h"
 #include "trace.h"
 
 
 static gboolean uart_transmit(void *do_not_use, GIOCondition cond, void *opaque);
 static void uart_receive(void *opaque, const uint8_t *buf, int size);
+
+static unsigned esp32_uart_get_source_clk_hz(ESP32UARTState *s)
+{
+    if (s->clock) {
+        return esp32s3_clock_get_apb_freq(s->clock);
+    }
+
+    return 40000000u;
+}
+
+static unsigned esp32_uart_get_symbol_cycles(ESP32UARTState *s)
+{
+    if (s->baud_rate == 0) {
+        return 0;
+    }
+
+    return MAX(1u, (esp32_uart_get_source_clk_hz(s) + (s->baud_rate / 2)) /
+        s->baud_rate);
+}
 
 
 void esp32_uart_update_irq(ESP32UARTState *s)
@@ -97,7 +117,7 @@ static uint64_t uart_read(void *opaque, hwaddr addr, unsigned int size)
 
     case A_UART_LOWPULSE:
     case A_UART_HIGHPULSE:
-        r = 337;  /* FIXME: this should depend on the APB frequency */
+        r = esp32_uart_get_symbol_cycles(s);
         break;
     case A_UART_MEM_CONF:
         r = FIELD_DP32(r, UART_MEM_CONF, RX_SIZE, (unsigned char)(UART_FIFO_LENGTH/128));
@@ -158,8 +178,8 @@ static void uart_write(void *opaque, hwaddr addr,
                           FIELD_EX32(s->reg[R_UART_CLKDIV], UART_CLKDIV, CLKDIV_FRAG);
         unsigned baud_rate = 115200;
         if (clkdiv != 0) {
-            /* FIXME: this should depend on the APB frequency */
-            baud_rate = (unsigned) ((40000000ULL << 4) / clkdiv);
+            baud_rate = (unsigned) ((((uint64_t)esp32_uart_get_source_clk_hz(s)) << 4) /
+                                    clkdiv);
         }
         s->baud_rate = baud_rate;
         break;
@@ -171,7 +191,8 @@ static void uart_write(void *opaque, hwaddr addr,
          * and it doesn't care if the result is ready immediately.
          */
         if (FIELD_EX32(value, UART_AUTOBAUD, EN)) {
-            s->reg[R_UART_RXD_CNT] = 0x3FF;
+            s->reg[R_UART_RXD_CNT] = MIN(0x3ffu,
+                                         MAX(1u, esp32_uart_get_source_clk_hz(s) / 100000u));
         } else {
             s->reg[R_UART_RXD_CNT] = 0;
         }

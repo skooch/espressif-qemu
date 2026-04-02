@@ -20,9 +20,14 @@
 
 static uint64_t esp32s3_rng_read(void *opaque, hwaddr addr, unsigned int size)
 {
-    uint32_t r = 0;
-    qemu_guest_getrandom_nofail(&r, sizeof(r));
-    return r;
+    Esp32s3RngState *s = ESP32S3_RNG(opaque);
+
+    if (addr != 0 || size != sizeof(uint32_t)) {
+        return 0;
+    }
+
+    qemu_guest_getrandom_nofail(&s->last_value, sizeof(s->last_value));
+    return s->last_value;
 }
 
 static const MemoryRegionOps esp32s3_rng_ops = {
@@ -40,12 +45,27 @@ static void esp32s3_rng_init(Object *obj)
     sysbus_init_mmio(sbd, &s->iomem);
 }
 
+static void esp32s3_rng_reset_hold(Object *obj, ResetType type)
+{
+    Esp32s3RngState *s = ESP32S3_RNG(obj);
+
+    s->last_value = 0;
+}
+
+static void esp32s3_rng_class_init(ObjectClass *klass, void *data)
+{
+    ResettableClass *rc = RESETTABLE_CLASS(klass);
+
+    rc->phases.hold = esp32s3_rng_reset_hold;
+}
+
 
 static const TypeInfo esp32s3_rng_info = {
     .name = TYPE_ESP32S3_RNG,
     .parent = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(Esp32s3RngState),
     .instance_init = esp32s3_rng_init,
+    .class_init = esp32s3_rng_class_init,
 };
 
 static void esp32s3_rng_register_types(void)

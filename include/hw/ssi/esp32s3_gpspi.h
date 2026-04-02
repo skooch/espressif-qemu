@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hw/sysbus.h"
+#include "qemu/timer.h"
 
 #define TYPE_ESP32S3_GPSPI "esp32s3.gpspi"
 
@@ -15,7 +16,10 @@ typedef struct Esp32s3GpSpiState {
     SysBusDevice parent_obj;
     MemoryRegion iomem;
     qemu_irq irq;
+    QEMUTimer completion_timer;
     uint32_t regs[0x100 / 4];
+    bool transfer_in_progress;
+    bool transfer_data_executed;
 
     /* References for SPI slave data routing */
     ESPGdmaState *gdma;

@@ -9,6 +9,13 @@
 static void esp32_i2c_do_transaction(Esp32I2CState * s);
 static void esp32_i2c_update_irq(Esp32I2CState * s);
 
+static void esp32_i2c_clear_done_bits(Esp32I2CState *s)
+{
+    for (int i = 0; i < ESP32_I2C_CMD_COUNT; i++) {
+        s->regs[(A_I2C_CMD / 4) + i] &= ~R_I2C_CMD_DONE_MASK;
+    }
+}
+
 /* Deferred transaction completion callback.
  * Sets INT_RAW bits and fires the IRQ after a brief delay, so the
  * firmware's async I2C future returns Pending on first poll and the
@@ -96,17 +103,7 @@ static uint64_t esp32_i2c_read(void * opaque, hwaddr addr, unsigned int size)
     default:
         /* All other registers: return stored value */
         if (addr / 4 < ESP32_I2C_REG_COUNT) {
-            uint32_t val = s->regs[addr / 4];
-            /* Force DONE bit on CMD register reads. The firmware polls
-             * command_done() in all_commands_done() which busy-spins if
-             * any executed command lacks the DONE bit. In QEMU, commands
-             * complete synchronously and DONE is set, but stale values
-             * from interleaved or previous transactions can lack it. */
-            if (addr >= A_I2C_CMD &&
-                addr < A_I2C_CMD + ESP32_I2C_CMD_COUNT * 4) {
-                val |= R_I2C_CMD_DONE_MASK;
-            }
-            return val;
+            return s->regs[addr / 4];
         }
         return 0;
     }
@@ -121,6 +118,10 @@ static void esp32_i2c_write(void * opaque, hwaddr addr, uint64_t value, unsigned
         s->regs[addr / 4] = (uint32_t)value;
     }
 
+    if (addr >= A_I2C_CMD && addr < A_I2C_CMD + ESP32_I2C_CMD_COUNT * 4) {
+        s->regs[addr / 4] &= ~R_I2C_CMD_DONE_MASK;
+    }
+
     /* Special handling for specific registers */
     switch(addr) {
     case A_I2C_CTR:
@@ -128,6 +129,8 @@ static void esp32_i2c_write(void * opaque, hwaddr addr, uint64_t value, unsigned
             error_report("esp32_i2c: slave mode not implemented");
         }
         if (FIELD_EX32(value, I2C_CTR, TRANS_START)) {
+            esp32_i2c_clear_done_bits(s);
+            s->deferred_int_raw = 0;
             esp32_i2c_do_transaction(s);
             /* Auto-clear WT bits: TRANS_START, CONF_UPGATE */
             value &= ~(R_I2C_CTR_TRANS_START_MASK | R_I2C_CTR_CONF_UPGATE_MASK);

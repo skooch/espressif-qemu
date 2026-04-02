@@ -77,6 +77,7 @@ REG32(UART_DATE, 0x78)
 /* Cover up to offset 0x84 for ESP32-S3 UART_ID register at 0x80 */
 #define UART_REG_CNT (0x84 / 4)
 
+typedef struct ESP32S3ClockState ESP32S3ClockState;
 
 typedef struct ESPUARTState {
     SysBusDevice parent_obj;
@@ -104,6 +105,9 @@ typedef struct ESPUARTState {
     /* Threshold, in bytes, for a full RX FIFO and an empty TX FIFO respectively */
     uint32_t tx_empty_threshold;
     uint32_t rx_full_threshold;
+
+    /* Optional ESP32-S3 clock source hook */
+    ESP32S3ClockState *clock;
 } ESP32UARTState;
 
 typedef struct ESPUARTClass {

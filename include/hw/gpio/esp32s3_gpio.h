@@ -17,6 +17,16 @@
 /* ESP32-S3 has GPIOs 0-48 (49 pins) */
 #define ESP32S3_GPIO_COUNT  49
 
+#define ESP32S3_GPIO_SIG_NONE      0
+#define ESP32S3_GPIO_SIG_GPIO_OUT  0x100
+#define ESP32S3_GPIO_SIG_EPD_CS    0x300
+#define ESP32S3_GPIO_SIG_EPD_DC    0x301
+#define ESP32S3_GPIO_SIG_SD_CS     0x302
+#define ESP32S3_GPIO_SIG_LORA_CS   0x303
+
+#define ESP32S3_GPIO_IOMUX_FUNC_DIRECT 0
+#define ESP32S3_GPIO_IOMUX_FUNC_GPIO   1
+
 /* Register offsets */
 #define GPIO_BT_SELECT      0x000
 #define GPIO_OUT_REG         0x004
@@ -106,6 +116,8 @@ typedef struct ESP32S3GPIOState {
     /* Function select registers */
     uint32_t func_in_sel[256];
     uint32_t func_out_sel[ESP32S3_GPIO_COUNT];
+    uint32_t iomux_func[ESP32S3_GPIO_COUNT];
+    uint32_t default_out_sig[ESP32S3_GPIO_COUNT];
 
     /* IRQ outputs to interrupt matrix */
     qemu_irq irq_cpu0;
@@ -134,3 +146,12 @@ void esp32s3_gpio_register_output_cb(ESP32S3GPIOState *s,
                                       int pin,
                                       gpio_output_cb_fn fn,
                                       void *opaque);
+void esp32s3_gpio_set_iomux_func(ESP32S3GPIOState *s,
+                                 int gpio_num,
+                                 uint32_t func);
+void esp32s3_gpio_set_default_output_signal(ESP32S3GPIOState *s,
+                                            int gpio_num,
+                                            uint32_t signal);
+bool esp32s3_gpio_get_routed_signal_level(ESP32S3GPIOState *s,
+                                          uint32_t signal,
+                                          bool *level);

@@ -150,6 +150,66 @@ void esp32s3_gpio_register_output_cb(ESP32S3GPIOState *s,
     cb->pin = pin;
 }
 
+void esp32s3_gpio_set_iomux_func(ESP32S3GPIOState *s,
+                                 int gpio_num,
+                                 uint32_t func)
+{
+    if (gpio_num < 0 || gpio_num >= ESP32S3_GPIO_COUNT) {
+        return;
+    }
+
+    s->iomux_func[gpio_num] = func;
+}
+
+void esp32s3_gpio_set_default_output_signal(ESP32S3GPIOState *s,
+                                            int gpio_num,
+                                            uint32_t signal)
+{
+    if (gpio_num < 0 || gpio_num >= ESP32S3_GPIO_COUNT) {
+        return;
+    }
+
+    s->default_out_sig[gpio_num] = signal;
+}
+
+static bool esp32s3_gpio_get_pin_level(ESP32S3GPIOState *s, int gpio_num)
+{
+    int idx = gpio_num / 32;
+    int bit = gpio_num % 32;
+    uint32_t value = s->in_levels[idx] | (s->out[idx] & s->enable[idx]);
+
+    return (value >> bit) & 1;
+}
+
+bool esp32s3_gpio_get_routed_signal_level(ESP32S3GPIOState *s,
+                                          uint32_t signal,
+                                          bool *level)
+{
+    for (int pin = 0; pin < ESP32S3_GPIO_COUNT; pin++) {
+        bool routed = false;
+
+        if (s->iomux_func[pin] != ESP32S3_GPIO_IOMUX_FUNC_GPIO) {
+            continue;
+        }
+
+        if (s->func_out_sel[pin] == signal) {
+            routed = true;
+        } else if (s->func_out_sel[pin] == ESP32S3_GPIO_SIG_GPIO_OUT &&
+                   s->default_out_sig[pin] == signal) {
+            routed = true;
+        }
+
+        if (routed) {
+            if (level) {
+                *level = esp32s3_gpio_get_pin_level(s, pin);
+            }
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static void esp32s3_gpio_notify_output(ESP32S3GPIOState *s, int pin, int level)
 {
     for (int i = 0; i < s->output_cb_count; i++) {
@@ -389,11 +449,19 @@ static void esp32s3_gpio_reset_hold(Object *obj, ResetType type)
     memset(s->pin_reg, 0, sizeof(s->pin_reg));
     memset(s->func_in_sel, 0, sizeof(s->func_in_sel));
     memset(s->func_out_sel, 0, sizeof(s->func_out_sel));
+    memset(s->iomux_func, 0, sizeof(s->iomux_func));
+    memset(s->default_out_sig, 0, sizeof(s->default_out_sig));
 
     /* Default: all output function selects to 0x100 (GPIO matrix bypass) */
     for (int i = 0; i < ESP32S3_GPIO_COUNT; i++) {
-        s->func_out_sel[i] = 0x100;
+        s->func_out_sel[i] = ESP32S3_GPIO_SIG_GPIO_OUT;
+        s->iomux_func[i] = ESP32S3_GPIO_IOMUX_FUNC_GPIO;
     }
+
+    s->default_out_sig[34] = ESP32S3_GPIO_SIG_EPD_CS;
+    s->default_out_sig[35] = ESP32S3_GPIO_SIG_EPD_DC;
+    s->default_out_sig[48] = ESP32S3_GPIO_SIG_SD_CS;
+    s->default_out_sig[3] = ESP32S3_GPIO_SIG_LORA_CS;
 }
 
 static void esp32s3_gpio_realize(DeviceState *dev, Error **errp)

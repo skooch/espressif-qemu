@@ -73,6 +73,7 @@ void tdeck_bq25896_set_fuel_gauge(I2CSlave *charger, I2CSlave *gauge);
 #include "hw/timer/esp32s3_timg.h"
 #include "hw/timer/esp32s3_systimer.h"
 #include "hw/gpio/esp32s3_gpio.h"
+#include "hw/gpio/esp32s3_iomux.h"
 #include "hw/i2c/esp32_i2c.h"
 #include "hw/ssi/esp32s3_gpspi.h"
 #include "hw/misc/esp32s3_xts_aes.h"
@@ -175,6 +176,8 @@ typedef struct Esp32s3SocState {
     TdeckLoraSx1262State lora;
 
     MemoryRegion iomem;
+    MemoryRegion ana_iomem;
+    ESP32S3IOMuxState iomux;
     DWCSDMMCState sdmmc;
     DeviceState *eth;
     SsiPsramState *psram;
@@ -518,16 +521,6 @@ static uint64_t esp32s3_io_read(void *opaque, hwaddr addr, unsigned int size)
         r = esp32s3_io_regs[addr / 4];
     }
 
-    /*
-     * I2C_ANA_MST ANA_CONF0 at 0x6000_E040 (offset 0xE040):
-     * Bit 24 = BBPLL_CAL_DONE — PLL calibration done flag.
-     * The firmware polls this after PLL configuration. Since QEMU has no
-     * PLL hardware, always report calibration done.
-     */
-    if (addr == 0xe040) {
-        r |= (1 << 24);
-    }
-
     return r;
 }
 
@@ -548,6 +541,41 @@ static void esp32s3_io_write(void *opaque, hwaddr addr, uint64_t value, unsigned
 static const MemoryRegionOps esp32s3_io_ops = {
     .read =  esp32s3_io_read,
     .write = esp32s3_io_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+#define ESP32S3_ANA_REG_COUNT (0x100 / sizeof(uint32_t))
+static uint32_t esp32s3_ana_regs[ESP32S3_ANA_REG_COUNT];
+
+static uint64_t esp32s3_ana_read(void *opaque, hwaddr addr, unsigned int size)
+{
+    uint32_t r = 0;
+    hwaddr index = addr / sizeof(uint32_t);
+
+    if (index < ESP32S3_ANA_REG_COUNT) {
+        r = esp32s3_ana_regs[index];
+    }
+
+    if (addr == 0x40) {
+        r |= (1u << 24);
+    }
+
+    return r;
+}
+
+static void esp32s3_ana_write(void *opaque, hwaddr addr,
+                              uint64_t value, unsigned int size)
+{
+    hwaddr index = addr / sizeof(uint32_t);
+
+    if (index < ESP32S3_ANA_REG_COUNT) {
+        esp32s3_ana_regs[index] = (uint32_t)value;
+    }
+}
+
+static const MemoryRegionOps esp32s3_ana_ops = {
+    .read = esp32s3_ana_read,
+    .write = esp32s3_ana_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
@@ -739,6 +767,9 @@ static void esp32s3_machine_init(MachineState *machine)
     memory_region_init_io(&ss->iomem, OBJECT(&ss->cpu[0]), &esp32s3_io_ops,
                           NULL, "esp32s3.iomem", 0xd1000);
     memory_region_add_subregion_overlap(sys_mem, ESP32S3_IO_START_ADDR, &ss->iomem, -1);
+    memory_region_init_io(&ss->ana_iomem, OBJECT(ss), &esp32s3_ana_ops,
+                          ss, "esp32s3.ana", 0x100);
+    memory_region_add_subregion_overlap(sys_mem, 0x6000e000, &ss->ana_iomem, 1);
 
     // qdev_prop_set_chr(DEVICE(ss), "serial0", serial_hd(0));
     // qdev_prop_set_chr(DEVICE(ss), "serial1", serial_hd(1));
@@ -751,6 +782,7 @@ static void esp32s3_machine_init(MachineState *machine)
     object_initialize_child(OBJECT(ss), "efuse", &ss->efuse, TYPE_ESP32S3_EFUSE);
     object_initialize_child(OBJECT(ss), "jtag", &ss->jtag, TYPE_ESP32C3_JTAG);
     object_initialize_child(OBJECT(ss), "gpio", &ss->gpio, TYPE_ESP32S3_GPIO);
+    object_initialize_child(OBJECT(ss), "iomux", &ss->iomux, TYPE_ESP32S3_IOMUX);
     object_initialize_child(OBJECT(ss), "rng", &ss->rng, TYPE_ESP32S3_RNG);
 
     object_initialize_child(OBJECT(ss), "clock", &ss->clock, TYPE_ESP32S3_CLOCK);
@@ -788,6 +820,8 @@ static void esp32s3_machine_init(MachineState *machine)
         sysbus_realize(SYS_BUS_DEVICE(&ss->jtag), &error_fatal);
         MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->jtag), 0);
         memory_region_add_subregion_overlap(sys_mem, DR_REG_USB_SERIAL_JTAG_BASE, mr, 0);
+        sysbus_connect_irq(SYS_BUS_DEVICE(&ss->jtag), 0,
+                           qdev_get_gpio_in(intmatrix_dev, ETS_USB_SERIAL_JTAG_INTR_SOURCE));
     }
 
     /* SPI1 controller (SPI Flash) */
@@ -843,6 +877,9 @@ static void esp32s3_machine_init(MachineState *machine)
         /* Pass CPU references for RUNSTALL support */
         ss->clock.cpu[0] = CPU(&ss->cpu[0]);
         ss->clock.cpu[1] = CPU(&ss->cpu[1]);
+        for (int i = 0; i < ESP32S3_UART_COUNT; i++) {
+            ss->uart[i].parent.clock = &ss->clock;
+        }
     }
     /* Timer Groups realization */
     {
@@ -893,6 +930,11 @@ static void esp32s3_machine_init(MachineState *machine)
         memory_region_add_subregion_overlap(sys_mem, DR_REG_GPIO_BASE, mr, 0);
         sysbus_connect_irq(SYS_BUS_DEVICE(&ss->gpio), 0,
                            qdev_get_gpio_in(intmatrix_dev, ETS_GPIO_INTR_SOURCE));
+
+        ss->iomux.gpio = &ss->gpio;
+        sysbus_realize(SYS_BUS_DEVICE(&ss->iomux), &error_fatal);
+        mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->iomux), 0);
+        memory_region_add_subregion_overlap(sys_mem, DR_REG_IO_MUX_BASE, mr, 0);
     }
 
     /* I2C controller realization */
@@ -1117,9 +1159,6 @@ static void esp32s3_machine_init(MachineState *machine)
     }
 
     esp32s3_soc_add_unimp_device(sys_mem, "esp32s3.rmt", DR_REG_RMT_BASE, 0x1000);
-    esp32s3_soc_add_unimp_device(sys_mem, "esp32s3.iomux", DR_REG_IO_MUX_BASE, 0x2000);
-
-    
     esp32s3_machine_init_sd(ss);
 
     /* Need MMU initialized prior to ELF loading,
@@ -1255,4 +1294,3 @@ static void esp32s3_machine_type_init(void)
 }
 
 type_init(esp32s3_machine_type_init);
-

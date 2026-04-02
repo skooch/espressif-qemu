@@ -21,7 +21,7 @@
 typedef struct Esp32s3RngState {
     SysBusDevice parent_obj;
     MemoryRegion iomem;
+    uint32_t last_value;
 } Esp32s3RngState;
 
 #define ESP32S3_RNG_BASE 0x6003507C//(DR_REG_WDEV_BASE + 0x07c)
-

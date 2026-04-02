@@ -106,6 +106,7 @@ typedef struct ESPShaState {
     /* DMA related */
     /* Number of block to process in DMA mode */
     uint32_t block;
+    bool int_raw;
     bool int_ena;
     qemu_irq irq;
 
