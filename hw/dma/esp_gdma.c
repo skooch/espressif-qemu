@@ -273,12 +273,18 @@ bool esp_gdma_get_channel_periph(ESPGdmaState *s, GdmaPeripheral periph, int dir
         return false;
     }
 
+    const bool is_out = dir == ESP_GDMA_OUT_IDX;
+
     /* Check all the channels of the GDMA */
     for (int i = 0; i < class->m_channel_count; i++) {
-        /* IN/OUT PERI registers have the same organization, can use any macro.
-         * Look for the channel that was configured with the given peripheral. It must be marked as "started" too */
-        if ( FIELD_EX32(s->ch_conf[dir][i].peripheral, GDMA_PERI_SEL, PERI_SEL) == periph ||
-             FIELD_EX32(s->ch_conf[dir][i].link, GDMA_OUT_LINK, START)) {
+        const DmaConfigState *state = &s->ch_conf[dir][i];
+        const bool periph_match = FIELD_EX32(state->peripheral, GDMA_PERI_SEL, PERI_SEL) == periph;
+        const bool start = is_out
+            ? (FIELD_EX32(state->link, GDMA_OUT_LINK, START) || FIELD_EX32(state->link, GDMA_OUT_LINK, RESTART))
+            : (FIELD_EX32(state->link, GDMA_IN_LINK, START) || FIELD_EX32(state->link, GDMA_IN_LINK, RESTART));
+
+        /* Channels must match the peripheral and be explicitly started/restarted. */
+        if (periph_match && start) {
 
             *chan = i;
             return true;
@@ -429,6 +435,7 @@ bool esp_gdma_read_channel_data(ESPGdmaState *s, uint32_t chan,
     uint32_t filled = 0;
 
     /* Walk the descriptor chain, reading data from each buffer */
+    memset(buffer, 0x00, size);
     for (int iter = 0; iter < 256 && filled < size; iter++) {
         if (!esp_gdma_read_descr(s, desc_addr, &node)) {
             return false;
@@ -448,7 +455,7 @@ bool esp_gdma_read_channel_data(ESPGdmaState *s, uint32_t chan,
         desc_addr = node.next_addr;
     }
 
-    return true;
+    return filled == size;
 }
 
 
