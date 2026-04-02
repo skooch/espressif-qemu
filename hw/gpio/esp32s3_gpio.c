@@ -73,6 +73,7 @@ static void esp32s3_gpio_check_int(ESP32S3GPIOState *s, int gpio_num,
 {
     uint32_t pin_cfg = s->pin_reg[gpio_num];
     int int_type = (pin_cfg & GPIO_PIN_INT_TYPE_MASK) >> GPIO_PIN_INT_TYPE_SHIFT;
+    uint32_t int_ena = extract32(pin_cfg, 13, 5);
 
     bool trigger = false;
     switch (int_type) {
@@ -95,7 +96,7 @@ static void esp32s3_gpio_check_int(ESP32S3GPIOState *s, int gpio_num,
         break;
     }
 
-    if (trigger) {
+    if (trigger && int_ena != 0) {
         int idx = gpio_num / 32;
         int bit = gpio_num % 32;
         s->status[idx] |= (1u << bit);
