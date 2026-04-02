@@ -73,6 +73,9 @@ static void esp32s3_gpio_check_int(ESP32S3GPIOState *s, int gpio_num,
 {
     uint32_t pin_cfg = s->pin_reg[gpio_num];
     int int_type = (pin_cfg & GPIO_PIN_INT_TYPE_MASK) >> GPIO_PIN_INT_TYPE_SHIFT;
+    /* int_ena: bits 13-17 (5 bits, one per CPU/peripheral).
+     * If all are 0, the interrupt is disabled — don't latch status. */
+    int int_ena = (pin_cfg >> 13) & 0x1F;
 
     bool trigger = false;
     switch (int_type) {
@@ -95,7 +98,7 @@ static void esp32s3_gpio_check_int(ESP32S3GPIOState *s, int gpio_num,
         break;
     }
 
-    if (trigger) {
+    if (trigger && int_ena) {
         int idx = gpio_num / 32;
         int bit = gpio_num % 32;
         s->status[idx] |= (1u << bit);
@@ -340,6 +343,12 @@ static void esp32s3_gpio_write(void *opaque, hwaddr addr,
             addr < GPIO_PIN0_REG + ESP32S3_GPIO_COUNT * 4 &&
             (addr - GPIO_PIN0_REG) % 4 == 0) {
             int pin = (addr - GPIO_PIN0_REG) / 4;
+            if (pin == 12 || pin == 15) {
+                int it = ((uint32_t)value >> 7) & 7;
+                int ie = ((uint32_t)value >> 13) & 0x1F;
+                fprintf(stderr, "GPIO%d: pin_reg 0x%08x -> 0x%08x (int_type=%d int_ena=%d)\n",
+                        pin, s->pin_reg[pin], (uint32_t)value, it, ie);
+            }
             s->pin_reg[pin] = (uint32_t)value;
             /* Re-evaluate level interrupts: if the current pin level
              * already satisfies the newly configured interrupt type,

@@ -172,8 +172,13 @@ static void esp32_i2c_write(void * opaque, hwaddr addr, uint64_t value, unsigned
     }
 }
 
+static uint64_t i2c_xact_count = 0;
 static void esp32_i2c_do_transaction(Esp32I2CState * s)
 {
+    i2c_xact_count++;
+    if ((i2c_xact_count % 10000) == 0) {
+        fprintf(stderr, "I2C: %llu transactions total\n", (unsigned long long)i2c_xact_count);
+    }
     bool stop_or_end = false;
     for (int i_cmd = 0; i_cmd < ESP32_I2C_CMD_COUNT && !stop_or_end; ++i_cmd) {
         uint32_t cmd = s->regs[(A_I2C_CMD / 4) + i_cmd];
@@ -204,6 +209,7 @@ static void esp32_i2c_do_transaction(Esp32I2CState * s)
                     uint8_t data = fifo8_pop(&s->tx_fifo);
                     uint8_t addr = data >> 1;
                     uint8_t is_read = data & 0x1;
+                    fprintf(stderr, "I2C: xfer addr=0x%02x is_read=%d\n", addr, is_read);
                     int xfer_result = i2c_start_transfer(s->bus, addr, is_read);
                     if (xfer_result != 0) {
                         /* NACK */
