@@ -57,6 +57,28 @@ of other UNIX targets. The simple steps to build QEMU are:
   ../configure
   make
 
+If `ccache` is installed, `configure` will use it automatically for compiler
+invocations. Set `CCACHE_DISABLE=1` if you want to turn it off.
+
+For rebuilds in an existing build tree, `make ccache` runs the normal build
+through `scripts/with-ccache`. That helper stores the cache in
+`.cache/ccache` in the repository root, which is already ignored by git.
+If that path is unavailable, the helper automatically falls back to a temporary
+writable cache location instead of stopping the build.
+
+.. code-block:: shell
+
+  mkdir build
+  cd build
+  ../configure
+  make ccache
+
+For ad hoc commands, you can still use the lower-level wrapper directly:
+
+.. code-block:: shell
+
+  ../scripts/with-ccache make clean
+
 Additional information can also be found online via the QEMU website:
 
 * `<https://wiki.qemu.org/Hosts/Linux>`_

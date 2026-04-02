@@ -144,6 +144,50 @@ has() {
     type "$1" >/dev/null 2>&1
 }
 
+ccache=""
+ccache_wrapper="${source_path}/scripts/with-ccache"
+if has ccache && test "${CCACHE_DISABLE:-0}" != 1; then
+    ccache=$(command -v ccache)
+fi
+
+compiler_needs_ccache() {
+    compiler="$1"
+    set -- $compiler
+    compiler_name=${1##*/}
+
+    case "$compiler_name" in
+        ccache|ccache.exe|distcc|icecc|sccache|cachepot|gomacc|buildcache|env|sudo)
+            return 1
+            ;;
+    esac
+
+    case "$compiler_name" in
+        cc|gcc|g++|c++|clang|clang++|clang-cl|cl|cl.exe|*cc|*gcc|*g++|*c++|*clang|*clang++|*clang-cl|*cl|*cl.exe)
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    resolved=$(command -v "$1" 2>/dev/null || true)
+    case "$resolved" in
+        */ccache|*/ccache.exe|*/ccache/*|*/ccache.exe/*)
+            return 1
+            ;;
+    esac
+
+    return 0
+}
+
+maybe_wrap_ccache() {
+    compiler="$1"
+    if test -n "$ccache_wrapper" && test -x "$ccache_wrapper" && \
+            test -n "$ccache" && compiler_needs_ccache "$compiler"; then
+        compiler="$ccache_wrapper $compiler"
+    fi
+    printf '%s\n' "$compiler"
+}
+
 version_ge () {
     local_ver1=$(expr "$1" : '\([0-9.]*\)' | tr . ' ')
     local_ver2=$(echo "$2" | tr . ' ')
@@ -284,12 +328,14 @@ if test -z "${CC}${cross_prefix}"; then
 else
   cc="${CC-${cross_prefix}gcc}"
 fi
+cc=$(maybe_wrap_ccache "$cc")
 
 if test -z "${CXX}${cross_prefix}"; then
   cxx="c++"
 else
   cxx="${CXX-${cross_prefix}g++}"
 fi
+cxx=$(maybe_wrap_ccache "$cxx")
 
 # Preferred ObjC compiler:
 # $objcc (if set, i.e. via --objcc option)
@@ -305,10 +351,12 @@ if test -z "${objcc}${cross_prefix}"; then
 else
   objcc="${objcc-${cross_prefix}clang}"
 fi
+objcc=$(maybe_wrap_ccache "$objcc")
 
 ar="${AR-${cross_prefix}ar}"
 as="${AS-${cross_prefix}as}"
 ccas="${CCAS-$cc}"
+ccas=$(maybe_wrap_ccache "$ccas")
 dlltool="${DLLTOOL-${cross_prefix}dlltool}"
 objcopy="${OBJCOPY-${cross_prefix}objcopy}"
 ld="${LD-${cross_prefix}ld}"

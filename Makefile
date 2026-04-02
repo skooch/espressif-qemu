@@ -292,6 +292,12 @@ update-linux-vdso:
 		SRC_PATH=$(SRC_PATH) BUILD_DIR=$(BUILD_DIR); \
 	done
 
+.PHONY: ccache
+ccache:
+	+$(call quiet-command,				\
+		$(SRC_PATH)/scripts/with-ccache $(MAKE),\
+		"CCACHE", "Build using checkout-local cache")
+
 .PHONY: help
 help:
 	@echo  'Generic targets:'
@@ -301,6 +307,7 @@ help:
 	$(call print-help,ctags/gtags/TAGS,Generate tags file for editors)
 	$(call print-help,cscope,Generate cscope index)
 	$(call print-help,sparse,Run sparse on the QEMU source)
+	$(call print-help,ccache,Build using scripts/with-ccache and .cache/ccache)
 	@echo  ''
 	@echo  'Cleaning targets:'
 	$(call print-help,clean,Remove most generated files but keep the config)

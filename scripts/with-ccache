@@ -1,0 +1,63 @@
+#!/bin/sh
+#
+# Run a command with a checkout-local ccache directory.
+
+set -eu
+
+if test "$#" -eq 0; then
+    echo "usage: $0 command [args...]" >&2
+    exit 2
+fi
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+
+cache_dir="${CCACHE_DIR:-$repo_root/.cache/ccache}"
+fallback_cache_dir=""
+cache_usable="no"
+
+can_use_cache_dir() {
+    candidate=$1
+    test -n "$candidate" || return 1
+    if mkdir -p "$candidate" 2>/dev/null; then
+        probe_file="$candidate/.ccache-write-test"
+        if (umask 077; : > "$probe_file") >/dev/null 2>&1; then
+            rm -f "$probe_file"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+if can_use_cache_dir "$cache_dir"; then
+    cache_usable="yes"
+else
+    tmp_root="${TMPDIR:-${TEMP:-/tmp}}"
+    tmp_root="${tmp_root%/}/qemu-ccache"
+    if can_use_cache_dir "$tmp_root"; then
+        fallback_cache_dir="$tmp_root"
+    fi
+fi
+
+if test "$cache_usable" = "yes"; then
+    export CCACHE_DIR="$cache_dir"
+elif test -n "$fallback_cache_dir"; then
+    if test -z "${CCACHE_DIR:-}"; then
+        echo "warning: cannot use default cache dir '$cache_dir'; using temporary fallback '$fallback_cache_dir'" >&2
+    else
+        echo "warning: cannot use '$CCACHE_DIR'; using temporary fallback '$fallback_cache_dir'" >&2
+    fi
+    cache_dir="$fallback_cache_dir"
+    export CCACHE_DIR="$cache_dir"
+else
+    echo "warning: cache directory '$cache_dir' is unavailable; disabling ccache for this command" >&2
+    export CCACHE_DISABLE=1
+fi
+
+if test "${CCACHE_DISABLE:-0}" != 1; then
+    export CCACHE_DIR="$cache_dir"
+fi
+
+# Always run command through the compiler commandline as-is.  This keeps non-compiler
+# commands like 'make' safe for ad hoc use of the wrapper.
+exec "$@"
