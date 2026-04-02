@@ -20,10 +20,12 @@
 #include "glib/gstdio.h"
 
 #include "hw/char/esp32_uart.h"
+#include "hw/char/esp32s3_uart.h"
 #include "hw/gpio/esp32s3_gpio.h"
 #include "hw/gpio/esp32s3_iomux.h"
 #include "hw/i2c/esp32_i2c.h"
 #include "hw/misc/esp32c3_jtag.h"
+#include "hw/dma/esp32s3_gdma.h"
 #include "hw/misc/esp32s3_rng.h"
 #include "hw/misc/esp32s3_reg.h"
 #include "hw/misc/esp_sha.h"
@@ -35,6 +37,7 @@
 #define ANA_BASE                0x6000e000
 #define SPI2_BASE               DR_REG_SPI2_BASE
 #define SPI1_BASE               DR_REG_SPI1_BASE
+#define GDMA_BASE               DR_REG_GDMA_BASE
 #define GPIO_BASE               DR_REG_GPIO_BASE
 #define IOMUX_BASE              DR_REG_IO_MUX_BASE
 #define JTAG_BASE               DR_REG_USB_SERIAL_JTAG_BASE
@@ -49,6 +52,14 @@
 #define GPSPI_INT_TRANS_DONE    BIT(12)
 #define USB_SERIAL_JTAG_EP1_DATA_FREE        BIT(1)
 #define USB_SERIAL_JTAG_EP1_WR_DONE         BIT(0)
+#define GDMA_SPI2_CHAN          0
+#define GDMA_OUT_DESC_SIZE      12
+#define GDMA_TX_DATA_BASE       (ESP_GDMA_RAM_ADDR + 0x1000)
+#define GDMA_RX_DATA_BASE       (ESP_GDMA_RAM_ADDR + 0x1100)
+#define GDMA_TX_DESC_BASE       (ESP_GDMA_RAM_ADDR + 0x1200)
+#define GDMA_RX_DESC_BASE       (ESP_GDMA_RAM_ADDR + 0x1300)
+#define SHA_DMA_BUF_BASE        (ESP_GDMA_RAM_ADDR + 0x1400)
+#define SHA_DMA_DESC_BASE       (ESP_GDMA_RAM_ADDR + 0x1500)
 
 static QTestState *qts_start(void)
 {
@@ -212,6 +223,200 @@ static void test_spi1_usr_rx_overwrites_all_bytes(void)
     qtest_quit(qts);
 }
 
+static uint32_t spi1_bytes_from_bits(uint32_t bit_len)
+{
+    return (bit_len + 1) / 8;
+}
+
+typedef struct TestGdmaLinkedList {
+    union {
+        struct {
+            uint32_t size: 12;
+            uint32_t length: 12;
+            uint32_t rsvd_24: 4;
+            uint32_t err_eof: 1;
+            uint32_t rsvd_29: 1;
+            uint32_t suc_eof: 1;
+            uint32_t owner: 1;
+        } bits;
+        uint32_t val;
+    } config;
+    uint32_t buf_addr;
+    uint32_t next_addr;
+} TestGdmaLinkedList;
+
+static void test_spi1_usr_length_matrix(void)
+{
+    QTestState *qts = qts_start();
+    const struct {
+        uint32_t mosi_bits;
+        uint32_t miso_bits;
+    } cases[] = {
+        {7, 0},
+        {0, 7},
+        {15, 15},
+        {31, 0},
+        {0, 31},
+        {31, 15},
+    };
+
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_USER,
+                 R_SPI_MEM_USER_USR_COMMAND_MASK |
+                 R_SPI_MEM_USER_USR_MOSI_MASK |
+                 R_SPI_MEM_USER_USR_MISO_MASK);
+
+    for (int i = 0; i < G_N_ELEMENTS(cases); i++) {
+        const uint32_t mosi_bits = cases[i].mosi_bits;
+        const uint32_t miso_bits = cases[i].miso_bits;
+        const uint32_t expected_rx = spi1_bytes_from_bits(miso_bits);
+        const uint32_t sentinel = 0xA5A5A5A5;
+
+        qtest_writel(qts, SPI1_BASE + A_SPI_MEM_W0, sentinel);
+
+        qtest_writel(qts, SPI1_BASE + A_SPI_MEM_MOSI_DLEN,
+                     FIELD_DP32(0, SPI_MEM_MOSI_DLEN, USR_MOSI_DBITLEN,
+                                mosi_bits));
+        qtest_writel(qts, SPI1_BASE + A_SPI_MEM_MISO_DLEN,
+                     FIELD_DP32(0, SPI_MEM_MISO_DLEN, USR_MISO_DBITLEN,
+                                miso_bits));
+        qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD,
+                     R_SPI_MEM_CMD_USR_MASK);
+
+        if (expected_rx == 0) {
+            g_assert_cmphex(qtest_readl(qts, SPI1_BASE + A_SPI_MEM_W0), ==, sentinel);
+        } else {
+            g_assert_cmphex(qtest_readl(qts, SPI1_BASE + A_SPI_MEM_W0), !=, sentinel);
+        }
+    }
+
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_MOSI_DLEN, 0);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_MISO_DLEN, 0);
+
+    qtest_quit(qts);
+}
+
+static void test_spi1_cmd_length_edges(void)
+{
+    QTestState *qts = qts_start();
+    uint8_t w0_data[8] = {0};
+
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_W0, 0xA5A5A5A5);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_W1, 0xA5A5A5A5);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD, R_SPI_MEM_CMD_FLASH_RDID_MASK);
+    qtest_memread(qts, SPI1_BASE + A_SPI_MEM_W0, w0_data, 3);
+    g_assert_cmpuint(w0_data[0], !=, 0xA5);
+    g_assert_cmpuint(w0_data[1], !=, 0xA5);
+    g_assert_cmpuint(w0_data[2], !=, 0xA5);
+
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_RD_STATUS, 0xA5A5A5A5);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD, R_SPI_MEM_CMD_FLASH_RDSR_MASK);
+    g_assert_cmpuint(qtest_readl(qts, SPI1_BASE + A_SPI_MEM_RD_STATUS) & 0xff,
+                     !=, 0xA5);
+    g_assert_cmphex(qtest_readl(qts, SPI1_BASE + A_SPI_MEM_RD_STATUS) & 0xffffff00,
+                    ==, 0xA5A5A500);
+
+    qtest_quit(qts);
+}
+
+static void write_gdma_descriptor(QTestState *qts, uint32_t addr,
+                                 uint32_t size, uint32_t length,
+                                 bool suc_eof, bool owner,
+                                 uint32_t buffer_addr, uint32_t next_addr)
+{
+    TestGdmaLinkedList desc = { 0 };
+
+    desc.config.bits.size = size;
+    desc.config.bits.length = length;
+    desc.config.bits.suc_eof = suc_eof;
+    desc.config.bits.owner = owner;
+    desc.buf_addr = buffer_addr;
+    desc.next_addr = next_addr;
+
+    qtest_memwrite(qts, addr, &desc, sizeof(desc));
+}
+
+static uint32_t sha_dma_buf_addr(uint32_t block_len)
+{
+    return SHA_DMA_BUF_BASE;
+}
+
+static void test_gpspi_dma_txrx_handoff(void)
+{
+    QTestState *qts = qts_start();
+    const uint32_t tx_len = 4;
+    const uint32_t rx_len = 4;
+    const uint32_t tx_buf = GDMA_TX_DATA_BASE;
+    const uint32_t rx_buf = GDMA_RX_DATA_BASE;
+    const uint32_t tx_desc = GDMA_TX_DESC_BASE;
+    const uint32_t rx_desc = GDMA_RX_DESC_BASE;
+    const uint32_t in_dir_base = GDMA_SPI2_CHAN * DMA_CHAN_REGS_SIZE
+                               + ESP_GDMA_IN_IDX * DMA_DIR_REGS_SIZE;
+    const uint32_t out_dir_base = GDMA_SPI2_CHAN * DMA_CHAN_REGS_SIZE
+                               + ESP_GDMA_OUT_IDX * DMA_DIR_REGS_SIZE;
+    const uint8_t tx_payload[4] = { 0x11, 0x22, 0x33, 0x44 };
+    const uint8_t zero[4] = { 0 };
+
+    qtest_memwrite(qts, tx_buf, tx_payload, sizeof(tx_payload));
+    qtest_memwrite(qts, rx_buf, zero, sizeof(zero));
+
+    write_gdma_descriptor(qts, tx_desc, tx_len, tx_len, true, false,
+                          tx_buf - ESP_GDMA_RAM_ADDR, 0);
+    write_gdma_descriptor(qts, rx_desc, rx_len, 0, false, false,
+                          rx_buf - ESP_GDMA_RAM_ADDR, 0);
+
+    qtest_writel(qts, GDMA_BASE + in_dir_base + A_DMA_PERI_SEL,
+                 FIELD_DP32(0, GDMA_PERI_SEL, PERI_SEL, GDMA_SPI2));
+    qtest_writel(qts, GDMA_BASE + out_dir_base + A_DMA_PERI_SEL,
+                 FIELD_DP32(0, GDMA_PERI_SEL, PERI_SEL, GDMA_SPI2));
+
+    qtest_writel(qts, GDMA_BASE + in_dir_base + A_DMA_LINK,
+                 R_GDMA_IN_LINK_START_MASK | (rx_desc - ESP_GDMA_RAM_ADDR));
+    qtest_writel(qts, GDMA_BASE + out_dir_base + A_DMA_LINK,
+                 R_GDMA_OUT_LINK_START_MASK | (tx_desc - ESP_GDMA_RAM_ADDR));
+
+    qtest_writel(qts, IOMUX_BASE + ESP32S3_IOMUX_GPIO_REG(48),
+                 ESP32S3_GPIO_IOMUX_FUNC_GPIO << ESP32S3_IOMUX_MCU_SEL_SHIFT);
+    qtest_writel(qts, GPIO_BASE + GPIO_FUNC_OUT_SEL_CFG_REG(48),
+                 ESP32S3_GPIO_SIG_SD_CS);
+    qtest_writel(qts, GPIO_ENABLE1_W1TS_REG, BIT(16));
+    qtest_writel(qts, GPIO_OUT1_W1TC_REG, BIT(16));
+    g_assert_cmphex(qtest_readl(qts, GPIO_BASE + GPIO_IN1_REG) & BIT(16),
+                    ==, 0);
+
+    qtest_writel(qts, SPI2_BASE + 0x10,
+                 (1u << 27) | (1u << 28)); /* USR_MOSI/MISO */
+    qtest_writel(qts, SPI2_BASE + 0x1C, 31); /* 4 bytes */
+    qtest_writel(qts, SPI2_BASE + 0x34, GPSPI_INT_TRANS_DONE);
+    qtest_writel(qts, SPI2_BASE + 0x38, GPSPI_INT_TRANS_DONE);
+    qtest_writel(qts, SPI2_BASE + 0x00, GPSPI_CMD_USR_BIT);
+
+    qtest_clock_step(qts, 600);
+    g_assert_cmphex(qtest_readl(qts, SPI2_BASE + 0x3c) & GPSPI_INT_TRANS_DONE,
+                    ==, 0);
+
+    qtest_clock_step(qts, 1600);
+    g_assert_cmphex(qtest_readl(qts, SPI2_BASE + 0x00) & GPSPI_CMD_USR_BIT, ==, 0);
+    g_assert_cmphex(qtest_readl(qts, SPI2_BASE + 0x3c) & GPSPI_INT_TRANS_DONE,
+                    ==, GPSPI_INT_TRANS_DONE);
+
+    g_assert_cmphex(qtest_readl(qts, GDMA_BASE + in_dir_base + A_DMA_INT_RAW) &
+                    (R_GDMA_INTERRUPT_IN_DONE_MASK | R_GDMA_INTERRUPT_IN_SUC_EOF_MASK),
+                    ==, R_GDMA_INTERRUPT_IN_DONE_MASK | R_GDMA_INTERRUPT_IN_SUC_EOF_MASK);
+
+    {
+        uint8_t rx_after[4];
+
+        qtest_memread(qts, rx_buf, rx_after, sizeof(rx_after));
+        for (size_t i = 0; i < sizeof(rx_after); i++) {
+            g_assert_cmphex(rx_after[i], ==, 0xff);
+        }
+    }
+
+    qtest_writel(qts, SPI2_BASE + 0x38, GPSPI_INT_TRANS_DONE);
+
+    qtest_quit(qts);
+}
+
 #ifndef _WIN32
 static int connect_unix_socket(const char *path)
 {
@@ -328,12 +533,87 @@ static uint32_t i2c_cmd_stop(void)
     return FIELD_DP32(0, I2C_CMD, OPCODE, I2C_OPCODE_STOP);
 }
 
+static uint32_t i2c_cmd_s3_read(size_t bytes, bool ack_check)
+{
+    uint32_t v = FIELD_DP32(0, I2C_CMD, BYTE_NUM, bytes);
+    v = FIELD_DP32(v, I2C_CMD, OPCODE, I2C_OPCODE_READ);
+    v = FIELD_DP32(v, I2C_CMD, ACK_CHECK_EN, ack_check ? 1 : 0);
+    return v;
+}
+
+static uint32_t i2c_cmd_s3_stop(void)
+{
+    return FIELD_DP32(0, I2C_CMD, OPCODE, 2);
+}
+
+static uint32_t i2c_cmd_s3_end(void)
+{
+    return FIELD_DP32(0, I2C_CMD, OPCODE, I2C_OPCODE_END);
+}
+
 static void i2c_start_transaction(QTestState *qts)
 {
     uint32_t ctr = FIELD_DP32(0, I2C_CTR, MS_MODE, 1);
     ctr = FIELD_DP32(ctr, I2C_CTR, TRANS_START, 1);
     qtest_writel(qts, I2C0_BASE + A_I2C_CTR, ctr);
     qtest_clock_step(qts, 3000);
+}
+
+static void test_i2c_read_path_and_deferred_complete(void)
+{
+    QTestState *qts = qts_start();
+    const uint32_t expected_rx_len = 1;
+    uint32_t ctr;
+
+    qtest_writel(qts, I2C0_BASE + A_I2C_FIFO_DATA, 0x68); /* 0x34 write */
+    qtest_writel(qts, I2C0_BASE + A_I2C_CMD,
+                 i2c_cmd_write(1, true));
+    qtest_writel(qts, I2C0_BASE + A_I2C_CMD + 4,
+                 i2c_cmd_s3_read(expected_rx_len, false));
+    qtest_writel(qts, I2C0_BASE + A_I2C_CMD + 8, i2c_cmd_s3_stop());
+    qtest_writel(qts, I2C0_BASE + A_I2C_INT_ENA,
+                 R_I2C_INT_ENA_TRANS_COMPLETE_MASK |
+                 R_I2C_INT_ENA_END_DETECT_MASK);
+
+    ctr = FIELD_DP32(0, I2C_CTR, MS_MODE, 1);
+    ctr = FIELD_DP32(ctr, I2C_CTR, TRANS_START, 1);
+    qtest_writel(qts, I2C0_BASE + A_I2C_CTR, ctr);
+    qtest_clock_step(qts, 1000);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_INT_RAW) &
+                    (R_I2C_INT_RAW_TRANS_COMPLETE_MASK |
+                     R_I2C_INT_RAW_END_DETECT_MASK), ==, 0);
+
+    qtest_clock_step(qts, 1500);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_INT_RAW) &
+                    R_I2C_INT_RAW_TRANS_COMPLETE_MASK,
+                    ==, R_I2C_INT_RAW_TRANS_COMPLETE_MASK);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_INT_RAW) &
+                    R_I2C_INT_RAW_END_DETECT_MASK, ==, 0);
+    g_assert_cmpuint(FIELD_EX32(qtest_readl(qts, I2C0_BASE + A_I2C_STATUS),
+                               I2C_STATUS, RXFIFO_CNT), ==, expected_rx_len);
+
+    qtest_writel(qts, I2C0_BASE + A_I2C_CMD, i2c_cmd_s3_end());
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_INT_RAW) &
+                    R_I2C_INT_RAW_END_DETECT_MASK, ==, 0);
+
+    ctr = FIELD_DP32(0, I2C_CTR, MS_MODE, 1);
+    ctr = FIELD_DP32(ctr, I2C_CTR, TRANS_START, 1);
+    qtest_writel(qts, I2C0_BASE + A_I2C_CTR, ctr);
+    qtest_clock_step(qts, 1000);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_INT_RAW) &
+                    R_I2C_INT_RAW_END_DETECT_MASK, ==, 0);
+    qtest_clock_step(qts, 1500);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_INT_RAW) &
+                    R_I2C_INT_RAW_END_DETECT_MASK,
+                    ==, R_I2C_INT_RAW_END_DETECT_MASK);
+
+    qtest_writel(qts, I2C0_BASE + A_I2C_INT_CLR,
+                 R_I2C_INT_CLR_TRANS_COMPLETE_MASK |
+                 R_I2C_INT_CLR_END_DETECT_MASK |
+                 R_I2C_INT_CLR_ACK_ERR_MASK);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_INT_RAW), ==, 0);
+
+    qtest_quit(qts);
 }
 
 static void test_i2c_done_and_ack_semantics(void)
@@ -432,6 +712,96 @@ static void test_uart_clock_dependent_timing(void)
     qtest_quit(qts);
 }
 
+static uint64_t wait_for_uart_timeout_ns(QTestState *qts, uint64_t step_ns, uint64_t max_ns)
+{
+    uint64_t elapsed = 0;
+
+    while (elapsed <= max_ns) {
+        if (qtest_readl(qts, UART0_BASE + A_UART_INT_RAW) &
+            R_UART_INT_RAW_RXFIFO_TOUT_MASK) {
+            return elapsed;
+        }
+        qtest_clock_step(qts, step_ns);
+        elapsed += step_ns;
+    }
+
+    return max_ns + 1;
+}
+
+static void test_uart_rx_timeout_multi_config(void)
+{
+    g_autofree gchar *sock_dir = g_dir_make_tmp("esp32s3-uart-XXXXXX", NULL);
+    g_autofree gchar *sock_path = g_build_filename(sock_dir, "uart.sock", NULL);
+    QTestState *qts;
+    int sock_fd;
+    uint64_t short_timeout;
+    uint64_t long_threshold_timeout;
+    uint64_t fast_baud_timeout;
+    uint64_t slow_baud_timeout;
+    char rx_byte = 'Z';
+
+    qts = qtest_initf("-M esp32s3 "
+                      "-chardev socket,id=uart0,path=%s,server=on,wait=off "
+                      "-serial chardev:uart0", sock_path);
+    sock_fd = connect_unix_socket(sock_path);
+
+    qtest_writel(qts, UART0_BASE + A_UART_INT_ENA,
+                 R_UART_INT_ENA_RXFIFO_TOUT_MASK);
+
+    qtest_writel(qts, UART0_BASE + A_ESP32S3_UART_MEM_CONF,
+                 FIELD_DP32(0, ESP32S3_UART_MEM_CONF, RX_TOUT_THRHD, 1));
+    qtest_writel(qts, UART0_BASE + A_ESP32S3_UART_CONF1,
+                 FIELD_DP32(0, ESP32S3_UART_CONF1, RX_TOUT_EN, 1));
+    qtest_writel(qts, UART0_BASE + A_UART_INT_CLR, R_UART_INT_CLR_RXFIFO_TOUT_MASK);
+    g_assert_cmpint(write(sock_fd, &rx_byte, 1), ==, 1);
+    qtest_clock_step(qts, 1000);
+    short_timeout = wait_for_uart_timeout_ns(qts, 100, 5000000);
+    g_assert_cmpuint(short_timeout, <=, 5000000);
+
+    qtest_writel(qts, UART0_BASE + A_ESP32S3_UART_MEM_CONF,
+                 FIELD_DP32(0, ESP32S3_UART_MEM_CONF, RX_TOUT_THRHD, 4));
+    qtest_writel(qts, UART0_BASE + A_ESP32S3_UART_CONF1,
+                 FIELD_DP32(0, ESP32S3_UART_CONF1, RX_TOUT_EN, 1));
+    qtest_writel(qts, UART0_BASE + A_UART_INT_CLR, R_UART_INT_CLR_RXFIFO_TOUT_MASK);
+    g_assert_cmpint(write(sock_fd, &rx_byte, 1), ==, 1);
+    qtest_clock_step(qts, 1000);
+    long_threshold_timeout = wait_for_uart_timeout_ns(qts, 100, 5000000);
+    g_assert_cmpuint(long_threshold_timeout, >, short_timeout);
+
+    qtest_writel(qts, UART0_BASE + A_ESP32S3_UART_MEM_CONF,
+                 FIELD_DP32(0, ESP32S3_UART_MEM_CONF, RX_TOUT_THRHD, 1));
+    qtest_writel(qts, UART0_BASE + A_ESP32S3_UART_CONF1,
+                 FIELD_DP32(0, ESP32S3_UART_CONF1, RX_TOUT_EN, 1));
+    qtest_writel(qts, UART0_BASE + A_UART_INT_CLR, R_UART_INT_CLR_RXFIFO_TOUT_MASK);
+    qtest_writel(qts, UART0_BASE + A_UART_CLKDIV,
+                 FIELD_DP32(0, UART_CLKDIV, CLKDIV, 0x400));
+    g_assert_cmpint(write(sock_fd, &rx_byte, 1), ==, 1);
+    qtest_clock_step(qts, 1000);
+    fast_baud_timeout = wait_for_uart_timeout_ns(qts, 100, 5000000);
+
+    qtest_writel(qts, UART0_BASE + A_ESP32S3_UART_MEM_CONF,
+                 FIELD_DP32(0, ESP32S3_UART_MEM_CONF, RX_TOUT_THRHD, 1));
+    qtest_writel(qts, UART0_BASE + A_ESP32S3_UART_CONF1,
+                 FIELD_DP32(0, ESP32S3_UART_CONF1, RX_TOUT_EN, 1));
+    qtest_writel(qts, UART0_BASE + A_UART_INT_CLR, R_UART_INT_CLR_RXFIFO_TOUT_MASK);
+    qtest_writel(qts, UART0_BASE + A_UART_CLKDIV,
+                 FIELD_DP32(0, UART_CLKDIV, CLKDIV, 0x800));
+    g_assert_cmpint(write(sock_fd, &rx_byte, 1), ==, 1);
+    qtest_clock_step(qts, 1000);
+    slow_baud_timeout = wait_for_uart_timeout_ns(qts, 100, 5000000);
+
+    g_assert_cmpuint(slow_baud_timeout, >, fast_baud_timeout);
+
+    qtest_writel(qts, UART0_BASE + A_ESP32S3_UART_CONF1, 0);
+    qtest_writel(qts, UART0_BASE + A_UART_INT_CLR, R_UART_INT_CLR_RXFIFO_TOUT_MASK);
+    qtest_clock_step(qts, 20000);
+    g_assert_cmphex(qtest_readl(qts, UART0_BASE + A_UART_INT_RAW) &
+                    R_UART_INT_RAW_RXFIFO_TOUT_MASK, ==, 0);
+
+    close(sock_fd);
+    qtest_quit(qts);
+}
+
 static void test_sha_irq(void)
 {
     QTestState *qts = qts_start();
@@ -449,6 +819,65 @@ static void test_sha_irq(void)
     qtest_writel(qts, SHA_BASE + A_SHA_CLEAR_IRQ,
                  FIELD_DP32(0, SHA_CLEAR_IRQ, CLEAR_INTERRUPT, 1));
     g_assert_cmphex(qtest_readl(qts, SHA_BASE + A_SHA_IRQ_ENA), ==, 1);
+
+    qtest_quit(qts);
+}
+
+static void test_sha_dma_start_and_continue_irq_paths(void)
+{
+    QTestState *qts = qts_start();
+    const uint32_t block_len = 64;
+    const uint8_t block0[64] = { 0 };
+    const uint8_t block1[64] = { 0xbb };
+    const uint32_t sha_desc = SHA_DMA_DESC_BASE;
+    uint32_t hash_start;
+    uint32_t hash_continue;
+
+    qtest_memwrite(qts, sha_dma_buf_addr(block_len), block0, block_len);
+    write_gdma_descriptor(qts, sha_desc, block_len, block_len, true, false,
+                          sha_dma_buf_addr(block_len) - ESP_GDMA_RAM_ADDR, 0);
+    g_assert_cmpuint(qtest_readl(qts, sha_desc + 0) & 0xfff, ==, block_len);
+    g_assert_cmpuint((qtest_readl(qts, sha_desc + 0) >> 12) & 0xfff, ==, block_len);
+    g_assert_cmphex(qtest_readl(qts, sha_desc + 4), ==,
+                    sha_dma_buf_addr(block_len) - ESP_GDMA_RAM_ADDR);
+    qtest_writel(qts, GDMA_BASE + GDMA_SPI2_CHAN * DMA_CHAN_REGS_SIZE +
+                 ESP_GDMA_OUT_IDX * DMA_DIR_REGS_SIZE + A_DMA_PERI_SEL,
+                 FIELD_DP32(0, GDMA_PERI_SEL, PERI_SEL, GDMA_SHA));
+    qtest_writel(qts, GDMA_BASE + GDMA_SPI2_CHAN * DMA_CHAN_REGS_SIZE +
+                 ESP_GDMA_OUT_IDX * DMA_DIR_REGS_SIZE + A_DMA_LINK,
+                 R_GDMA_OUT_LINK_START_MASK | (sha_desc - ESP_GDMA_RAM_ADDR));
+    g_assert_cmphex(qtest_readl(qts, GDMA_BASE + GDMA_SPI2_CHAN * DMA_CHAN_REGS_SIZE +
+                    ESP_GDMA_OUT_IDX * DMA_DIR_REGS_SIZE + A_DMA_PERI_SEL),
+                    ==, FIELD_DP32(0, GDMA_PERI_SEL, PERI_SEL, GDMA_SHA));
+    g_assert_cmphex(qtest_readl(qts, GDMA_BASE + GDMA_SPI2_CHAN * DMA_CHAN_REGS_SIZE +
+                    ESP_GDMA_OUT_IDX * DMA_DIR_REGS_SIZE + A_DMA_LINK) &
+                    R_GDMA_OUT_LINK_START_MASK,
+                    ==, R_GDMA_OUT_LINK_START_MASK);
+
+    qtest_writel(qts, SHA_BASE + A_SHA_MODE, ESP_SHA_256_MODE);
+    qtest_writel(qts, SHA_BASE + A_SHA_DMA_BLOCK_NUM, 1);
+    qtest_writel(qts, SHA_BASE + A_SHA_IRQ_ENA,
+                 FIELD_DP32(0, SHA_IRQ_ENA, INTERRUPT_ENA, 1));
+    qtest_writel(qts, SHA_BASE + A_SHA_DMA_START,
+                 FIELD_DP32(0, SHA_DMA_START, DMA_START, 1));
+
+    hash_start = qtest_readl(qts, SHA_BASE + A_SHA_H_MEM);
+    g_assert_cmpuint(hash_start, !=, 0);
+
+    qtest_writel(qts, SHA_BASE + A_SHA_CLEAR_IRQ,
+                 FIELD_DP32(0, SHA_CLEAR_IRQ, CLEAR_INTERRUPT, 1));
+
+    qtest_memwrite(qts, sha_dma_buf_addr(block_len), block1, block_len);
+    write_gdma_descriptor(qts, sha_desc, block_len, block_len, true, false,
+                          sha_dma_buf_addr(block_len) - ESP_GDMA_RAM_ADDR, 0);
+    qtest_writel(qts, SHA_BASE + A_SHA_DMA_CONTINUE,
+                 FIELD_DP32(0, SHA_DMA_CONTINUE, DMA_CONTINUE, 1));
+
+    hash_continue = qtest_readl(qts, SHA_BASE + A_SHA_H_MEM);
+    g_assert_cmpuint(hash_continue, !=, hash_start);
+
+    qtest_writel(qts, SHA_BASE + A_SHA_CLEAR_IRQ,
+                 FIELD_DP32(0, SHA_CLEAR_IRQ, CLEAR_INTERRUPT, 1));
 
     qtest_quit(qts);
 }
@@ -490,13 +919,19 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/gpio/remap-state", test_gpio_signal_remap_state);
     qtest_add_func("/esp32s3/gpio/remap-non-default", test_gpio_signal_non_default_routing);
     qtest_add_func("/esp32s3/spi1/usr-rx-overwrite", test_spi1_usr_rx_overwrites_all_bytes);
+    qtest_add_func("/esp32s3/spi1/usr-length-matrix", test_spi1_usr_length_matrix);
+    qtest_add_func("/esp32s3/spi1/cmd-length-edges", test_spi1_cmd_length_edges);
 #ifndef _WIN32
     qtest_add_func("/esp32s3/jtag/rx-tx", test_usb_serial_jtag_rx_tx);
 #endif
     qtest_add_func("/esp32s3/i2c/done-ack", test_i2c_done_and_ack_semantics);
+    qtest_add_func("/esp32s3/i2c/read-path-deferred", test_i2c_read_path_and_deferred_complete);
     qtest_add_func("/esp32s3/i2c/unsupported-modes", test_i2c_unsupported_modes);
     qtest_add_func("/esp32s3/uart/clock-timing", test_uart_clock_dependent_timing);
+    qtest_add_func("/esp32s3/uart/rx-timeout-multi-config", test_uart_rx_timeout_multi_config);
     qtest_add_func("/esp32s3/sha/irq", test_sha_irq);
+    qtest_add_func("/esp32s3/sha/dma-start-continue", test_sha_dma_start_and_continue_irq_paths);
+    qtest_add_func("/esp32s3/gpspi/dma-tx-rx-handoff", test_gpspi_dma_txrx_handoff);
     qtest_add_func("/esp32s3/pms/modeled-surface", test_pms_modeled_surface);
     qtest_add_func("/esp32s3/rng/modeled-surface", test_rng_modeled_surface);
 

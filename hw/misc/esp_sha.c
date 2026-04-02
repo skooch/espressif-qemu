@@ -128,10 +128,8 @@ static void esp_sha_continue_dma(ESPShaState *s)
 
     /* Get the GDMA channel connected to SHA module.
      * Specify ESP_GDMA_OUT_IDX since the data are going OUT of GDMA but IN our current component. */
-    if ( !esp_gdma_get_channel_periph(s->gdma, GDMA_SHA, ESP_GDMA_OUT_IDX, &gdma_out_idx) )
-    {
-        warn_report("[SHA] GDMA requested but no properly configured channel found");
-        return;
+    if ( !esp_gdma_get_channel_periph(s->gdma, GDMA_SHA, ESP_GDMA_OUT_IDX, &gdma_out_idx) ) {
+        gdma_out_idx = 0;
     }
 
     /* Allocate the buffer that will contain the data and get teh actual data */

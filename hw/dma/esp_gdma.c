@@ -137,6 +137,26 @@ static void esp_gdma_reset_fifo(DmaConfigState* s)
     s->status = R_GDMA_INFIFO_STATUS_FIFO_EMPTY_MASK;
 }
 
+static bool esp_gdma_translate_dma_addr(uint32_t addr, uint32_t *translated)
+{
+    if (translated) {
+        *translated = addr;
+    }
+
+    if (addr >= ESP_GDMA_RAM_ADDR) {
+        return true;
+    }
+
+    if (addr < (1u << 20)) {
+        if (translated) {
+            *translated = ESP_GDMA_RAM_ADDR + addr;
+        }
+        return true;
+    }
+
+    return false;
+}
+
 
 /**
  * @brief Read a descriptor from the guest machine
@@ -149,6 +169,16 @@ static void esp_gdma_reset_fifo(DmaConfigState* s)
 static bool esp_gdma_read_descr(ESPGdmaState *s, uint32_t addr, GdmaLinkedList* out)
 {
     MemTxResult res = dma_memory_read(&s->dma_as, addr, out, sizeof(GdmaLinkedList), MEMTXATTRS_UNSPECIFIED);
+    if (res == MEMTX_OK) {
+        return true;
+    }
+
+    uint32_t translated;
+    if (esp_gdma_translate_dma_addr(addr, &translated)) {
+        res = dma_memory_read(&s->dma_as, translated, out, sizeof(GdmaLinkedList),
+                              MEMTXATTRS_UNSPECIFIED);
+    }
+
     return res == MEMTX_OK;
 }
 
@@ -163,6 +193,16 @@ static bool esp_gdma_read_descr(ESPGdmaState *s, uint32_t addr, GdmaLinkedList* 
 static bool esp_gdma_write_descr(ESPGdmaState *s, uint32_t addr, GdmaLinkedList* in)
 {
     MemTxResult res = dma_memory_write(&s->dma_as, addr, in, sizeof(GdmaLinkedList), MEMTXATTRS_UNSPECIFIED);
+    if (res == MEMTX_OK) {
+        return true;
+    }
+
+    uint32_t translated;
+    if (esp_gdma_translate_dma_addr(addr, &translated)) {
+        res = dma_memory_write(&s->dma_as, translated, in, sizeof(GdmaLinkedList),
+                               MEMTXATTRS_UNSPECIFIED);
+    }
+
     return res == MEMTX_OK;
 }
 
@@ -179,12 +219,30 @@ static bool esp_gdma_write_descr(ESPGdmaState *s, uint32_t addr, GdmaLinkedList*
 static bool esp_gdma_read_guest(ESPGdmaState *s, uint32_t addr, void* data, uint32_t len)
 {
     MemTxResult res = dma_memory_read(&s->dma_as, addr, data, len, MEMTXATTRS_UNSPECIFIED);
+    if (res == MEMTX_OK) {
+        return true;
+    }
+
+    uint32_t translated;
+    if (esp_gdma_translate_dma_addr(addr, &translated)) {
+        res = dma_memory_read(&s->dma_as, translated, data, len, MEMTXATTRS_UNSPECIFIED);
+    }
+
     return res == MEMTX_OK;
 }
 
 static bool esp_gdma_write_guest(ESPGdmaState *s, uint32_t addr, void* data, uint32_t len)
 {
     MemTxResult res = dma_memory_write(&s->dma_as, addr, data, len, MEMTXATTRS_UNSPECIFIED);
+    if (res == MEMTX_OK) {
+        return true;
+    }
+
+    uint32_t translated;
+    if (esp_gdma_translate_dma_addr(addr, &translated)) {
+        res = dma_memory_write(&s->dma_as, translated, data, len, MEMTXATTRS_UNSPECIFIED);
+    }
+
     return res == MEMTX_OK;
 }
 
@@ -204,7 +262,11 @@ static void esp_gdma_push_descriptor(ESPGdmaState *s, uint32_t chan, uint32_t di
     DmaConfigState* state = &s->ch_conf[dir][chan];
 
     /* Assign the current descriptor address to the state register */
-    state->state = current & R_GDMA_OUT_STATE_LINK_DSCR_ADDR_MASK;
+    if (current >= ESP_GDMA_RAM_ADDR) {
+        state->state = current - ESP_GDMA_RAM_ADDR;
+    } else {
+        state->state = current;
+    }
 
     /* On real hardware, if the former address is incorrect, the current address is copied to this
      * register. */
@@ -310,7 +372,7 @@ bool esp_gdma_read_channel(ESPGdmaState *s, uint32_t chan, uint8_t* buffer, uint
                                              R_GDMA_INTERRUPT_OUT_EOF_MASK);
 
     /* Get the guest DRAM address */
-    uint32_t out_addr = ((ESP_GDMA_RAM_ADDR >> 20) << 20) | FIELD_EX32(state->link, GDMA_OUT_LINK, ADDR);
+    uint32_t out_addr = ESP_GDMA_RAM_ADDR + FIELD_EX32(state->link, GDMA_OUT_LINK, ADDR);
 
     /* Boolean to mark whether we need to check the owner for in and out buffers */
     const bool owner_check_out = FIELD_EX32(state->conf1, GDMA_OUT_CONF1, CHECK_OWNER);
@@ -428,7 +490,7 @@ bool esp_gdma_read_channel_data(ESPGdmaState *s, uint32_t chan,
     DmaConfigState *state = &s->ch_conf[ESP_GDMA_OUT_IDX][chan];
 
     /* Compute the guest DRAM address of the first descriptor */
-    uint32_t desc_addr = ((ESP_GDMA_RAM_ADDR >> 20) << 20) |
+    uint32_t desc_addr = ESP_GDMA_RAM_ADDR +
                          FIELD_EX32(state->link, GDMA_OUT_LINK, ADDR);
 
     GdmaLinkedList node;
@@ -474,8 +536,8 @@ bool esp_gdma_write_channel(ESPGdmaState *s, uint32_t chan, uint8_t* buffer, uin
     esp_gdma_clear_status(&state->int_state, R_GDMA_INTERRUPT_IN_DONE_MASK  |
                                              R_GDMA_INTERRUPT_IN_SUC_EOF_MASK);
 
-    /* Get highest 12 bits of the DRAM address */
-    uint32_t in_addr = ((ESP_GDMA_RAM_ADDR >> 20) << 20) | FIELD_EX32(state->link, GDMA_IN_LINK, ADDR);
+    /* Get the guest DRAM address of the first descriptor */
+    uint32_t in_addr = ESP_GDMA_RAM_ADDR + FIELD_EX32(state->link, GDMA_IN_LINK, ADDR);
 
     /* Boolean to mark whether we need to check the owner for in buffers */
     const bool owner_check_in = FIELD_EX32(state->conf1, GDMA_IN_CONF1, CHECK_OWNER);
@@ -623,23 +685,20 @@ static void esp_gdma_check_and_start_mem_transfer(ESPGdmaState *s, uint32_t chan
                               R_GDMA_INTERRUPT_OUT_DONE_MASK |
                               R_GDMA_INTERRUPT_OUT_EOF_MASK  );
 
-        /* Get highest 12 bits of the DRAM address */
-        const uint32_t high = (ESP_GDMA_RAM_ADDR >> 20) << 20;
-
         /* TODO: in an inlink, when burst mode is enabled, size and buffer address must be word-aligned. */
         /* If a start was performed, the first descriptor address to process is in DMA_OUT_LINK_CHn register,
          * if a restart was performed, the first buffer is the `next` node of `desc_addr` register */
-        uint32_t out_addr = high;
-        uint32_t in_addr = high;
+        uint32_t out_addr = ESP_GDMA_RAM_ADDR;
+        uint32_t in_addr = ESP_GDMA_RAM_ADDR;
 
         if (out_start) {
-            out_addr |= FIELD_EX32(state_out->link, GDMA_OUT_LINK, ADDR);
+            out_addr += FIELD_EX32(state_out->link, GDMA_OUT_LINK, ADDR);
         } else {
             esp_gdma_get_restart_buffer(s, chan, ESP_GDMA_OUT_IDX, &out_addr);
         }
 
         if (in_start) {
-            in_addr |= FIELD_EX32(state_in->link, GDMA_IN_LINK, ADDR);
+            in_addr += FIELD_EX32(state_in->link, GDMA_IN_LINK, ADDR);
         } else {
             esp_gdma_get_restart_buffer(s, chan, ESP_GDMA_IN_IDX, &in_addr);
         }
