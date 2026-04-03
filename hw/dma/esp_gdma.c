@@ -137,27 +137,6 @@ static void esp_gdma_reset_fifo(DmaConfigState* s)
     s->status = R_GDMA_INFIFO_STATUS_FIFO_EMPTY_MASK;
 }
 
-static bool esp_gdma_translate_dma_addr(uint32_t addr, uint32_t *translated)
-{
-    if (translated) {
-        *translated = addr;
-    }
-
-    if (addr >= ESP_GDMA_RAM_ADDR) {
-        return true;
-    }
-
-    if (addr < (1u << 20)) {
-        if (translated) {
-            *translated = ESP_GDMA_RAM_ADDR + addr;
-        }
-        return true;
-    }
-
-    return false;
-}
-
-
 /**
  * @brief Read a descriptor from the guest machine
  *
@@ -169,16 +148,6 @@ static bool esp_gdma_translate_dma_addr(uint32_t addr, uint32_t *translated)
 static bool esp_gdma_read_descr(ESPGdmaState *s, uint32_t addr, GdmaLinkedList* out)
 {
     MemTxResult res = dma_memory_read(&s->dma_as, addr, out, sizeof(GdmaLinkedList), MEMTXATTRS_UNSPECIFIED);
-    if (res == MEMTX_OK) {
-        return true;
-    }
-
-    uint32_t translated;
-    if (esp_gdma_translate_dma_addr(addr, &translated)) {
-        res = dma_memory_read(&s->dma_as, translated, out, sizeof(GdmaLinkedList),
-                              MEMTXATTRS_UNSPECIFIED);
-    }
-
     return res == MEMTX_OK;
 }
 
@@ -193,16 +162,6 @@ static bool esp_gdma_read_descr(ESPGdmaState *s, uint32_t addr, GdmaLinkedList* 
 static bool esp_gdma_write_descr(ESPGdmaState *s, uint32_t addr, GdmaLinkedList* in)
 {
     MemTxResult res = dma_memory_write(&s->dma_as, addr, in, sizeof(GdmaLinkedList), MEMTXATTRS_UNSPECIFIED);
-    if (res == MEMTX_OK) {
-        return true;
-    }
-
-    uint32_t translated;
-    if (esp_gdma_translate_dma_addr(addr, &translated)) {
-        res = dma_memory_write(&s->dma_as, translated, in, sizeof(GdmaLinkedList),
-                               MEMTXATTRS_UNSPECIFIED);
-    }
-
     return res == MEMTX_OK;
 }
 
@@ -219,30 +178,12 @@ static bool esp_gdma_write_descr(ESPGdmaState *s, uint32_t addr, GdmaLinkedList*
 static bool esp_gdma_read_guest(ESPGdmaState *s, uint32_t addr, void* data, uint32_t len)
 {
     MemTxResult res = dma_memory_read(&s->dma_as, addr, data, len, MEMTXATTRS_UNSPECIFIED);
-    if (res == MEMTX_OK) {
-        return true;
-    }
-
-    uint32_t translated;
-    if (esp_gdma_translate_dma_addr(addr, &translated)) {
-        res = dma_memory_read(&s->dma_as, translated, data, len, MEMTXATTRS_UNSPECIFIED);
-    }
-
     return res == MEMTX_OK;
 }
 
 static bool esp_gdma_write_guest(ESPGdmaState *s, uint32_t addr, void* data, uint32_t len)
 {
     MemTxResult res = dma_memory_write(&s->dma_as, addr, data, len, MEMTXATTRS_UNSPECIFIED);
-    if (res == MEMTX_OK) {
-        return true;
-    }
-
-    uint32_t translated;
-    if (esp_gdma_translate_dma_addr(addr, &translated)) {
-        res = dma_memory_write(&s->dma_as, translated, data, len, MEMTXATTRS_UNSPECIFIED);
-    }
-
     return res == MEMTX_OK;
 }
 
@@ -262,11 +203,7 @@ static void esp_gdma_push_descriptor(ESPGdmaState *s, uint32_t chan, uint32_t di
     DmaConfigState* state = &s->ch_conf[dir][chan];
 
     /* Assign the current descriptor address to the state register */
-    if (current >= ESP_GDMA_RAM_ADDR) {
-        state->state = current - ESP_GDMA_RAM_ADDR;
-    } else {
-        state->state = current;
-    }
+    state->state = current & R_GDMA_OUT_STATE_LINK_DSCR_ADDR_MASK;
 
     /* On real hardware, if the former address is incorrect, the current address is copied to this
      * register. */

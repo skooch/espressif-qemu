@@ -73,7 +73,7 @@
 #define ESP32S3_GPSPI_TRANSFER_DELAY_NS 1200
 #define ESP32S3_GPSPI_EXECUTE_DELAY_NS 800
 
-static void esp32s3_gpspi_execute_transfer(Esp32s3GpSpiState *s);
+static bool esp32s3_gpspi_execute_transfer(Esp32s3GpSpiState *s);
 
 static void esp32s3_gpspi_update_irq(Esp32s3GpSpiState *s)
 {
@@ -100,11 +100,16 @@ static void esp32s3_gpspi_finish_transfer(void *opaque)
     Esp32s3GpSpiState *s = ESP32S3_GPSPI(opaque);
 
     if (!s->transfer_data_executed) {
-        s->transfer_data_executed = true;
-        esp32s3_gpspi_execute_transfer(s);
-        timer_mod_ns(&s->completion_timer,
-                     qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
-                     ESP32S3_GPSPI_TRANSFER_DELAY_NS);
+        if (esp32s3_gpspi_execute_transfer(s)) {
+            s->transfer_data_executed = true;
+            timer_mod_ns(&s->completion_timer,
+                         qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+                         ESP32S3_GPSPI_TRANSFER_DELAY_NS);
+        } else {
+            timer_mod_ns(&s->completion_timer,
+                         qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+                         ESP32S3_GPSPI_EXECUTE_DELAY_NS);
+        }
         return;
     }
 
@@ -115,14 +120,16 @@ static void esp32s3_gpspi_finish_transfer(void *opaque)
     esp32s3_gpspi_update_irq(s);
 }
 
-static void esp32s3_gpspi_execute_transfer(Esp32s3GpSpiState *s)
+static bool esp32s3_gpspi_execute_transfer(Esp32s3GpSpiState *s)
 {
+    bool did_transfer = false;
+    uint32_t ms_dlen = s->regs[SPI_MS_DLEN_REG / 4];
+    uint32_t byte_count = (ms_dlen + 1) / 8;
+
     /* Pull DMA TX data and route to EPD slave if CS is asserted */
     if (s->gdma && s->gpio && s->epd) {
         bool cs_low = esp32s3_gpspi_signal_asserted(s, ESP32S3_GPIO_SIG_EPD_CS);
         if (cs_low) {
-            uint32_t ms_dlen = s->regs[SPI_MS_DLEN_REG / 4];
-            uint32_t byte_count = (ms_dlen + 1) / 8;
             if (byte_count > 0 && byte_count <= 16384) {
                 uint32_t chan;
                 if (esp_gdma_get_channel_periph(s->gdma,
@@ -137,6 +144,7 @@ static void esp32s3_gpspi_execute_transfer(Esp32s3GpSpiState *s)
                                                    buf, byte_count)) {
                         tdeck_uc8253_spi_receive(s->epd, buf,
                                                  byte_count, dc);
+                        did_transfer = true;
                     }
                     g_free(buf);
                 }
@@ -147,9 +155,8 @@ static void esp32s3_gpspi_execute_transfer(Esp32s3GpSpiState *s)
     if (s->gdma && s->gpio && s->sd_spi) {
         bool sd_cs = esp32s3_gpspi_signal_asserted(s, ESP32S3_GPIO_SIG_SD_CS);
         if (sd_cs) {
-            uint32_t ms_dlen = s->regs[SPI_MS_DLEN_REG / 4];
-            uint32_t byte_count = (ms_dlen + 1) / 8;
             if (byte_count > 0 && byte_count <= 16384) {
+                did_transfer = true;
                 uint32_t tx_chan, rx_chan;
                 bool has_tx = esp_gdma_get_channel_periph(s->gdma,
                     (GdmaPeripheral)s->gdma_periph_id,
@@ -190,9 +197,8 @@ static void esp32s3_gpspi_execute_transfer(Esp32s3GpSpiState *s)
     if (s->gdma && s->gpio && s->lora) {
         bool lora_cs = esp32s3_gpspi_signal_asserted(s, ESP32S3_GPIO_SIG_LORA_CS);
         if (lora_cs) {
-            uint32_t ms_dlen = s->regs[SPI_MS_DLEN_REG / 4];
-            uint32_t byte_count = (ms_dlen + 1) / 8;
             if (byte_count > 0 && byte_count <= 16384) {
+                did_transfer = true;
                 uint32_t tx_chan, rx_chan;
                 bool has_tx = esp_gdma_get_channel_periph(s->gdma,
                     (GdmaPeripheral)s->gdma_periph_id,
@@ -229,6 +235,25 @@ static void esp32s3_gpspi_execute_transfer(Esp32s3GpSpiState *s)
             }
         }
     }
+
+    /* Clock-only or CS-deasserted transfers still complete the controller
+     * transaction. Consume any pending TX DMA so blocking writes do not hang,
+     * but do not deliver bytes to a peripheral when no slave is selected. */
+    if (!did_transfer && s->gdma && byte_count > 0 && byte_count <= 16384) {
+        uint32_t chan;
+        if (esp_gdma_get_channel_periph(s->gdma,
+                (GdmaPeripheral)s->gdma_periph_id,
+                ESP_GDMA_OUT_IDX, &chan)) {
+            uint8_t *buf = g_malloc(byte_count);
+            if (!esp_gdma_read_channel_data(s->gdma, chan, buf, byte_count)) {
+                memset(buf, 0xFF, byte_count);
+            }
+            g_free(buf);
+        }
+        did_transfer = true;
+    }
+
+    return did_transfer;
 }
 
 static uint64_t esp32s3_gpspi_read(void *opaque, hwaddr addr, unsigned int size)
@@ -261,9 +286,17 @@ static void esp32s3_gpspi_write(void *opaque, hwaddr addr,
             s->regs[SPI_DMA_INT_RAW_REG / 4] &= ~SPI_INT_TRANS_DONE;
             s->transfer_data_executed = false;
             s->regs[SPI_CMD_REG / 4] = (uint32_t)value;
+            /*
+             * Execute the DMA payload immediately while chip-select is still
+             * asserted. Keep the completion timer for the visible USR/DONE
+             * timing so existing qtests and firmware polling still see the
+             * transfer finish in the same window.
+             */
+            s->transfer_data_executed = esp32s3_gpspi_execute_transfer(s);
             timer_mod_ns(&s->completion_timer,
                          qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
-                         ESP32S3_GPSPI_EXECUTE_DELAY_NS);
+                         ESP32S3_GPSPI_EXECUTE_DELAY_NS +
+                         ESP32S3_GPSPI_TRANSFER_DELAY_NS);
         }
         if (value & SPI_CMD_UPDATE_BIT) {
             value &= ~SPI_CMD_UPDATE_BIT;

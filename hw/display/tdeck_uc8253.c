@@ -14,6 +14,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/error-report.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "hw/irq.h"
@@ -187,6 +188,8 @@ static void tdeck_panel_render(TdeckUc8253State *s)
     uint32_t bg = 0x00E8E8E8;      /* light gray background */
     uint32_t fg = 0x00000000;      /* black text */
     uint32_t btn_bg = 0x00D0D0D0;  /* button background */
+    ModemPowerState modem_state =
+        s->modem ? tdeck_modem_get_power_state(s->modem) : MODEM_POWER_OFF;
 
     /* Fill panel background */
     for (int row = 0; row < UC8253_HEIGHT; row++) {
@@ -224,7 +227,7 @@ static void tdeck_panel_render(TdeckUc8253State *s)
 
     /* Modem power state */
     const char *power_str;
-    switch (tdeck_modem_get_power_state(s->modem)) {
+    switch (modem_state) {
     case MODEM_POWER_OFF:     power_str = "Modem: OFF";      break;
     case MODEM_POWER_RAIL_ON: power_str = "Modem: Rail On";  break;
     case MODEM_BOOTING:       power_str = "Modem: Booting";  break;
@@ -233,8 +236,7 @@ static void tdeck_panel_render(TdeckUc8253State *s)
     }
     panel_puts(pixels, stride, px + 80, 116, power_str, fg, bg);
 
-    uint32_t cell_btn = (tdeck_modem_get_power_state(s->modem) == MODEM_READY)
-                        ? btn_bg : 0x00C0C0C0;
+    uint32_t cell_btn = (modem_state == MODEM_READY) ? btn_bg : 0x00C0C0C0;
     panel_puts(pixels, stride, px + 8, 136, "[Call]", fg, cell_btn);
     panel_puts(pixels, stride, px + 8, 156, "[SMS]", fg, cell_btn);
     panel_puts(pixels, stride, px + 8, 176, "[Signal]", fg, cell_btn);
@@ -330,6 +332,13 @@ static void tdeck_uc8253_render(TdeckUc8253State *s)
 
     tdeck_panel_render(s);
     dpy_gfx_update(s->con, 0, 0, CONSOLE_WIDTH, UC8253_HEIGHT);
+}
+
+static void tdeck_uc8253_realize(DeviceState *dev, Error **errp)
+{
+    TdeckUc8253State *s = TDECK_UC8253(dev);
+
+    tdeck_uc8253_render(s);
 }
 
 /* Handle data bytes for the current command */
@@ -432,6 +441,13 @@ static void tdeck_uc8253_command(TdeckUc8253State *s, uint8_t cmd)
         break;
 
     case UC8253_CMD_REFRESH: {
+        static bool logged_first_refresh;
+        if (!logged_first_refresh) {
+            logged_first_refresh = true;
+            warn_report("UC8253 refresh: has_resolved=%d partial=%d force=%02x current=%02x previous=%02x",
+                        s->has_resolved, s->partial_mode, s->force_temp,
+                        s->current[0], s->previous[0]);
+        }
         if (s->has_resolved) {
             tdeck_uc8253_render_resolved(s);
             s->has_resolved = false;
@@ -714,8 +730,10 @@ static void tdeck_uc8253_reset_hold(Object *obj, ResetType type)
 
 static void tdeck_uc8253_class_init(ObjectClass *klass, void *data)
 {
+    DeviceClass *dc = DEVICE_CLASS(klass);
     ResettableClass *rc = RESETTABLE_CLASS(klass);
     rc->phases.hold = tdeck_uc8253_reset_hold;
+    dc->realize = tdeck_uc8253_realize;
 }
 
 static const TypeInfo tdeck_uc8253_info = {

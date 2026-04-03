@@ -118,10 +118,16 @@ Deferred items such as deep clock/reset rework, cache/MMU timing realism, `open_
 
 ## Deferred Follow-Ups
 
+### Stage 6: Deferred Foundation
+
 - Expand routed-pin fidelity beyond the current board path.
 - Model GP-SPI transfer timing, busy windows, and DMA completion with more realistic sequencing.
 - Replace additional generic-MMIO dependencies as firmware begins to touch them.
 - Revisit clock tree, cache/MMU, EMAC, and Xtensa backend fidelity once higher-priority peripheral behavior is stable.
+
+### Stage 6 Status
+
+- Broken into a dedicated in-progress plan at `.claude/plans/in-progress/esp32s3-deferred-foundation/plan.md`.
 
 ## Source References
 

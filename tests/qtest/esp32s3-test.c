@@ -360,9 +360,9 @@ static void test_gpspi_dma_txrx_handoff(void)
     qtest_memwrite(qts, rx_buf, zero, sizeof(zero));
 
     write_gdma_descriptor(qts, tx_desc, tx_len, tx_len, true, false,
-                          tx_buf - ESP_GDMA_RAM_ADDR, 0);
+                          tx_buf, 0);
     write_gdma_descriptor(qts, rx_desc, rx_len, 0, false, false,
-                          rx_buf - ESP_GDMA_RAM_ADDR, 0);
+                          rx_buf, 0);
 
     qtest_writel(qts, GDMA_BASE + in_dir_base + A_DMA_PERI_SEL,
                  FIELD_DP32(0, GDMA_PERI_SEL, PERI_SEL, GDMA_SPI2));
@@ -835,11 +835,11 @@ static void test_sha_dma_start_and_continue_irq_paths(void)
 
     qtest_memwrite(qts, sha_dma_buf_addr(block_len), block0, block_len);
     write_gdma_descriptor(qts, sha_desc, block_len, block_len, true, false,
-                          sha_dma_buf_addr(block_len) - ESP_GDMA_RAM_ADDR, 0);
+                          sha_dma_buf_addr(block_len), 0);
     g_assert_cmpuint(qtest_readl(qts, sha_desc + 0) & 0xfff, ==, block_len);
     g_assert_cmpuint((qtest_readl(qts, sha_desc + 0) >> 12) & 0xfff, ==, block_len);
     g_assert_cmphex(qtest_readl(qts, sha_desc + 4), ==,
-                    sha_dma_buf_addr(block_len) - ESP_GDMA_RAM_ADDR);
+                    sha_dma_buf_addr(block_len));
     qtest_writel(qts, GDMA_BASE + GDMA_SPI2_CHAN * DMA_CHAN_REGS_SIZE +
                  ESP_GDMA_OUT_IDX * DMA_DIR_REGS_SIZE + A_DMA_PERI_SEL,
                  FIELD_DP32(0, GDMA_PERI_SEL, PERI_SEL, GDMA_SHA));
@@ -869,7 +869,7 @@ static void test_sha_dma_start_and_continue_irq_paths(void)
 
     qtest_memwrite(qts, sha_dma_buf_addr(block_len), block1, block_len);
     write_gdma_descriptor(qts, sha_desc, block_len, block_len, true, false,
-                          sha_dma_buf_addr(block_len) - ESP_GDMA_RAM_ADDR, 0);
+                          sha_dma_buf_addr(block_len), 0);
     qtest_writel(qts, SHA_BASE + A_SHA_DMA_CONTINUE,
                  FIELD_DP32(0, SHA_DMA_CONTINUE, DMA_CONTINUE, 1));
 
