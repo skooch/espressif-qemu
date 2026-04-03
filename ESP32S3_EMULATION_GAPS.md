@@ -14,6 +14,31 @@ The current scope is intentionally limited to the previously identified high-imp
 
 Deferred items such as deep clock/reset rework, cache/MMU timing realism, `open_eth` replacement, and broader Xtensa backend fidelity remain out of scope for this immediate program.
 
+## Current State Snapshot
+
+As of 2026-04-03, the target is materially stronger than a "boots-only" model, but it is still not a high-fidelity general-purpose ESP32-S3 hardware surrogate.
+
+- The immediate stage-1 peripheral correctness program is complete and the focused `esp32s3` qtest suite is green.
+- The current board path is in much better shape than before: SPI1, GP-SPI, routed GPIO/IO_MUX, USB Serial/JTAG, I2C, UART, PMS, RNG, and SHA now have direct regression coverage for the currently exercised surface.
+- The recent EPD black-screen regression was traced to incorrect GDMA descriptor-address reconstruction. The runtime path now uses ESP32-S3 DMA RAM addressing semantics, the simulator renders again, and the qtests were aligned to the corrected hardware contract.
+- The target is best understood as "board-path complete for the active firmware path, selectively modeled elsewhere". Many subsystems still behave functionally rather than faithfully.
+
+### Current Fidelity / Risk Table
+
+| Subsystem | Current state | Gap vs real hardware | Likely real-usage risk |
+| --- | --- | --- | --- |
+| Boot and active board path | Good enough for the current firmware path and focused regressions | Still relies on selective modeling rather than full-chip behavior | Medium |
+| GP-SPI + GDMA | Good enough for current EPD, SD, LoRa, and qtest paths | Timing, busy windows, and broader DMA sequencing are still simplified | Medium |
+| GPIO matrix + IO_MUX | Board-path complete for the routed signals in active use | Not a full silicon-complete routing model | Medium |
+| Generic MMIO surface | Narrower than before, but still present | Unknown registers can still appear to work via stored readback | High |
+| Clock / reset / sleep | Partially modeled | Deep sleep, wake, reset-domain, and wider clock-tree behavior remain incomplete | High |
+| Cache / MMU / external memory | Functional and boot-capable | Operations complete too eagerly and state reporting is too optimistic | High |
+| USB Serial/JTAG, I2C, UART, SHA | Narrow modeled surfaces with regression coverage | Error paths, uncommon timing, and unsupported modes are still incomplete | Medium |
+| PMS + RNG | Intentionally narrow modeled behavior | Useful for current firmware, not a full device-faithful implementation | Low to Medium |
+| Ethernet | Generic `open_eth` stand-in | Not an ESP32-S3-specific EMAC model | High if firmware depends on EMAC details |
+| RMT | Unimplemented | Entire block still absent | High if firmware depends on it |
+| Xtensa backend | Sufficient for current guest path | Architectural edge cases and local-memory exclusion remain incomplete | High for broader firmware coverage |
+
 ## Current Gaps
 
 - Unimplemented MMIO is often papered over instead of modeled. There is a giant catch-all register window that stores writes and echoes them back on reads, and it forces the PLL-calibration-done bit high so polling loops keep moving. RMT and IO_MUX were also explicitly mapped as unimplemented devices.
@@ -25,6 +50,12 @@ Deferred items such as deep clock/reset rework, cache/MMU timing realism, `open_
 - Some blocks are substituted with generic IP rather than an S3-specific model, notably Ethernet through `open_eth`.
 - SPI1 had an outright correctness bug in the flash transfer loop: the byte loop compared the payload value instead of the loop index, making the transfer path data-dependent.
 - The generic Xtensa backend still has known accuracy gaps such as missing local memory exclusion behavior and unimplemented opcode paths.
+
+### Current Risk Notes
+
+- The highest remaining accuracy risk is no longer the active display path. The bigger remaining problems are the deferred foundation items: clock/reset/sleep fidelity, cache/MMU sequencing, generic-MMIO dependence, `open_eth`, and broader Xtensa accuracy.
+- Performance-sensitive guest code is likely to diverge from hardware because cache and MMU operations are modeled as functional state transitions rather than realistic completion and contention behavior.
+- Firmware that touches only the currently exercised board path is much more likely to work than firmware that depends on deep power-management, uncommon DMA/peripheral corner cases, EMAC, RMT, or architectural edge conditions.
 
 ## Prioritized Backlog
 
