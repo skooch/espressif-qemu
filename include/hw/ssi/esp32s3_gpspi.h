@@ -20,6 +20,9 @@ typedef struct Esp32s3GpSpiState {
     uint32_t regs[0x100 / 4];
     bool transfer_in_progress;
     bool transfer_data_executed;
+    uint8_t transfer_retry_count;
+    bool tx_fifo_dirty;
+    bool transfer_prefers_fifo;
 
     /* References for SPI slave data routing */
     ESPGdmaState *gdma;

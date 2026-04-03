@@ -14,7 +14,6 @@
  */
 
 #include "qemu/osdep.h"
-#include "qemu/error-report.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "hw/irq.h"
@@ -390,10 +389,6 @@ static void tdeck_uc8253_data(TdeckUc8253State *s, const uint8_t *data,
                     (uint16_t)(s->pw_buf[2] << 8) | s->pw_buf[3];
                 s->partial_y_end =
                     (uint16_t)(s->pw_buf[4] << 8) | s->pw_buf[5];
-                qemu_log_mask(LOG_TRACE,
-                    "UC8253: partial window x=%u-%u y=%u-%u\n",
-                    s->partial_x_start, s->partial_x_end,
-                    s->partial_y_start, s->partial_y_end);
             }
             break;
 
@@ -441,13 +436,6 @@ static void tdeck_uc8253_command(TdeckUc8253State *s, uint8_t cmd)
         break;
 
     case UC8253_CMD_REFRESH: {
-        static bool logged_first_refresh;
-        if (!logged_first_refresh) {
-            logged_first_refresh = true;
-            warn_report("UC8253 refresh: has_resolved=%d partial=%d force=%02x current=%02x previous=%02x",
-                        s->has_resolved, s->partial_mode, s->force_temp,
-                        s->current[0], s->previous[0]);
-        }
         if (s->has_resolved) {
             tdeck_uc8253_render_resolved(s);
             s->has_resolved = false;

@@ -25,7 +25,7 @@
 #define ESP_GDMA_CONF_COUNT (ESP_GDMA_OUT_IDX + 1)
 
 
-#define ESP_GDMA_RAM_ADDR   0x3FC80000
+#define ESP_GDMA_RAM_ADDR   0x3FC88000
 
 /**
  * @brief Names for the IN and OUT IRQs pins, can be passed to `qdev_connect_gpio_out_named`.

@@ -16,7 +16,6 @@
 #include "hw/dma/esp_gdma.h"
 #include "hw/qdev-properties.h"
 #include "hw/qdev-properties-system.h"
-#include "qemu/error-report.h"
 
 #define GDMA_WARNING 0
 #define GDMA_DEBUG   0
@@ -309,7 +308,8 @@ bool esp_gdma_read_channel(ESPGdmaState *s, uint32_t chan, uint8_t* buffer, uint
                                              R_GDMA_INTERRUPT_OUT_EOF_MASK);
 
     /* Get the guest DRAM address */
-    uint32_t out_addr = ESP_GDMA_RAM_ADDR + FIELD_EX32(state->link, GDMA_OUT_LINK, ADDR);
+    uint32_t out_addr = (ESP_GDMA_RAM_ADDR & ~R_GDMA_OUT_LINK_ADDR_MASK) |
+                        FIELD_EX32(state->link, GDMA_OUT_LINK, ADDR);
 
     /* Boolean to mark whether we need to check the owner for in and out buffers */
     const bool owner_check_out = FIELD_EX32(state->conf1, GDMA_OUT_CONF1, CHECK_OWNER);
@@ -427,7 +427,7 @@ bool esp_gdma_read_channel_data(ESPGdmaState *s, uint32_t chan,
     DmaConfigState *state = &s->ch_conf[ESP_GDMA_OUT_IDX][chan];
 
     /* Compute the guest DRAM address of the first descriptor */
-    uint32_t desc_addr = ESP_GDMA_RAM_ADDR +
+    uint32_t desc_addr = (ESP_GDMA_RAM_ADDR & ~R_GDMA_OUT_LINK_ADDR_MASK) |
                          FIELD_EX32(state->link, GDMA_OUT_LINK, ADDR);
 
     GdmaLinkedList node;
@@ -474,7 +474,8 @@ bool esp_gdma_write_channel(ESPGdmaState *s, uint32_t chan, uint8_t* buffer, uin
                                              R_GDMA_INTERRUPT_IN_SUC_EOF_MASK);
 
     /* Get the guest DRAM address of the first descriptor */
-    uint32_t in_addr = ESP_GDMA_RAM_ADDR + FIELD_EX32(state->link, GDMA_IN_LINK, ADDR);
+    uint32_t in_addr = (ESP_GDMA_RAM_ADDR & ~R_GDMA_IN_LINK_ADDR_MASK) |
+                       FIELD_EX32(state->link, GDMA_IN_LINK, ADDR);
 
     /* Boolean to mark whether we need to check the owner for in buffers */
     const bool owner_check_in = FIELD_EX32(state->conf1, GDMA_IN_CONF1, CHECK_OWNER);
@@ -629,13 +630,15 @@ static void esp_gdma_check_and_start_mem_transfer(ESPGdmaState *s, uint32_t chan
         uint32_t in_addr = ESP_GDMA_RAM_ADDR;
 
         if (out_start) {
-            out_addr += FIELD_EX32(state_out->link, GDMA_OUT_LINK, ADDR);
+            out_addr = (ESP_GDMA_RAM_ADDR & ~R_GDMA_OUT_LINK_ADDR_MASK) |
+                       FIELD_EX32(state_out->link, GDMA_OUT_LINK, ADDR);
         } else {
             esp_gdma_get_restart_buffer(s, chan, ESP_GDMA_OUT_IDX, &out_addr);
         }
 
         if (in_start) {
-            in_addr += FIELD_EX32(state_in->link, GDMA_IN_LINK, ADDR);
+            in_addr = (ESP_GDMA_RAM_ADDR & ~R_GDMA_IN_LINK_ADDR_MASK) |
+                      FIELD_EX32(state_in->link, GDMA_IN_LINK, ADDR);
         } else {
             esp_gdma_get_restart_buffer(s, chan, ESP_GDMA_IN_IDX, &in_addr);
         }

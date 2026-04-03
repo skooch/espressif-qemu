@@ -370,9 +370,9 @@ static void test_gpspi_dma_txrx_handoff(void)
                  FIELD_DP32(0, GDMA_PERI_SEL, PERI_SEL, GDMA_SPI2));
 
     qtest_writel(qts, GDMA_BASE + in_dir_base + A_DMA_LINK,
-                 R_GDMA_IN_LINK_START_MASK | (rx_desc - ESP_GDMA_RAM_ADDR));
+                 R_GDMA_IN_LINK_START_MASK | (rx_desc & R_GDMA_IN_LINK_ADDR_MASK));
     qtest_writel(qts, GDMA_BASE + out_dir_base + A_DMA_LINK,
-                 R_GDMA_OUT_LINK_START_MASK | (tx_desc - ESP_GDMA_RAM_ADDR));
+                 R_GDMA_OUT_LINK_START_MASK | (tx_desc & R_GDMA_OUT_LINK_ADDR_MASK));
 
     qtest_writel(qts, IOMUX_BASE + ESP32S3_IOMUX_GPIO_REG(48),
                  ESP32S3_GPIO_IOMUX_FUNC_GPIO << ESP32S3_IOMUX_MCU_SEL_SHIFT);
@@ -845,7 +845,7 @@ static void test_sha_dma_start_and_continue_irq_paths(void)
                  FIELD_DP32(0, GDMA_PERI_SEL, PERI_SEL, GDMA_SHA));
     qtest_writel(qts, GDMA_BASE + GDMA_SPI2_CHAN * DMA_CHAN_REGS_SIZE +
                  ESP_GDMA_OUT_IDX * DMA_DIR_REGS_SIZE + A_DMA_LINK,
-                 R_GDMA_OUT_LINK_START_MASK | (sha_desc - ESP_GDMA_RAM_ADDR));
+                 R_GDMA_OUT_LINK_START_MASK | (sha_desc & R_GDMA_OUT_LINK_ADDR_MASK));
     g_assert_cmphex(qtest_readl(qts, GDMA_BASE + GDMA_SPI2_CHAN * DMA_CHAN_REGS_SIZE +
                     ESP_GDMA_OUT_IDX * DMA_DIR_REGS_SIZE + A_DMA_PERI_SEL),
                     ==, FIELD_DP32(0, GDMA_PERI_SEL, PERI_SEL, GDMA_SHA));
