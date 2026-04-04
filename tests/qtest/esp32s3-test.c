@@ -46,6 +46,7 @@
 #define UART0_BASE              DR_REG_UART_BASE
 #define SHA_BASE                DR_REG_SHA_BASE
 #define SYSTEM_BASE             DR_REG_SYSTEM_BASE
+#define RTC_CNTL_BASE           DR_REG_RTCCNTL_BASE
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
 
 #define GPSPI_CMD_UPDATE_BIT    BIT(23)
@@ -744,6 +745,120 @@ static void test_rtc_clk_update_propagates_to_system_and_uart(void)
     qtest_quit(qts);
 }
 
+static void test_rtc_timer_wakeup_transition(void)
+{
+    QTestState *qts = qts_start();
+    const uint32_t alarm_ticks = 30;
+    uint32_t timer1 = 0;
+    uint32_t wakeup_state = 0;
+    uint32_t state0 = 0;
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_CLR, UINT32_MAX);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER0, alarm_ticks);
+    timer1 = FIELD_DP32(timer1, RTC_CNTL_SLP_TIMER1, MAIN_TIMER_ALARM_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER1, timer1);
+
+    wakeup_state = FIELD_DP32(wakeup_state, RTC_CNTL_WAKEUP_STATE,
+                              TIMER_WAKEUP_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WAKEUP_STATE, wakeup_state);
+
+    state0 = FIELD_DP32(state0, RTC_CNTL_STATE0, SLEEP_EN, 1);
+    state0 = FIELD_DP32(state0, RTC_CNTL_STATE0, SLP_WAKEUP, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0, state0);
+
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
+                    R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK, ==, 0);
+
+    qtest_clock_step(qts, 150000);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
+                    R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK, ==, 0);
+
+    qtest_clock_step(qts, 60000);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
+                    R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK,
+                    ==, R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_WAKEUP_CAUSE),
+                    ==, R_RTC_CNTL_SLP_WAKEUP_CAUSE_TIMER_MASK);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_CLR,
+                 R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
+                    R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK, ==, 0);
+
+    qtest_quit(qts);
+}
+
+static void test_rtc_reset_transitions(void)
+{
+    QTestState *qts = qts_start();
+    uint32_t options0 = 0;
+    uint32_t reset_state;
+
+    options0 = FIELD_DP32(options0, RTC_CNTL_OPTIONS0, SW_PROCPU_RESET, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
+    qtest_qmp_eventwait(qts, "RESET");
+
+    reset_state = qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_RESET_STATE);
+    g_assert_cmpuint(FIELD_EX32(reset_state, RTC_CNTL_RESET_STATE,
+                                RESET_CAUSE_PROCPU), ==, ESP32_SW_CPU_RESET);
+    g_assert_cmpuint(FIELD_EX32(reset_state, RTC_CNTL_RESET_STATE,
+                                RESET_CAUSE_APPCPU), ==, ESP32_POWERON_RESET);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0) &
+                    R_RTC_CNTL_OPTIONS0_SW_PROCPU_RESET_MASK, ==, 0);
+
+    options0 = FIELD_DP32(0, RTC_CNTL_OPTIONS0, SW_SYS_RESET, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
+    qtest_qmp_eventwait(qts, "RESET");
+
+    reset_state = qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_RESET_STATE);
+    g_assert_cmpuint(FIELD_EX32(reset_state, RTC_CNTL_RESET_STATE,
+                                RESET_CAUSE_PROCPU), ==, ESP32_SW_SYS_RESET);
+    g_assert_cmpuint(FIELD_EX32(reset_state, RTC_CNTL_RESET_STATE,
+                                RESET_CAUSE_APPCPU), ==, ESP32_SW_SYS_RESET);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0) &
+                    R_RTC_CNTL_OPTIONS0_SW_SYS_RESET_MASK, ==, 0);
+
+    qtest_quit(qts);
+}
+
+static void test_rtc_cpu_stall_transition(void)
+{
+    QTestState *qts = qts_start();
+    uint32_t sw_cpu_stall = 0;
+    uint32_t options0 = 0;
+
+    qtest_irq_intercept_out_named(qts, "/machine/soc/rtc_cntl",
+                                  ESP32S3_RTC_CPU_STALL_GPIO);
+
+    g_assert_false(qtest_get_irq(qts, 0));
+    g_assert_false(qtest_get_irq(qts, 1));
+
+    sw_cpu_stall = FIELD_DP32(sw_cpu_stall, RTC_CNTL_SW_CPU_STALL,
+                              APPCPU_C1, 0x21);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SW_CPU_STALL, sw_cpu_stall);
+    g_assert_false(qtest_get_irq(qts, 1));
+
+    options0 = FIELD_DP32(options0, RTC_CNTL_OPTIONS0, SW_STALL_APPCPU_C0, 2);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
+    g_assert_true(qtest_get_irq(qts, 1));
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, 0);
+    g_assert_false(qtest_get_irq(qts, 1));
+
+    sw_cpu_stall = FIELD_DP32(0, RTC_CNTL_SW_CPU_STALL, PROCPU_C1, 0x21);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SW_CPU_STALL, sw_cpu_stall);
+
+    options0 = FIELD_DP32(0, RTC_CNTL_OPTIONS0, SW_STALL_PROCPU_C0, 2);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
+    g_assert_true(qtest_get_irq(qts, 0));
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, 0);
+    g_assert_false(qtest_get_irq(qts, 0));
+
+    qtest_quit(qts);
+}
+
 static uint64_t wait_for_uart_timeout_ns(QTestState *qts, uint64_t step_ns, uint64_t max_ns)
 {
     uint64_t elapsed = 0;
@@ -960,6 +1075,9 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/i2c/read-path-deferred", test_i2c_read_path_and_deferred_complete);
     qtest_add_func("/esp32s3/i2c/unsupported-modes", test_i2c_unsupported_modes);
     qtest_add_func("/esp32s3/rtc/clk-update", test_rtc_clk_update_propagates_to_system_and_uart);
+    qtest_add_func("/esp32s3/rtc/timer-wakeup", test_rtc_timer_wakeup_transition);
+    qtest_add_func("/esp32s3/rtc/reset-transitions", test_rtc_reset_transitions);
+    qtest_add_func("/esp32s3/rtc/cpu-stall", test_rtc_cpu_stall_transition);
     qtest_add_func("/esp32s3/uart/clock-timing", test_uart_clock_dependent_timing);
     qtest_add_func("/esp32s3/uart/rx-timeout-multi-config", test_uart_rx_timeout_multi_config);
     qtest_add_func("/esp32s3/sha/irq", test_sha_irq);
