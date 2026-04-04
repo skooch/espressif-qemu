@@ -172,9 +172,11 @@ static void esp32s3_gpspi_finish_transfer(void *opaque)
                              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
                              ESP32S3_GPSPI_TRANSFER_DELAY_NS);
             } else {
+                s->transfer_data_executed = true;
+                s->transfer_retry_count = 0;
                 timer_mod_ns(&s->completion_timer,
                              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
-                             ESP32S3_GPSPI_EXECUTE_DELAY_NS);
+                             ESP32S3_GPSPI_TRANSFER_DELAY_NS);
             }
         }
         return;
