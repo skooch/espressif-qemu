@@ -57,8 +57,8 @@ This track removes the remaining QEMU-only shortcuts from the board control path
   Current tree: CPU reset requests, CPU stall requests, sleep state, timer wakeup, GPIO wakeup, EXT1 wakeup, and reset-cause/state storage are modeled in the RTC block and wired into the board.
 - [x] Keep the first pass board-path-complete rather than trying to cover the full silicon tree.
   Current tree: the path is centered on firmware-visible board control rather than a full silicon reset tree.
-- [ ] Inventory the remaining clock and reset shortcuts that are still masking real state transitions.
-  Remaining focus: document what is still implicit between `hw/misc/esp32s3_rtc_cntl.c`, `hw/xtensa/esp32s3_clk.c`, and `hw/xtensa/esp32s3.c`.
+- [x] Inventory the remaining clock and reset shortcuts that are still masking real state transitions.
+  Current tree: the remaining reset shim, partial digital-reset fanout, bookkeeping-only sleep transitions, collapsed clock switching, narrow clock-rate fanout, duplicate RTC-to-clock update path, and shallow RTC reset behavior are now captured in `ESP32S3_EMULATION_GAPS.md`.
 - [x] Finish the clock-update path so RTC clock changes affect the parts of the board model that depend on them.
   Current tree: RTC clock-update pulses now synchronize the SoC clock model so guest-visible consumers like UART timing follow the selected RTC clock source.
 - [x] Add direct qtests for the wake, reset, and stall transitions that firmware actually observes.

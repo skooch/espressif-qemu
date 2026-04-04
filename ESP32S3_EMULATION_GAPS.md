@@ -51,6 +51,28 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 - SPI1 had an outright correctness bug in the flash transfer loop: the byte loop compared the payload value instead of the loop index, making the transfer path data-dependent. (Now fixed; see Stage 2.)
 - The generic Xtensa backend still has known accuracy gaps such as missing local memory exclusion behavior and unimplemented opcode paths.
 
+### Task 1 Shortcut Inventory (2026-04-04)
+
+Background commits reviewed for the current board-control path:
+
+- `163978001f` introduced the RTC sleep-state register surface and state fields.
+- `0f1ef9a87b` added the timer/GPIO light-sleep state machine.
+- `367f037177` wired Core 1 `RUNSTALL` and the RTC CPU-stall magic-value path.
+- `3e30797dca` connected GPIO wakeup notifications into the SoC board path.
+- `e1da504cc2` added EXT1 light-sleep wakeup handling.
+- `a7d95fc530` made RTC clock-source writes update the modeled SoC clock state.
+- `767ea45d46` added direct qtests for timer wakeup, reset transitions, and CPU stall.
+
+Remaining shortcuts that still mask real state transitions:
+
+- Reset requests still travel through a QEMU-global shim instead of an explicit ESP32-S3 reset tree. `RTC_CNTL` pulses GPIO lines, the SoC translates them into `qemu_system_reset_request(...)`, and `esp32s3_soc_reset()` reconstructs the intended local effect afterwards.
+- Digital-reset fanout is still selective and implicit. `esp32s3_soc_reset()` only cold-resets the interrupt matrix, UARTs, and I2C controllers, while the rest of the digital surface keeps whatever state it had unless some other path resets it.
+- Light sleep is still bookkeeping rather than a board-wide power transition. Entering sleep sets `sleeping`, arms the timer, and records wake/reject causes, but it does not gate clocks, pause CPUs, or suspend peripheral activity.
+- Clock switching is collapsed to an immediate register rewrite. RTC clock updates directly rewrite `SYSTEM_SYSCLK_CONF` and recompute CPU/APB rates without modeling oscillator enable, PLL lock, divider settling, or source-switch latency.
+- Clock-rate fanout is still narrow. The active modeled rate only propagates into CPU clocks and UART timing; most APB-frequency-sensitive peripherals and timers still behave as if their local timing is fixed.
+- The RTC-to-clock handoff still exists in two places. The RTC block now updates the clock model directly and also emits the older `clk-update` pulse, so the SoC callback remains as a compatibility shim rather than a single explicit ownership path.
+- RTC reset behavior is still shallow. The reset hook re-bases the RTC time counter, but it does not yet rebuild a domain-aware reset/default state for the wider RTC register surface.
+
 ### Current Risk Notes
 
 - The highest remaining accuracy risk is no longer the active display path. The bigger remaining problems are the deferred foundation items: clock/reset/sleep fidelity, cache/MMU sequencing, generic-MMIO dependence, `open_eth`, and broader Xtensa accuracy.
