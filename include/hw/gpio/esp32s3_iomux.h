@@ -8,7 +8,8 @@
 
 #define ESP32S3_IOMUX_IO_SIZE 0x2000
 #define ESP32S3_IOMUX_REG_COUNT (ESP32S3_IOMUX_IO_SIZE / sizeof(uint32_t))
-#define ESP32S3_IOMUX_GPIO_REG(pin) ((pin) * sizeof(uint32_t))
+#define ESP32S3_IOMUX_PIN_CTRL_REG  0x00
+#define ESP32S3_IOMUX_GPIO_REG(pin) (((pin) + 1) * sizeof(uint32_t))
 
 #define ESP32S3_IOMUX_MCU_SEL_SHIFT 12
 #define ESP32S3_IOMUX_MCU_SEL_MASK (0x7u << ESP32S3_IOMUX_MCU_SEL_SHIFT)

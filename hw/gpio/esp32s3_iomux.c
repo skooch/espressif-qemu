@@ -35,8 +35,9 @@ static void esp32s3_iomux_write(void *opaque, hwaddr addr,
 
     s->regs[index] = (uint32_t)value;
 
-    if (addr < ESP32S3_IOMUX_GPIO_REG(ESP32S3_GPIO_COUNT) && s->gpio) {
-        int pin = addr / sizeof(uint32_t);
+    if (addr >= ESP32S3_IOMUX_GPIO_REG(0) &&
+        addr < ESP32S3_IOMUX_GPIO_REG(ESP32S3_GPIO_COUNT) && s->gpio) {
+        int pin = (addr / sizeof(uint32_t)) - 1;
         uint32_t func = ((uint32_t)value & ESP32S3_IOMUX_MCU_SEL_MASK) >>
             ESP32S3_IOMUX_MCU_SEL_SHIFT;
         esp32s3_gpio_set_iomux_func(s->gpio, pin, func);
@@ -56,7 +57,7 @@ static void esp32s3_iomux_reset_hold(Object *obj, ResetType type)
     memset(s->regs, 0, sizeof(s->regs));
 
     for (int pin = 0; pin < ESP32S3_GPIO_COUNT; pin++) {
-        s->regs[pin] = ESP32S3_GPIO_IOMUX_FUNC_GPIO <<
+        s->regs[pin + 1] = ESP32S3_GPIO_IOMUX_FUNC_GPIO <<
             ESP32S3_IOMUX_MCU_SEL_SHIFT;
         if (s->gpio) {
             esp32s3_gpio_set_iomux_func(s->gpio, pin,
