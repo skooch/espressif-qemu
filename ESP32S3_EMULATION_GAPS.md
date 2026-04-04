@@ -35,7 +35,7 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 | Cache / MMU / external memory | Functional and boot-capable | Operations complete too eagerly and state reporting is too optimistic | High |
 | USB Serial/JTAG, I2C, UART, SHA | Board-path complete with RX, completion semantics, clock-derived timing, and IRQ coverage | DMA error paths, uncommon timing modes, and multi-CPU interrupt routing remain incomplete | Medium |
 | PMS + RNG | Intentionally narrow modeled behavior | Useful for current firmware, not a full device-faithful implementation | Low to Medium |
-| Ethernet | Generic `open_eth` stand-in | Not an ESP32-S3-specific EMAC model | High if firmware depends on EMAC details |
+| Ethernet | Generic `open_eth` stand-in, apparently unused by the current firmware path | Not an ESP32-S3-specific EMAC model | Low for the current workload, High if future firmware depends on EMAC details |
 | RMT | Unimplemented | Entire block still absent | High if firmware depends on it |
 | Xtensa backend | Sufficient for current guest path | Architectural edge cases and local-memory exclusion remain incomplete | High for broader firmware coverage |
 
@@ -47,7 +47,7 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 - Clock, reset, and sleep/power behavior are only partially modeled. The `SYSTEM` block handles a small subset of registers, RTC sleep/wake logic is tailored to current timer/GPIO/EXT1 paths, and reset still contains QEMU-specific shims.
 - Most previously placeholder peripherals have been tightened to board-path-complete behavior: USB Serial/JTAG now supports RX delivery, FIFO-used status reporting, and RX/TX interrupt state; I2C clears and sets DONE bits per-command with deferred completion IRQ delivery; UART derives baud and pulse timing from the active clock configuration (falling back to 40 MHz only when no clock device is linked); PMS returns RAZ/WI for addresses above 0x100 and a date register at 0xFFC; SHA asserts and clears interrupt state on completion for both DMA and non-DMA paths; RNG is intentionally narrow (only addr==0 && size==4 returns host entropy). Remaining gaps include DMA error paths, uncommon timing modes, unsupported I2C slave/APB-nonfifo modes, and multi-CPU interrupt routing.
 - External memory and cache behavior are still functional rather than cycle-accurate. Flash-backed MMU remaps are immediate, but cache sync/preload/autoload requests now complete after a short deferred timer and drive `CACHE_STATE` busy/idle reporting instead of reporting completion only when software reads the control register.
-- Some blocks are substituted with generic IP rather than an S3-specific model, notably Ethernet through `open_eth`.
+- Some blocks are substituted with generic IP rather than an S3-specific model, notably Ethernet through `open_eth`, though the current T-Deck Pro firmware path does not appear to exercise the EMAC block at all.
 - SPI1 had an outright correctness bug in the flash transfer loop: the byte loop compared the payload value instead of the loop index, making the transfer path data-dependent. (Now fixed; see Stage 2.)
 - The generic Xtensa backend still has known accuracy gaps such as missing local memory exclusion behavior and unimplemented opcode paths.
 
@@ -89,6 +89,21 @@ Current firmware and library code rely on a narrower subset of cache/MMU behavio
 - Panic-path crashdump writes rely on the same raw flash path while assuming the other core is already stalled. That means the important emulation surface is still the flash/MMU path itself, even when the multi-core helper is intentionally bypassed.
 - The current reviewed firmware does not appear to rely on the broader EXTMEM management surface such as cache prelock/lock controls, preload/autoload sequencing, PMS reject capture, wraparound control, or cache/MMU fault reporting. Those registers exist in the header today, but they are not part of the confirmed dependency set for the active T-Deck Pro workload.
 - There is now direct ESP32-S3 qtest coverage for flash-backed MMU remapping, the `CTRL1` state touched by PSRAM bring-up, and the deferred completion path for sync/preload/autoload operations. Remaining cache/MMU simplifications are now mostly in the "leave cycle-accuracy for later" bucket: coalesced completion timing, simplified freeze semantics, and no attempt to model contention or ROM-internal cache-disable depth.
+
+### Task 3 EMAC Inventory (2026-04-04)
+
+Background commits reviewed for the current Ethernet path:
+
+- `7591824ec4` introduced the ESP32-S3 machine and wired a generic `open_eth` NIC directly into the board at `DR_REG_EMAC_BASE`, its descriptor window at `+0x400`, and `ETS_ETH_MAC_INTR_SOURCE`.
+- No later board-specific EMAC commit replaced that wiring. The current tree still instantiates `open_eth` directly from `hw/xtensa/esp32s3.c`.
+
+Current firmware and board-path findings:
+
+- The adjacent T-Deck Pro firmware repo does not contain direct EMAC, Ethernet, RMII, or PHY bring-up code in `src/`. Networking is expressed through `esp_radio::wifi` plus `embassy-net`, not through an Ethernet MAC driver.
+- `Cargo.toml` enables `esp-radio` with the `wifi` feature and `embassy-net`, and the runtime path calls `esp_radio::wifi::new(...)` before spawning an `embassy_net::Runner` over `esp_radio::wifi::Interface`.
+- There is no app-level evidence that the current firmware reads or writes the ESP32-S3 EMAC register block, configures an external PHY, or expects RMII link state from the board.
+- The QEMU board path is correspondingly generic rather than board-specific. It instantiates `open_eth`, maps its two MMIO windows, and routes its interrupt, but it does not model a T-Deck-specific Ethernet PHY or any exercised board wiring around that block.
+- The exact EMAC behavior the current firmware touches is therefore effectively none. `open_eth` is a latent fidelity risk for future Ethernet-aware guests, not an actively exercised dependency of the current Wi-Fi-based T-Deck Pro workload.
 
 ### Current Risk Notes
 

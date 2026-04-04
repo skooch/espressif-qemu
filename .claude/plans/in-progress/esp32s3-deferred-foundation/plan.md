@@ -103,7 +103,8 @@ The current Ethernet story is still anchored by generic IP. This track replaces 
 
 - [x] Confirm whether this track is still needed.
   Current tree: yes. `hw/xtensa/esp32s3.c` still instantiates `open_eth` for the active Ethernet path.
-- [ ] Inventory the exact EMAC behavior the firmware touches.
+- [x] Inventory the exact EMAC behavior the firmware touches.
+  Current inventory: the active T-Deck Pro firmware path is Wi-Fi-only (`esp_radio::wifi` + `embassy-net`) and shows no direct EMAC, RMII, or PHY usage, so `open_eth` is currently a dormant generic stand-in rather than an exercised board dependency.
 - [ ] Decide whether the first slice is a replacement model or a board adapter around the existing path.
 - [ ] Implement the minimum packet and link bring-up behavior that the firmware needs.
 - [ ] Add a regression for link bring-up and packet path behavior.

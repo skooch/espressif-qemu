@@ -9,7 +9,7 @@
 - [x] Task 2: leave broader cycle-accuracy work for a later stage
 - [ ] Task 4: record which missing Xtensa instructions or local-memory behaviors actually block guest code
 - [ ] Task 4: rank those blockers so the smallest guest-visible fixes land first
-- [ ] Task 3: inventory the exact EMAC behavior the firmware touches
+- [x] Task 3: inventory the exact EMAC behavior the firmware touches
 - [ ] Task 3: decide between a replacement model and a board adapter around the existing path
 - [ ] Task 4: implement one architectural slice at a time with a focused regression for each
 - [ ] Task 4: keep this track separate from peripheral work so the dependency chain stays visible
