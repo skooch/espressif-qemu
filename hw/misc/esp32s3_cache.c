@@ -29,6 +29,8 @@
 #define CACHE_DEBUG      0
 #define CACHE_WARNING    0
 #define CACHE_OP_DELAY_NS 1000
+#define ESP32S3_CACHE_MMU_FAULT_CPU_MISS 1u
+#define ESP32S3_CACHE_MMU_FAULT_ICACHE   (1u << 3)
 
 typedef struct ESP32S3CacheDeferredOp {
     hwaddr addr;
@@ -101,6 +103,53 @@ static bool esp32s3_cache_domain_busy(ESP32S3CacheState *s, bool dcache)
     return false;
 }
 
+static void esp32s3_cache_update_irq(ESP32S3CacheState *s)
+{
+    const uint32_t ena =
+        s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CACHE_ILG_INT_ENA)];
+    const uint32_t status =
+        s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CACHE_ILG_INT_ST)];
+
+    qemu_set_irq(s->illegal_irq, (ena & status) != 0);
+}
+
+static void esp32s3_cache_raise_mmu_fault(ESP32S3CacheState *s, uint32_t vaddr,
+                                          ESP32S3MMUEntry entry,
+                                          uint32_t fault_code)
+{
+    uint32_t fault_content = 0;
+
+    s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CACHE_ILG_INT_ST)] |=
+        R_EXTMEM_CACHE_ILG_INT_ST_MMU_ENTRY_FAULT_ST_MASK;
+
+    fault_content = FIELD_DP32(fault_content, EXTMEM_CACHE_MMU_FAULT_CONTENT,
+                               CACHE_MMU_FAULT_CONTENT, entry.val);
+    fault_content = FIELD_DP32(fault_content, EXTMEM_CACHE_MMU_FAULT_CONTENT,
+                               CACHE_MMU_FAULT_CODE, fault_code);
+    s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CACHE_MMU_FAULT_CONTENT)] =
+        fault_content;
+    s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CACHE_MMU_FAULT_VADDR)] =
+        FIELD_DP32(0, EXTMEM_CACHE_MMU_FAULT_VADDR, CACHE_MMU_FAULT_VADDR,
+                   vaddr);
+
+    esp32s3_cache_update_irq(s);
+}
+
+static void esp32s3_cache_clear_illegal_status(ESP32S3CacheState *s,
+                                               uint32_t clear_mask)
+{
+    const hwaddr status_idx = ESP32S3_CACHE_REG_IDX(A_EXTMEM_CACHE_ILG_INT_ST);
+
+    s->regs[status_idx] &= ~clear_mask;
+
+    if (clear_mask & R_EXTMEM_CACHE_ILG_INT_CLR_MMU_ENTRY_FAULT_INT_CLR_MASK) {
+        s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CACHE_MMU_FAULT_CONTENT)] = 0;
+        s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CACHE_MMU_FAULT_VADDR)] = 0;
+    }
+
+    esp32s3_cache_update_irq(s);
+}
+
 static void esp32s3_cache_complete_deferred_ops(void *opaque)
 {
     ESP32S3CacheState *s = ESP32S3_CACHE(opaque);
@@ -143,19 +192,25 @@ static inline uint32_t esp32s3_read_mmu_value(ESP32S3CacheState *s, hwaddr reg_a
 
 static void esp32s3_mmu_invalidate_page(ESP32S3CacheState *s, hwaddr virt_addr, hwaddr phys_addr, bool is_psram, bool clear_mr)
 {
+    AddressSpace *target_as = is_psram
+        ? (s->psram != NULL ? &s->psram_as : NULL)
+        : (s->flash_blk != NULL ? &s->flash_as : NULL);
     IOMMUTLBEvent event = {
         .type = IOMMU_NOTIFIER_UNMAP,
         .entry = {
-            .target_as = is_psram ? &s->psram_as : &s->flash_as,
+            .target_as = target_as,
             .iova = virt_addr,
             .translated_addr = phys_addr,
             .addr_mask = ESP32S3_PAGE_SIZE - 1,
         }
     };
-    memory_region_notify_iommu(&s->iommu, 0, event);
+    if (target_as != NULL) {
+        memory_region_notify_iommu(&s->dcache_iommu.iommu, 0, event);
+        memory_region_notify_iommu(&s->icache_iommu.iommu, 0, event);
+    }
 
     /* If the page was mapped to flash, clear the content */
-    if (!is_psram && clear_mr) {
+    if (!is_psram && clear_mr && s->flash_blk != NULL) {
         const uint32_t invalid_value = 0xdeadbeef;
         uint32_t* cache_word_data = (void*) ((uintptr_t) memory_region_get_ram_ptr(&s->flash_mr) + phys_addr);
 
@@ -250,6 +305,21 @@ static uint64_t esp32s3_cache_read(void *opaque, hwaddr addr, unsigned int size)
         case A_EXTMEM_ICACHE_FREEZE:
             r = s->regs[index];
             break;
+        case A_EXTMEM_CACHE_ILG_INT_ENA:
+            r = s->regs[index];
+            break;
+        case A_EXTMEM_CACHE_ILG_INT_ST:
+            r = s->regs[index];
+            break;
+        case A_EXTMEM_CACHE_MMU_FAULT_CONTENT:
+            r = s->regs[index];
+            break;
+        case A_EXTMEM_CACHE_MMU_FAULT_VADDR:
+            r = s->regs[index];
+            break;
+        case A_EXTMEM_CACHE_CONF_MISC:
+            r = s->regs[index];
+            break;
         case A_EXTMEM_CACHE_STATE:
             if (!esp32s3_cache_domain_busy(s, true)) {
                 r |= 1 << R_EXTMEM_CACHE_STATE_DCACHE_STATE_SHIFT;
@@ -301,6 +371,13 @@ static void esp32s3_cache_write(void *opaque, hwaddr addr, uint64_t value,
                 break;
             case A_EXTMEM_ICACHE_CTRL1:
                 s->regs[index] = value;
+                break;
+            case A_EXTMEM_CACHE_ILG_INT_ENA:
+                s->regs[index] = value;
+                esp32s3_cache_update_irq(s);
+                break;
+            case A_EXTMEM_CACHE_ILG_INT_CLR:
+                esp32s3_cache_clear_illegal_status(s, value);
                 break;
             case A_EXTMEM_ICACHE_FREEZE:
                 if (value & R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_ENA_MASK) {
@@ -355,6 +432,7 @@ static void esp32s3_cache_reset_hold(Object *obj, ResetType type)
     ESP32S3CacheState *s = ESP32S3_CACHE(obj);
     memset(s->regs, 0, ESP32S3_CACHE_REG_COUNT * sizeof(*s->regs));
     timer_del(&s->completion_timer);
+    qemu_set_irq(s->illegal_irq, 0);
 
     /* Initialize the MMU with invalid entries */
     for (int i = 0; i < ESP32S3_MMU_TABLE_ENTRY_COUNT; i++) {
@@ -370,6 +448,9 @@ static void esp32s3_cache_reset_hold(Object *obj, ResetType type)
     s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_DCACHE_AUTOLOAD_CTRL)] = R_EXTMEM_DCACHE_AUTOLOAD_CTRL_AUTOLOAD_DONE_MASK;
     /* Same goes for the manual preload */
     s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_DCACHE_PRELOAD_CTRL)] = R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_DONE_MASK;
+    s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CACHE_CONF_MISC)] =
+        R_EXTMEM_CACHE_CONF_MISC_CACHE_IGNORE_SYNC_MMU_ENTRY_FAULT_MASK |
+        R_EXTMEM_CACHE_CONF_MISC_CACHE_IGNORE_PRELOAD_MMU_ENTRY_FAULT_MASK;
 }
 
 static void esp32s3_cache_realize(DeviceState *dev, Error **errp)
@@ -413,21 +494,39 @@ static void esp32s3_cache_init(Object *obj)
     memory_region_init_io(&s->iomem, obj, &esp32s3_cache_ops, s,
                           TYPE_ESP32S3_CACHE, TYPE_ESP32S3_CACHE_IO_SIZE + ESP32S3_MMU_SIZE);
 
-    /* Initialize the dcache and icache cache areas, they are aliases of eachother */
-    memory_region_init_iommu(&s->iommu,
-                            sizeof(s->iommu),
-                            TYPE_ESP32S3_MMU_REGION,
-                            OBJECT(s),
-                            "esp32s3_iommu", ESP32S3_EXTMEM_REGION_SIZE);
+    /* Initialize separate IOMMU windows so fault reporting can preserve the
+     * originating cache alias address. */
+    memory_region_init_iommu(&s->dcache_iommu.iommu,
+                             sizeof(s->dcache_iommu),
+                             TYPE_ESP32S3_MMU_REGION,
+                             OBJECT(s),
+                             "esp32s3_dcache_iommu",
+                             ESP32S3_EXTMEM_REGION_SIZE);
+    s->dcache_iommu.cache = s;
+    s->dcache_iommu.virt_base = ESP32S3_DCACHE_BASE;
+    s->dcache_iommu.dcache = true;
+
+    memory_region_init_iommu(&s->icache_iommu.iommu,
+                             sizeof(s->icache_iommu),
+                             TYPE_ESP32S3_MMU_REGION,
+                             OBJECT(s),
+                             "esp32s3_icache_iommu",
+                             ESP32S3_EXTMEM_REGION_SIZE);
+    s->icache_iommu.cache = s;
+    s->icache_iommu.virt_base = ESP32S3_ICACHE_BASE;
+    s->icache_iommu.dcache = false;
 
     /* The Dcache and the Icache are just aliases to the iommu memory region since all the accesses will require
      * to go through a translation. */
     memory_region_init_alias(&s->dcache, OBJECT(s), "esp32s3.dcache",
-                           MEMORY_REGION(&s->iommu), 0, ESP32S3_EXTMEM_REGION_SIZE);
+                           MEMORY_REGION(&s->dcache_iommu.iommu), 0,
+                           ESP32S3_EXTMEM_REGION_SIZE);
     memory_region_init_alias(&s->icache, OBJECT(s), "esp32s3.icache",
-                           &s->dcache, 0, ESP32S3_EXTMEM_REGION_SIZE);
+                           MEMORY_REGION(&s->icache_iommu.iommu), 0,
+                           ESP32S3_EXTMEM_REGION_SIZE);
 
     sysbus_init_mmio(sbd, &s->iomem);
+    sysbus_init_irq(sbd, &s->illegal_irq);
 }
 
 static Property esp32s3_cache_properties[] = {
@@ -467,11 +566,11 @@ static uint64_t esp32s3_mmu_region_page_size(IOMMUMemoryRegion *iommu)
 static IOMMUTLBEntry esp32s3_mmu_region_translate(IOMMUMemoryRegion *iommu, hwaddr addr,
                                                   IOMMUAccessFlags flag, int iommu_idx)
 {
-    ESP32S3CacheState *s = container_of(iommu, ESP32S3CacheState, iommu);
+    ESP32S3CacheIOMMURegion *region =
+        container_of(iommu, ESP32S3CacheIOMMURegion, iommu);
+    ESP32S3CacheState *s = region->cache;
 
     IOMMUTLBEntry ret = {
-        /* Flash address space by default (most likely) */
-        .target_as = &s->flash_as,
         .addr_mask = ESP32S3_PAGE_SIZE - 1,
     };
 
@@ -479,17 +578,36 @@ static IOMMUTLBEntry esp32s3_mmu_region_translate(IOMMUMemoryRegion *iommu, hwad
     const uint32_t index = addr / ESP32S3_PAGE_SIZE;
     const uint32_t offset = addr % ESP32S3_PAGE_SIZE;
     const ESP32S3MMUEntry entry = s->mmu[index];
+    const uint32_t vaddr = region->virt_base + addr;
 
     /* Make sure the virtual and physical addresses are both aligned on ESP32S3_PAGE_SIZE when returned to the caller */
     ret.translated_addr = entry.page_number * ESP32S3_PAGE_SIZE;
     ret.iova = addr - offset;
 
+    if (entry.invalid) {
+        const uint32_t fault_code = ESP32S3_CACHE_MMU_FAULT_CPU_MISS |
+            (region->dcache ? 0 : ESP32S3_CACHE_MMU_FAULT_ICACHE);
+
+        esp32s3_cache_raise_mmu_fault(s, vaddr, entry, fault_code);
+        ret.perm = IOMMU_NONE;
+        return ret;
+    }
+
     if (entry.type == ESP32S3_MMU_TYPE_PSRAM) {
-        ret.target_as = &s->psram_as;
         /* If there is no PSRAM connected to the machine, give no permission to the address space */
-        ret.perm = (s->psram == NULL) ? IOMMU_NONE : IOMMU_RW;
+        if (s->psram == NULL) {
+            ret.perm = IOMMU_NONE;
+        } else {
+            ret.target_as = &s->psram_as;
+            ret.perm = IOMMU_RW;
+        }
     } else {
-        ret.perm = (s->flash_blk == NULL) ? IOMMU_NONE : IOMMU_RO;
+        if (s->flash_blk == NULL) {
+            ret.perm = IOMMU_NONE;
+        } else {
+            ret.target_as = &s->flash_as;
+            ret.perm = IOMMU_RO;
+        }
     }
 
 #if CACHE_DEBUG

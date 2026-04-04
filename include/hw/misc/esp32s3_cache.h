@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include "hw/irq.h"
 #include "hw/sysbus.h"
 #include "hw/hw.h"
 #include "hw/registerfields.h"
@@ -92,7 +93,16 @@ _Static_assert(sizeof(ESP32S3MMUEntry) == sizeof(uint32_t), "MMU Entry size must
  */
 #define ESP32S3_CACHE_REG_IDX(addr) ((addr) / sizeof(uint32_t))
 
-typedef struct {
+typedef struct ESP32S3CacheState ESP32S3CacheState;
+
+typedef struct ESP32S3CacheIOMMURegion {
+    IOMMUMemoryRegion iommu;
+    ESP32S3CacheState *cache;
+    hwaddr virt_base;
+    bool dcache;
+} ESP32S3CacheIOMMURegion;
+
+struct ESP32S3CacheState {
     SysBusDevice parent;
     BlockBackend *flash_blk;
     SsiPsramState *psram;
@@ -103,7 +113,8 @@ typedef struct {
     MemoryRegion dcache;
     MemoryRegion icache;
 
-    IOMMUMemoryRegion iommu; // Translation region that will be part of the system address space
+    ESP32S3CacheIOMMURegion dcache_iommu;
+    ESP32S3CacheIOMMURegion icache_iommu;
 
     /* Define an address space for the SPI flash */
     AddressSpace flash_as;
@@ -115,11 +126,12 @@ typedef struct {
     /* Registers for controlling the cache */
     uint32_t regs[ESP32S3_CACHE_REG_COUNT];
     QEMUTimer completion_timer;
+    qemu_irq illegal_irq;
 
     ESP32S3XtsAesState *xts_aes;
     /* Define the MMU itself as an array, it shall be accessible from address ESP32S3_MMU_TABLE */
     ESP32S3MMUEntry mmu[ESP32S3_MMU_TABLE_ENTRY_COUNT];
-} ESP32S3CacheState;
+};
 
 /* Assert that the size of the MMU table in the structure is of size ESP32S3_MMU_SIZE */
 _Static_assert(sizeof(((ESP32S3CacheState*)0)->mmu) == ESP32S3_MMU_SIZE,
@@ -306,6 +318,9 @@ REG32(EXTMEM_CACHE_ILG_INT_ENA, 0x0DC)
     FIELD(EXTMEM_CACHE_ILG_INT_ENA, DBUS_CNT_OVF_INT_ENA, 8, 1)
     FIELD(EXTMEM_CACHE_ILG_INT_ENA, IBUS_CNT_OVF_INT_ENA, 7, 1)
     FIELD(EXTMEM_CACHE_ILG_INT_ENA, MMU_ENTRY_FAULT_INT_ENA, 5, 1)
+    FIELD(EXTMEM_CACHE_ILG_INT_ENA, DCACHE_WRITE_FLASH_INT_ENA, 4, 1)
+    FIELD(EXTMEM_CACHE_ILG_INT_ENA, DCACHE_PRELOAD_OP_FAULT_INT_ENA, 3, 1)
+    FIELD(EXTMEM_CACHE_ILG_INT_ENA, DCACHE_SYNC_OP_FAULT_INT_ENA, 2, 1)
     FIELD(EXTMEM_CACHE_ILG_INT_ENA, ICACHE_PRELOAD_OP_FAULT_INT_ENA, 1, 1)
     FIELD(EXTMEM_CACHE_ILG_INT_ENA, ICACHE_SYNC_OP_FAULT_INT_ENA, 0, 1)
 
@@ -313,6 +328,9 @@ REG32(EXTMEM_CACHE_ILG_INT_CLR, 0x0E0)
     FIELD(EXTMEM_CACHE_ILG_INT_CLR, DBUS_CNT_OVF_INT_CLR, 8, 1)
     FIELD(EXTMEM_CACHE_ILG_INT_CLR, IBUS_CNT_OVF_INT_CLR, 7, 1)
     FIELD(EXTMEM_CACHE_ILG_INT_CLR, MMU_ENTRY_FAULT_INT_CLR, 5, 1)
+    FIELD(EXTMEM_CACHE_ILG_INT_CLR, DCACHE_WRITE_FLASH_INT_CLR, 4, 1)
+    FIELD(EXTMEM_CACHE_ILG_INT_CLR, DCACHE_PRELOAD_OP_FAULT_INT_CLR, 3, 1)
+    FIELD(EXTMEM_CACHE_ILG_INT_CLR, DCACHE_SYNC_OP_FAULT_INT_CLR, 2, 1)
     FIELD(EXTMEM_CACHE_ILG_INT_CLR, ICACHE_PRELOAD_OP_FAULT_INT_CLR, 1, 1)
     FIELD(EXTMEM_CACHE_ILG_INT_CLR, ICACHE_SYNC_OP_FAULT_INT_CLR, 0, 1)
 
@@ -322,6 +340,9 @@ REG32(EXTMEM_CACHE_ILG_INT_ST, 0x0E4)
     FIELD(EXTMEM_CACHE_ILG_INT_ST, IBUS_ACS_MISS_CNT_OVF_ST, 8, 1)
     FIELD(EXTMEM_CACHE_ILG_INT_ST, IBUS_ACS_CNT_OVF_ST, 7, 1)
     FIELD(EXTMEM_CACHE_ILG_INT_ST, MMU_ENTRY_FAULT_ST, 5, 1)
+    FIELD(EXTMEM_CACHE_ILG_INT_ST, DCACHE_WRITE_FLASH_ST, 4, 1)
+    FIELD(EXTMEM_CACHE_ILG_INT_ST, DCACHE_PRELOAD_OP_FAULT_ST, 3, 1)
+    FIELD(EXTMEM_CACHE_ILG_INT_ST, DCACHE_SYNC_OP_FAULT_ST, 2, 1)
     FIELD(EXTMEM_CACHE_ILG_INT_ST, ICACHE_PRELOAD_OP_FAULT_ST, 1, 1)
     FIELD(EXTMEM_CACHE_ILG_INT_ST, ICACHE_SYNC_OP_FAULT_ST, 0, 1)
 
@@ -404,8 +425,8 @@ REG32(EXTMEM_CORE1_IBUS_REJECT_VADDR, 0x11C)
 
 
 REG32(EXTMEM_CACHE_MMU_FAULT_CONTENT, 0x120)
-    FIELD(EXTMEM_CACHE_MMU_FAULT_CONTENT, CACHE_MMU_FAULT_CODE, 10, 4)
-    FIELD(EXTMEM_CACHE_MMU_FAULT_CONTENT, CACHE_MMU_FAULT_CONTENT, 0, 10)
+    FIELD(EXTMEM_CACHE_MMU_FAULT_CONTENT, CACHE_MMU_FAULT_CODE, 16, 4)
+    FIELD(EXTMEM_CACHE_MMU_FAULT_CONTENT, CACHE_MMU_FAULT_CONTENT, 0, 16)
 
 REG32(EXTMEM_CACHE_MMU_FAULT_VADDR, 0x124)
     FIELD(EXTMEM_CACHE_MMU_FAULT_VADDR, CACHE_MMU_FAULT_VADDR, 0, 32)

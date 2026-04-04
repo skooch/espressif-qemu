@@ -1,0 +1,5 @@
+# Local Build Notes
+
+- 2026-04-04: Use `gmake` for `tests/tcg/Makefile.target` on macOS. BSD `make` does not support GNU make directives such as `undefine`, and the Xtensa TCG makefiles rely on them.
+- 2026-04-04: This machine does not currently have `gmake` installed. For local verification without installing new tools, use the Xtensa TCG source files (`crt.S`, `vectors.S`, `linker.ld.S`) with `xtensa-esp32s3-elf-gcc`, then run the resulting ELF under `build/qemu-system-xtensa -M sim -cpu esp32s3 -semihosting -icount 6 -kernel <elf>`.
+- 2026-04-04: Do not include `include/hw/xtensa/esp32s3_intc.h` from common qtest code. That header pulls in Xtensa CPU internals via `target/xtensa/cpu.h` and fails qtest builds. If a qtest only needs an interrupt source ID such as `ETS_CACHE_IA_INTR_SOURCE`, prefer a local constant over the broad SoC register headers to avoid unrelated macro redefinition warnings. For ESP32-S3 specifically, `ETS_CACHE_IA_INTR_SOURCE` is `56`; the classic ESP32 `include/hw/misc/esp32_reg.h` value `68` is not interchangeable.

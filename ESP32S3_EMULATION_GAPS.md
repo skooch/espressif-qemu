@@ -49,7 +49,7 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 - External memory and cache behavior are still functional rather than cycle-accurate. Flash-backed MMU remaps are immediate, but cache sync/preload/autoload requests now complete after a short deferred timer and drive `CACHE_STATE` busy/idle reporting instead of reporting completion only when software reads the control register.
 - Some blocks are substituted with generic IP rather than an S3-specific model, notably Ethernet through `open_eth`, though the current T-Deck Pro firmware path does not appear to exercise the EMAC block at all.
 - SPI1 had an outright correctness bug in the flash transfer loop: the byte loop compared the payload value instead of the loop index, making the transfer path data-dependent. (Now fixed; see Stage 2.)
-- The generic Xtensa backend still has known accuracy gaps such as missing local memory exclusion behavior and unimplemented opcode paths.
+- The generic Xtensa backend still has known accuracy gaps such as incomplete cache/local-memory reject plumbing and unimplemented opcode paths.
 
 ### Task 1 Shortcut Inventory (2026-04-04)
 
@@ -112,9 +112,15 @@ The active Xtensa/backend queue now lives in `.claude/plans/in-progress/esp32s3-
 
 Current ranking:
 
-- `P0` Local-memory exclusion / `ATOMCTL` semantics for atomic operations. `target/xtensa/op_helper.c` still says local memory exclusion is not implemented, while the adjacent firmware relies heavily on atomics and synchronization primitives across storage, clocks, Wi-Fi, UI, and task coordination.
-- `P1` ESP32-S3 cache-invalid/local-memory trap plumbing. The older ESP32 board path wires illegal-access trap memory regions and `ETS_CACHE_IA_INTR_SOURCE`, while the ESP32-S3 machine does not yet expose an equivalent path.
-- `P2` Remaining missing Xtensa opcodes beyond the current ESP32-S3 core/FPU/TIE coverage. The generic unimplemented-opcode fallback still exists, but the current guest stress instructions (`ee.movi.32.a`, `ee.zero.accx`, `ee.vmulas.s16.accx`) are already translated, so no active firmware blocker is confirmed there yet.
+- `P0` Remaining ESP32-S3 cache/local-memory reject plumbing. The shared illegal-cache interrupt path now exists, but the per-core `CORE0/1` reject status and vaddr registers are still not populated.
+- `P1` Remaining missing Xtensa opcodes beyond the current ESP32-S3 core/FPU/TIE coverage. The generic unimplemented-opcode fallback still exists, but the current guest stress instructions (`ee.movi.32.a`, `ee.zero.accx`, `ee.vmulas.s16.accx`) are already translated, so no active firmware blocker is confirmed there yet.
+
+Recently resolved in this track:
+
+- `HELPER(check_atomctl)` now skips `ATOMCTL` cache/PIF gating for accesses that resolve to local DataRAM, matching the `s32c1i` local-memory contract used by ESP32-class Xtensa cores.
+- Xtensa softmmu coverage now includes an `esp32s3`-specific `test_s32c1i_atomctl` regression that proves `ATOMCTL=0` still faults on backed sysram (`0x6000_0100`) while succeeding on local DataRAM.
+- The Xtensa TCG linker script now places the reset stub at `XCHAL_RESET_VECTOR0_VADDR`, which was required for `esp32`/`esp32s3` softmmu guests to boot on the generic `sim` machine at all.
+- The ESP32-S3 cache model now latches `EXTMEM_CACHE_ILG_INT_ST` and `EXTMEM_CACHE_MMU_FAULT_{CONTENT,VADDR}` on invalid MMU accesses, and the board routes the resulting illegal-cache IRQ to `ETS_CACHE_IA_INTR_SOURCE` with direct qtest coverage.
 
 ### Current Risk Notes
 

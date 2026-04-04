@@ -50,6 +50,7 @@
 #define RTC_CNTL_BASE           DR_REG_RTCCNTL_BASE
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
 #define CACHE_OP_DELAY_NS       1000
+#define ESP32S3_CACHE_IA_SOURCE 56
 
 #define GPSPI_CMD_UPDATE_BIT    BIT(23)
 #define GPSPI_CMD_USR_BIT       BIT(24)
@@ -233,6 +234,58 @@ static void test_cache_deferred_completion_semantics(void)
     g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE) &
                     R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK,
                     ==, R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK);
+
+    qtest_quit(qts);
+}
+
+static void test_cache_invalid_mmu_fault_irq(void)
+{
+    QTestState *qts = qts_start();
+    const uint32_t mmu_entry0 = DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET;
+    uint32_t fault_content;
+
+    qtest_irq_intercept_in(qts, "/machine/soc/intmatrix");
+
+    g_assert_cmphex(qtest_readl(qts, mmu_entry0), ==, BIT(14));
+    g_assert_false(qtest_get_irq(qts, ESP32S3_CACHE_IA_SOURCE));
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_ILG_INT_ST),
+                    ==, 0);
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_ILG_INT_ENA,
+                 R_EXTMEM_CACHE_ILG_INT_ENA_MMU_ENTRY_FAULT_INT_ENA_MASK);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_ILG_INT_ENA) &
+                    R_EXTMEM_CACHE_ILG_INT_ENA_MMU_ENTRY_FAULT_INT_ENA_MASK,
+                    ==, R_EXTMEM_CACHE_ILG_INT_ENA_MMU_ENTRY_FAULT_INT_ENA_MASK);
+
+    (void) qtest_readl(qts, ESP32S3_DCACHE_BASE);
+
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_ILG_INT_ST) &
+                    R_EXTMEM_CACHE_ILG_INT_ST_MMU_ENTRY_FAULT_ST_MASK,
+                    ==, R_EXTMEM_CACHE_ILG_INT_ST_MMU_ENTRY_FAULT_ST_MASK);
+    fault_content = qtest_readl(qts,
+                                DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_CACHE_MMU_FAULT_CONTENT);
+    g_assert_cmpuint(FIELD_EX32(fault_content, EXTMEM_CACHE_MMU_FAULT_CONTENT,
+                                CACHE_MMU_FAULT_CODE), ==, 1);
+    g_assert_cmpuint(FIELD_EX32(fault_content, EXTMEM_CACHE_MMU_FAULT_CONTENT,
+                                CACHE_MMU_FAULT_CONTENT), ==, BIT(14));
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_CACHE_MMU_FAULT_VADDR),
+                    ==, ESP32S3_DCACHE_BASE);
+    g_assert_true(qtest_get_irq(qts, ESP32S3_CACHE_IA_SOURCE));
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_ILG_INT_CLR,
+                 R_EXTMEM_CACHE_ILG_INT_CLR_MMU_ENTRY_FAULT_INT_CLR_MASK);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_ILG_INT_ST) &
+                    R_EXTMEM_CACHE_ILG_INT_ST_MMU_ENTRY_FAULT_ST_MASK,
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_CACHE_MMU_FAULT_CONTENT),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_CACHE_MMU_FAULT_VADDR),
+                    ==, 0);
+    g_assert_false(qtest_get_irq(qts, ESP32S3_CACHE_IA_SOURCE));
 
     qtest_quit(qts);
 }
@@ -1235,6 +1288,8 @@ int main(int argc, char **argv)
                    test_cache_flash_mmu_mapping_and_ctrl1_state);
     qtest_add_func("/esp32s3/cache/deferred-completion",
                    test_cache_deferred_completion_semantics);
+    qtest_add_func("/esp32s3/cache/invalid-mmu-fault-irq",
+                   test_cache_invalid_mmu_fault_irq);
 #endif
     qtest_add_func("/esp32s3/gpio/iomux", test_gpio_and_iomux_state);
     qtest_add_func("/esp32s3/gpspi/completion-irq", test_gpspi_completion_irq);

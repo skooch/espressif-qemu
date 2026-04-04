@@ -12,6 +12,7 @@
 - [x] Task 4: record which missing Xtensa instructions or local-memory behaviors actually block guest code
 - [x] Task 4: rank those blockers so the smallest guest-visible fixes land first
 - [x] Task 4: keep this track separate from peripheral work so the dependency chain stays visible
-- [ ] Task 4: implement one architectural slice at a time with a focused regression for each
+- [x] Task 4: implement the first architectural slice with a focused regression (`ATOMCTL` local-memory exclusion for `s32c1i`)
+- [x] Task 4: land the first ESP32-S3 cache-invalid/MMU-fault slice with direct qtest coverage
 - [ ] Task 3: implement the minimum packet and link bring-up behavior needed by firmware if a guest starts using EMAC
 - [ ] Task 3: add a regression for that future link bring-up and packet behavior

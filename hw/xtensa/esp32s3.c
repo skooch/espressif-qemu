@@ -858,6 +858,9 @@ static void esp32s3_machine_init(MachineState *machine)
 
         memory_region_add_subregion(sys_mem, memmap[ESP32S3_MEMREGION_DCACHE].base, &ss->cache.dcache);
         memory_region_add_subregion(sys_mem, memmap[ESP32S3_MEMREGION_ICACHE].base, &ss->cache.icache);
+        sysbus_connect_irq(SYS_BUS_DEVICE(&ss->cache), 0,
+                           qdev_get_gpio_in(intmatrix_dev,
+                                            ETS_CACHE_IA_INTR_SOURCE));
     }
 
     /* eFuses realization */

@@ -16,7 +16,7 @@
 
 **Branch:** `tdeck-peripherals`
 
-**HEAD:** `ec814c7793`
+**HEAD:** `32d0563ca1`
 
 This plan was updated against the current tree, not the original backlog description. Several parts of the deferred foundation work are already partially implemented and should no longer be treated as untouched.
 
@@ -33,13 +33,17 @@ This plan was updated against the current tree, not the original backlog descrip
 - **Modify:** `hw/xtensa/esp32s3_clk.c` - finish replacing remaining board-control shortcuts with explicit modeled behavior and consume RTC clock updates meaningfully
 - **Modify:** `include/hw/xtensa/esp32s3_clk.h` - add any remaining state needed for the clock/reset/sleep path
 - **Modify:** `hw/misc/esp32s3_cache.c` - document and tighten the guest-visible cache/MMU sequencing that is already modeled
+- **Modify:** `include/hw/misc/esp32s3_cache.h` - keep the ESP32-S3 cache/MMU register layout aligned with the guest-visible illegal-access surface
 - **Modify:** `hw/xtensa/esp32s3.c` - finish wiring clock/reset/sleep interactions together and add any missing board glue
 - **Modify:** `hw/gpio/esp32s3_gpio.c` - keep RTC wakeup integration aligned with the RTC sleep path
 - **Modify:** `hw/misc/esp32s3_rtc_cntl.c` - finish the remaining reset/sleep/wake fidelity work around the existing state machine
 - **Modify:** `include/hw/misc/esp32s3_rtc_cntl.h` - track any additional RTC state needed by the remaining board-control work
 - **Modify:** `hw/net/` or replacement device model - replace `open_eth` with a more ESP32-S3-specific EMAC path if firmware requires it
 - **Modify:** `target/xtensa/` - track guest-observed Xtensa backend gaps as they become firmware blockers
+- **Modify:** `tests/qtest/esp32s3-test.c` - keep direct ESP32-S3 regression coverage aligned with the guest-visible cache/MMU and board-control contract
 - **Add:** `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md` - repo-visible ranked queue for Xtensa/backend blockers tied to current firmware behavior
+- **Add:** `tests/tcg/xtensa/test_s32c1i_atomctl.S` - focused Xtensa softmmu regression for `ATOMCTL` local-memory exclusion on `esp32s3`
+- **Modify:** `tests/tcg/xtensa/linker.ld.S` - place the TCG reset stub at `RESET_VECTOR0` so `esp32`/`esp32s3` softmmu guests boot from the actual reset PC
 
 ---
 
@@ -129,7 +133,10 @@ The backend still has guest-observed architectural gaps. These should stay track
   Current queue: `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md` now captures the active ESP32-S3-specific blocker list, including the ATOMCTL/local-memory exclusion gap, missing cache-invalid trap plumbing, and the remaining unconfirmed opcode risk.
 - [x] Rank the blockers so the smallest guest-visible fixes land first.
   Current ranking: local-memory exclusion / ATOMCTL semantics first, then cache-invalid/local-memory trap plumbing, then any newly confirmed missing opcodes.
-- [ ] Implement one architectural slice at a time with a focused regression for each.
+- [x] Implement the first architectural slice with a focused regression.
+  Current tree: `HELPER(check_atomctl)` now bypasses `ATOMCTL` gating for accesses that resolve to local DataRAM, and Xtensa softmmu coverage now includes an `esp32s3` `s32c1i` regression that distinguishes sysram faults from local-memory success under `ATOMCTL=0`. The Xtensa softmmu linker script also now uses `RESET_VECTOR0`, which was required for `esp32`/`esp32s3` guests to boot from the actual reset PC on the generic `sim` machine.
+- [x] Land the first ESP32-S3 cache-invalid/MMU-fault slice with direct board-visible coverage.
+  Current tree: the ESP32-S3 cache model now latches `EXTMEM_CACHE_ILG_INT_ST` and `EXTMEM_CACHE_MMU_FAULT_{CONTENT,VADDR}` on invalid MMU accesses, the SoC routes the cache illegal-access IRQ to `ETS_CACHE_IA_INTR_SOURCE`, and the direct ESP32-S3 qtest suite now covers the resulting status, fault metadata, IRQ assertion, and clear semantics.
 - [x] Keep this track separate from peripheral work so the dependency chain stays visible.
   Current structure: the blocker queue lives beside this plan rather than being folded into the peripheral backlog.
 
