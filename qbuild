@@ -13,4 +13,10 @@ for f in $(cd .. && git diff --name-only HEAD 2>/dev/null); do
     fi
 done
 
+# Default to the emulator binary we actually use. Full `all` builds pull in
+# tests and helper binaries that add a few hundred MB of local build output.
+if [ "$#" -eq 0 ]; then
+    set -- qemu-system-xtensa-unsigned
+fi
+
 exec ninja "$@"
