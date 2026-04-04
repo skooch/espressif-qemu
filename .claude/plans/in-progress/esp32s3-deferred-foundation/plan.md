@@ -79,8 +79,8 @@ Cache and MMU behavior is currently good enough to boot but not yet shaped aroun
 
 - [x] Land the basic guest-visible cache/MMU substrate.
   Current tree: MMU entry writes, invalidation, flash page fill, PSRAM selection, cache control bits, and IOMMU translation are present.
-- [ ] Inventory the cache/MMU operations firmware depends on today.
-  Remaining focus: reduce this to the exact operations the current firmware uses rather than the broader modeled surface.
+- [x] Inventory the cache/MMU operations firmware depends on today.
+  Current inventory: the active workload depends on live MMU-table visibility, ROM flash ops, Core 1 parking around flash writes/erases, and the boot-time PSRAM DBUS mapping path much more than on the broader EXTMEM register surface.
 - [ ] Separate immediate state changes from any deferred completion semantics.
   Remaining focus: document which completion bits are still optimistic and which operations need a more explicit sequence.
 - [ ] Add regressions for the guest-visible ordering guarantees we care about first.

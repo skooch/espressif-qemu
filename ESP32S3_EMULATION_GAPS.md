@@ -73,6 +73,23 @@ Remaining shortcuts that still mask real state transitions:
 - The RTC-to-clock handoff still exists in two places. The RTC block now updates the clock model directly and also emits the older `clk-update` pulse, so the SoC callback remains as a compatibility shim rather than a single explicit ownership path.
 - RTC reset behavior is still shallow. The reset hook re-bases the RTC time counter, but it does not yet rebuild a domain-aware reset/default state for the wider RTC register surface.
 
+### Task 2 Cache/MMU Dependency Inventory (2026-04-04)
+
+Background commits reviewed for the current cache/MMU path:
+
+- `81f8593bc5` introduced the ESP32-S3 cache/MMU model, including MMU entry storage, flash page fill, and IOMMU-backed translation.
+- `e0bfd3961f` moved the cache block onto the newer three-stage reset path but did not materially broaden the guest-visible cache/MMU sequence.
+
+Current firmware and library code rely on a narrower subset of cache/MMU behavior than the full `EXTMEM` register surface suggests:
+
+- Boot and OTA code rely on the live MMU table contents being readable at `0x600C5000` with the ESP32-S3 `64 KB` page format. `esp-hal-ota` determines the currently running partition by taking a function pointer, deriving the MMU entry index from the executing virtual address, checking the invalid bit, and reconstructing the backing flash address from the table entry.
+- Boot-time PSRAM bring-up relies on DBUS MMU programming rather than only on the static flash mapping. `esp-hal` scans the MMU table for the last mapped flash page, suspends DCache, calls `cache_dbus_mmu_set(...)` to install SPIRAM mappings, clears the DBUS shut bits in `EXTMEM_DCACHE_CTRL1`, and resumes DCache before the allocator starts placing large buffers in PSRAM.
+- Runtime flash services rely on the ROM flash operations, not on a higher-level filesystem abstraction alone. `esp-storage` issues `esp_rom_spiflash_read`, `unlock`, `erase_sector`, and `write`, so the emulator needs working flash-backed translation and MMU-backed visibility during both boot and later filesystem or OTA traffic.
+- Multi-core flash writes and erases rely on explicit Core 1 parking around the ROM flash calls. The active firmware uses `FlashStorage::multicore_auto_park()` for littlefs and BLE OTA, so the guest-visible contract we care about first is "park the other core, perform the flash op, then unpark" rather than a cycle-accurate cache-disable implementation.
+- Panic-path crashdump writes rely on the same raw flash path while assuming the other core is already stalled. That means the important emulation surface is still the flash/MMU path itself, even when the multi-core helper is intentionally bypassed.
+- The current reviewed firmware does not appear to rely on the broader EXTMEM management surface such as cache prelock/lock controls, preload/autoload sequencing, PMS reject capture, wraparound control, or cache/MMU fault reporting. Those registers exist in the header today, but they are not part of the confirmed dependency set for the active T-Deck Pro workload.
+- There are still no ESP32-S3 qtests that exercise cache/MMU behavior directly. The first regression slice should focus on the guest-visible ordering around MMU table visibility, flash/PSRAM mapping, and the control bits touched by the PSRAM and flash-service paths above.
+
 ### Current Risk Notes
 
 - The highest remaining accuracy risk is no longer the active display path. The bigger remaining problems are the deferred foundation items: clock/reset/sleep fidelity, cache/MMU sequencing, generic-MMIO dependence, `open_eth`, and broader Xtensa accuracy.
