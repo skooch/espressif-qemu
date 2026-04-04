@@ -141,6 +141,10 @@ static bool esp32s3_gpspi_read_tx_data(Esp32s3GpSpiState *s, uint8_t *buf,
         }
     }
 
+    if (dma_tx_enabled) {
+        return false;
+    }
+
     return esp32s3_gpspi_read_tx_fifo(s, buf, byte_count);
 }
 
