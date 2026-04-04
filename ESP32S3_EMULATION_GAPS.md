@@ -88,7 +88,7 @@ Current firmware and library code rely on a narrower subset of cache/MMU behavio
 - Multi-core flash writes and erases rely on explicit Core 1 parking around the ROM flash calls. The active firmware uses `FlashStorage::multicore_auto_park()` for littlefs and BLE OTA, so the guest-visible contract we care about first is "park the other core, perform the flash op, then unpark" rather than a cycle-accurate cache-disable implementation.
 - Panic-path crashdump writes rely on the same raw flash path while assuming the other core is already stalled. That means the important emulation surface is still the flash/MMU path itself, even when the multi-core helper is intentionally bypassed.
 - The current reviewed firmware does not appear to rely on the broader EXTMEM management surface such as cache prelock/lock controls, preload/autoload sequencing, PMS reject capture, wraparound control, or cache/MMU fault reporting. Those registers exist in the header today, but they are not part of the confirmed dependency set for the active T-Deck Pro workload.
-- There are still no ESP32-S3 qtests that exercise cache/MMU behavior directly. The first regression slice should focus on the guest-visible ordering around MMU table visibility, flash/PSRAM mapping, and the control bits touched by the PSRAM and flash-service paths above.
+- There is now direct ESP32-S3 qtest coverage for flash-backed MMU remapping and the `CTRL1` state touched by PSRAM bring-up. The remaining regression gap is the optimistic completion path for sync/preload/autoload/freeze operations, which still lacks a direct guest-visible sequence test.
 
 ### Current Risk Notes
 

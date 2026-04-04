@@ -25,6 +25,7 @@
 #include "hw/gpio/esp32s3_iomux.h"
 #include "hw/i2c/esp32_i2c.h"
 #include "hw/misc/esp32c3_jtag.h"
+#include "hw/misc/esp32s3_cache.h"
 #include "hw/misc/esp32s3_rtc_cntl.h"
 #include "hw/dma/esp32s3_gdma.h"
 #include "hw/misc/esp32s3_rng.h"
@@ -68,6 +69,70 @@ static QTestState *qts_start(void)
 {
     return qtest_init("-M esp32s3");
 }
+
+#ifndef _WIN32
+static QTestState *qts_start_with_flash(const char *flash_path)
+{
+    return qtest_initf("-M esp32s3 -drive file=%s,format=raw,if=mtd",
+                       flash_path);
+}
+
+static gchar *create_flash_image_with_patterns(void)
+{
+    g_autofree gchar *tmp_path = NULL;
+    int fd;
+    uint32_t word;
+
+    fd = g_file_open_tmp("esp32s3-flash-XXXXXX", &tmp_path, NULL);
+    g_assert_cmpint(fd, >=, 0);
+    g_assert_cmpint(ftruncate(fd, 2 * 1024 * 1024), ==, 0);
+
+    word = cpu_to_le32(0x11111111);
+    g_assert_cmpint(pwrite(fd, &word, sizeof(word), 0), ==, sizeof(word));
+    word = cpu_to_le32(0x22222222);
+    g_assert_cmpint(pwrite(fd, &word, sizeof(word), ESP32S3_PAGE_SIZE),
+                    ==, sizeof(word));
+
+    close(fd);
+    return g_steal_pointer(&tmp_path);
+}
+
+static void test_cache_flash_mmu_mapping_and_ctrl1_state(void)
+{
+    g_autofree gchar *flash_path = create_flash_image_with_patterns();
+    QTestState *qts = qts_start_with_flash(flash_path);
+    const uint32_t mmu_entry0 = DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET;
+    const uint32_t dcache_ctrl1_bits =
+        R_EXTMEM_DCACHE_CTRL1_SHUT_DBUS_MASK |
+        R_EXTMEM_DCACHE_CTRL1_SHUT_IBUS_MASK;
+    const uint32_t icache_ctrl1_bits =
+        R_EXTMEM_ICACHE_CTRL1_SHUT_DBUS_MASK |
+        R_EXTMEM_ICACHE_CTRL1_SHUT_IBUS_MASK;
+
+    g_assert_cmphex(qtest_readl(qts, mmu_entry0), ==, BIT(14));
+
+    qtest_writel(qts, mmu_entry0, 0);
+    g_assert_cmphex(qtest_readl(qts, 0x3c000000), ==, 0x11111111);
+
+    qtest_writel(qts, mmu_entry0, 1);
+    g_assert_cmphex(qtest_readl(qts, 0x3c000000), ==, 0x22222222);
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_CTRL1,
+                 dcache_ctrl1_bits);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_CTRL1) &
+                    dcache_ctrl1_bits,
+                    ==, dcache_ctrl1_bits);
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_CTRL1,
+                 icache_ctrl1_bits);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_CTRL1) &
+                    icache_ctrl1_bits,
+                    ==, icache_ctrl1_bits);
+
+    qtest_quit(qts);
+    unlink(flash_path);
+}
+#endif
 
 static void test_ana_pll_done(void)
 {
@@ -1061,6 +1126,10 @@ int main(int argc, char **argv)
     g_test_init(&argc, &argv, NULL);
 
     qtest_add_func("/esp32s3/ana/pll-done", test_ana_pll_done);
+#ifndef _WIN32
+    qtest_add_func("/esp32s3/cache/flash-mmu-mapping-ctrl1",
+                   test_cache_flash_mmu_mapping_and_ctrl1_state);
+#endif
     qtest_add_func("/esp32s3/gpio/iomux", test_gpio_and_iomux_state);
     qtest_add_func("/esp32s3/gpspi/completion-irq", test_gpspi_completion_irq);
     qtest_add_func("/esp32s3/gpio/remap-state", test_gpio_signal_remap_state);

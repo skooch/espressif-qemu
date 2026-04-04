@@ -134,13 +134,13 @@ static uint64_t esp32s3_cache_read(void *opaque, hwaddr addr, unsigned int size)
             r = s->dcache_enable;
             break;
         case A_EXTMEM_DCACHE_CTRL1:
-            r = s->dcache_enable;
+            r = s->regs[index];
             break;
         case A_EXTMEM_ICACHE_CTRL:
             r = s->icache_enable;
             break;
         case A_EXTMEM_ICACHE_CTRL1:
-            r = s->icache_enable;
+            r = s->regs[index];
             break;
         /* For the following registers, mark the bit as done only if the feature was enabled */
         case A_EXTMEM_DCACHE_SYNC_CTRL:
@@ -223,13 +223,13 @@ static void esp32s3_cache_write(void *opaque, hwaddr addr, uint64_t value,
                 s->dcache_enable = value & 1;
                 break;
             case A_EXTMEM_DCACHE_CTRL1:
-                s->dcache_enable = value & 1;
+                s->regs[index] = value;
                 break;
             case A_EXTMEM_ICACHE_CTRL:
                 s->icache_enable = value & 1;
                 break;
             case A_EXTMEM_ICACHE_CTRL1:
-                s->icache_enable = value & 1;
+                s->regs[index] = value;
                 break;
             case A_EXTMEM_ICACHE_FREEZE:
                 if (value & R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_ENA_MASK) {

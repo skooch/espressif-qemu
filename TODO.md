@@ -4,7 +4,7 @@
 - [x] Task 1: add direct qtests for wake, reset, and stall transitions
 - [x] Task 1: inventory the remaining clock/reset shortcuts still masking real state transitions
 - [x] Task 2: inventory the cache/MMU operations the firmware depends on today
-- [ ] Task 2: add regressions for the guest-visible ordering guarantees
+- [x] Task 2: add regressions for the guest-visible ordering guarantees
 - [ ] Task 2: separate immediate state changes from deferred completion semantics
 - [ ] Task 2: leave broader cycle-accuracy work for a later stage
 - [ ] Task 4: record which missing Xtensa instructions or local-memory behaviors actually block guest code

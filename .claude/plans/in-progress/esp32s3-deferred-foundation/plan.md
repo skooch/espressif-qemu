@@ -83,8 +83,8 @@ Cache and MMU behavior is currently good enough to boot but not yet shaped aroun
   Current inventory: the active workload depends on live MMU-table visibility, ROM flash ops, Core 1 parking around flash writes/erases, and the boot-time PSRAM DBUS mapping path much more than on the broader EXTMEM register surface.
 - [ ] Separate immediate state changes from any deferred completion semantics.
   Remaining focus: document which completion bits are still optimistic and which operations need a more explicit sequence.
-- [ ] Add regressions for the guest-visible ordering guarantees we care about first.
-  Current gap: there are no ESP32-S3 qtests that exercise cache/MMU sequencing directly.
+- [x] Add regressions for the guest-visible ordering guarantees we care about first.
+  Current coverage: qtests now exercise flash-backed MMU remapping and the `CTRL1` state used by PSRAM bring-up; the remaining direct gap is completion sequencing for sync/preload/autoload/freeze operations.
 - [ ] Leave broader cycle-accuracy work for a later stage.
 
 ### Task 2 exit criteria
