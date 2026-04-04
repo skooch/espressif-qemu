@@ -2,7 +2,7 @@
 # Xtensa system tests
 #
 
-CORE=dc232b
+CORE ?= dc232b
 ifneq ($(shell $(QEMU) -cpu help | grep -w $(CORE)),)
 
 XTENSA_SRC = $(SRC_PATH)/tests/tcg/xtensa

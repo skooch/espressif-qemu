@@ -104,6 +104,17 @@ Current firmware and board-path findings:
 - There is no app-level evidence that the current firmware reads or writes the ESP32-S3 EMAC register block, configures an external PHY, or expects RMII link state from the board.
 - The QEMU board path is correspondingly generic rather than board-specific. It instantiates `open_eth`, maps its two MMIO windows, and routes its interrupt, but it does not model a T-Deck-specific Ethernet PHY or any exercised board wiring around that block.
 - The exact EMAC behavior the current firmware touches is therefore effectively none. `open_eth` is a latent fidelity risk for future Ethernet-aware guests, not an actively exercised dependency of the current Wi-Fi-based T-Deck Pro workload.
+- Scope decision: defer EMAC replacement work until a guest actually touches the EMAC surface. For the current workload, the lowest-risk path is to keep `open_eth` dormant and move active fidelity work to the Xtensa/backend queue.
+
+### Task 4 Xtensa Backend Queue (2026-04-04)
+
+The active Xtensa/backend queue now lives in `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md` so it stays separate from the peripheral backlog and tied to current firmware behavior.
+
+Current ranking:
+
+- `P0` Local-memory exclusion / `ATOMCTL` semantics for atomic operations. `target/xtensa/op_helper.c` still says local memory exclusion is not implemented, while the adjacent firmware relies heavily on atomics and synchronization primitives across storage, clocks, Wi-Fi, UI, and task coordination.
+- `P1` ESP32-S3 cache-invalid/local-memory trap plumbing. The older ESP32 board path wires illegal-access trap memory regions and `ETS_CACHE_IA_INTR_SOURCE`, while the ESP32-S3 machine does not yet expose an equivalent path.
+- `P2` Remaining missing Xtensa opcodes beyond the current ESP32-S3 core/FPU/TIE coverage. The generic unimplemented-opcode fallback still exists, but the current guest stress instructions (`ee.movi.32.a`, `ee.zero.accx`, `ee.vmulas.s16.accx`) are already translated, so no active firmware blocker is confirmed there yet.
 
 ### Current Risk Notes
 

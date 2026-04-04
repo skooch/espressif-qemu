@@ -16,14 +16,14 @@
 
 **Branch:** `tdeck-peripherals`
 
-**HEAD:** `a9d7966e03`
+**HEAD:** `ec814c7793`
 
 This plan was updated against the current tree, not the original backlog description. Several parts of the deferred foundation work are already partially implemented and should no longer be treated as untouched.
 
 - Task 1 is **partially complete**. The RTC block now models sleep state, wake causes, CPU reset requests, CPU stall requests, and clock-update signaling, and the board wires those paths through the SoC.
 - Task 2 is **partially complete**. The cache/MMU model already implements MMU entry storage, invalidation, flash/PSRAM mapping, and IOMMU-backed translation.
-- Task 3 is **still pending**. The board still instantiates `open_eth` directly for the active Ethernet path.
-- Task 4 is **still pending as a tracked queue**. Xtensa backend gaps still exist, but they are not yet captured in a repo-visible blocker list tied to firmware behavior.
+- Task 3 is **explicitly deferred**. The board still instantiates `open_eth`, but the current T-Deck Pro firmware path is Wi-Fi-only, so EMAC replacement work is postponed until a guest actually touches that block.
+- Task 4 is **now a tracked queue**. The backend blockers are captured in `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md` and ranked against the current firmware path.
 
 ---
 
@@ -39,6 +39,7 @@ This plan was updated against the current tree, not the original backlog descrip
 - **Modify:** `include/hw/misc/esp32s3_rtc_cntl.h` - track any additional RTC state needed by the remaining board-control work
 - **Modify:** `hw/net/` or replacement device model - replace `open_eth` with a more ESP32-S3-specific EMAC path if firmware requires it
 - **Modify:** `target/xtensa/` - track guest-observed Xtensa backend gaps as they become firmware blockers
+- **Add:** `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md` - repo-visible ranked queue for Xtensa/backend blockers tied to current firmware behavior
 
 ---
 
@@ -105,9 +106,12 @@ The current Ethernet story is still anchored by generic IP. This track replaces 
   Current tree: yes. `hw/xtensa/esp32s3.c` still instantiates `open_eth` for the active Ethernet path.
 - [x] Inventory the exact EMAC behavior the firmware touches.
   Current inventory: the active T-Deck Pro firmware path is Wi-Fi-only (`esp_radio::wifi` + `embassy-net`) and shows no direct EMAC, RMII, or PHY usage, so `open_eth` is currently a dormant generic stand-in rather than an exercised board dependency.
-- [ ] Decide whether the first slice is a replacement model or a board adapter around the existing path.
+- [x] Decide whether the first slice is a replacement model or a board adapter around the existing path.
+  Current decision: neither for now. By explicit scope choice, this track is deferred until guest firmware actually touches the EMAC surface.
 - [ ] Implement the minimum packet and link bring-up behavior that the firmware needs.
+  Deferred trigger: start this only when a guest begins reading or writing the EMAC surface or requires link behavior beyond the current dormant `open_eth` stand-in.
 - [ ] Add a regression for link bring-up and packet path behavior.
+  Deferred with the implementation work above.
 
 ### Task 3 exit criteria
 
@@ -121,11 +125,13 @@ The current Ethernet story is still anchored by generic IP. This track replaces 
 
 The backend still has guest-observed architectural gaps. These should stay tracked, explicit, and grounded in firmware requirements.
 
-- [ ] Record which missing instructions or local-memory behaviors are actually blocking guest code.
-  Current gap: the repo still has Xtensa TODOs and unimplemented-opcode paths, but there is no ESP32-S3-specific blocker list in `.claude/`.
-- [ ] Rank the blockers so the smallest guest-visible fixes land first.
+- [x] Record which missing instructions or local-memory behaviors are actually blocking guest code.
+  Current queue: `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md` now captures the active ESP32-S3-specific blocker list, including the ATOMCTL/local-memory exclusion gap, missing cache-invalid trap plumbing, and the remaining unconfirmed opcode risk.
+- [x] Rank the blockers so the smallest guest-visible fixes land first.
+  Current ranking: local-memory exclusion / ATOMCTL semantics first, then cache-invalid/local-memory trap plumbing, then any newly confirmed missing opcodes.
 - [ ] Implement one architectural slice at a time with a focused regression for each.
-- [ ] Keep this track separate from peripheral work so the dependency chain stays visible.
+- [x] Keep this track separate from peripheral work so the dependency chain stays visible.
+  Current structure: the blocker queue lives beside this plan rather than being folded into the peripheral backlog.
 
 ### Task 4 exit criteria
 
