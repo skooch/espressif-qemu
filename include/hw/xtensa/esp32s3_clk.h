@@ -75,3 +75,7 @@ typedef struct ESP32S3ClockClass {
 uint32_t esp32s3_clock_get_xtal_freq(ESP32S3ClockState *s);
 uint32_t esp32s3_clock_get_cpu_freq(ESP32S3ClockState *s);
 uint32_t esp32s3_clock_get_apb_freq(ESP32S3ClockState *s);
+void esp32s3_clock_propagate_rates(ESP32S3ClockState *s);
+void esp32s3_clock_apply_rtc_soc_clk(ESP32S3ClockState *s,
+                                     uint32_t soc_clk_sel,
+                                     uint32_t xtal_freq_hz);

@@ -58,6 +58,8 @@ typedef enum Esp32s3SlowClkSel {
     ESP32_SLOW_CLK_8MD256 = 2
 } Esp32s3SlowClkSel;
 
+typedef struct ESP32S3ClockState ESP32S3ClockState;
+
 typedef struct Esp32s3RtcCntlState {
     SysBusDevice parent_obj;
 
@@ -93,6 +95,7 @@ typedef struct Esp32s3RtcCntlState {
 
     /* GPIO model reference for wakeup pin checking */
     struct ESP32S3GPIOState *gpio;
+    ESP32S3ClockState *clock;
 
     /* Generic register storage for unhandled registers (write-store, read-back) */
     uint32_t reg_store[0x200 / 4];

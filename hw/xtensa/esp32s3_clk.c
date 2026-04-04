@@ -17,8 +17,10 @@
 #include "hw/sysbus.h"
 #include "hw/irq.h"
 #include "hw/qdev-properties.h"
+#include "hw/clock.h"
 #include "hw/xtensa/esp32s3_clk.h"
 #include "hw/xtensa/esp32s3_clk_defs.h"
+#include "target/xtensa/cpu.h"
 
 #define CLOCK_DEBUG      0
 #define CLOCK_WARNING    0
@@ -44,6 +46,41 @@ static void esp32s3_write_cpu_intr(ESP32S3ClockState *s, uint32_t index, uint32_
 static uint32_t esp32s3_clock_get_ext_dev_enc_dec_ctrl(ESP32S3ClockState *s)
 {
     return s->sys_ext_dev_enc_dec_ctrl;
+}
+
+void esp32s3_clock_propagate_rates(ESP32S3ClockState *s)
+{
+    uint32_t cpu_hz = esp32s3_clock_get_cpu_freq(s);
+
+    for (size_t i = 0; i < ARRAY_SIZE(s->cpu); i++) {
+        XtensaCPU *cpu;
+
+        if (!s->cpu[i]) {
+            continue;
+        }
+
+        cpu = XTENSA_CPU(s->cpu[i]);
+        if (cpu->clock) {
+            clock_update_hz(cpu->clock, cpu_hz);
+        }
+    }
+}
+
+void esp32s3_clock_apply_rtc_soc_clk(ESP32S3ClockState *s,
+                                     uint32_t soc_clk_sel,
+                                     uint32_t xtal_freq_hz)
+{
+    uint32_t xtal_mhz = xtal_freq_hz ? (xtal_freq_hz / 1000000u) : 40;
+
+    if (xtal_mhz == 0) {
+        xtal_mhz = 40;
+    }
+
+    s->sysclk = FIELD_DP32(s->sysclk, SYSTEM_SYSCLK_CONF, SOC_CLK_SEL,
+                           soc_clk_sel);
+    s->sysclk = FIELD_DP32(s->sysclk, SYSTEM_SYSCLK_CONF, CLK_XTAL_FREQ,
+                           xtal_mhz);
+    esp32s3_clock_propagate_rates(s);
 }
 
 uint32_t esp32s3_clock_get_xtal_freq(ESP32S3ClockState *s)
@@ -143,9 +180,11 @@ static void esp32s3_clock_write(void *opaque, hwaddr addr, uint64_t value,
             break;
         case A_SYSTEM_CPU_PER_CONF:
             s->cpuperconf = (uint32_t)value;
+            esp32s3_clock_propagate_rates(s);
             break;
         case A_SYSTEM_SYSCLK_CONF:
             s->sysclk = (uint32_t)value;
+            esp32s3_clock_propagate_rates(s);
             break;
         case A_SYSTEM_CPU_INTR_FROM_CPU_0:
         case A_SYSTEM_CPU_INTR_FROM_CPU_1:
@@ -182,6 +221,8 @@ static void esp32s3_clock_reset_hold(Object *obj, ResetType type)
     /* Divider for PLL clock and APB  frequency */
     s->cpuperconf = (ESP32S3_PERIOD_SEL_80 << R_SYSTEM_CPU_PER_CONF_CPUPERIOD_SEL_SHIFT) |
                     (ESP32S3_FREQ_SEL_PLL_480 << R_SYSTEM_CPU_PER_CONF_PLL_FREQ_SEL_SHIFT);
+
+    esp32s3_clock_propagate_rates(s);
 
     /* Initialize the IRQs */
     s->levels = 0;

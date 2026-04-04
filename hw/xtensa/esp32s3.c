@@ -276,9 +276,14 @@ static void esp32s3_cpu_stall(void* opaque, int n, int level)
 
 static void esp32s3_clk_update(void* opaque, int n, int level)
 {
+    Esp32s3SocState *s = ESP32S3_SOC(opaque);
+
     if (!level) {
         return;
     }
+
+    esp32s3_clock_apply_rtc_soc_clk(&s->clock, s->rtc_cntl.soc_clk,
+                                    s->rtc_cntl.xtal_apb_freq);
 }
 
 static void esp32s3_soc_add_periph_device(MemoryRegion *dest, void* dev, hwaddr dport_base_addr)
@@ -877,6 +882,7 @@ static void esp32s3_machine_init(MachineState *machine)
         /* Pass CPU references for RUNSTALL support */
         ss->clock.cpu[0] = CPU(&ss->cpu[0]);
         ss->clock.cpu[1] = CPU(&ss->cpu[1]);
+        ss->rtc_cntl.clock = &ss->clock;
         for (int i = 0; i < ESP32S3_UART_COUNT; i++) {
             ss->uart[i].parent.clock = &ss->clock;
         }

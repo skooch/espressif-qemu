@@ -25,6 +25,7 @@
 #include "hw/gpio/esp32s3_iomux.h"
 #include "hw/i2c/esp32_i2c.h"
 #include "hw/misc/esp32c3_jtag.h"
+#include "hw/misc/esp32s3_rtc_cntl.h"
 #include "hw/dma/esp32s3_gdma.h"
 #include "hw/misc/esp32s3_rng.h"
 #include "hw/misc/esp32s3_reg.h"
@@ -716,6 +717,33 @@ static void test_uart_clock_dependent_timing(void)
     qtest_quit(qts);
 }
 
+static void test_rtc_clk_update_propagates_to_system_and_uart(void)
+{
+    QTestState *qts = qts_start();
+    uint32_t default_pulse = qtest_readl(qts, UART0_BASE + A_UART_LOWPULSE);
+    uint32_t rtc_clk_conf = 0;
+    uint32_t sysclk_conf;
+
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, ANA_CLK_RTC_SEL,
+                              ESP32_SLOW_CLK_RC);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, FAST_CLK_RTC_SEL,
+                              ESP32_FAST_CLK_8M);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, SOC_CLK_SEL,
+                              ESP32_SOC_CLK_XTAL);
+    qtest_writel(qts, DR_REG_RTCCNTL_BASE + A_RTC_CNTL_CLK_CONF, rtc_clk_conf);
+
+    sysclk_conf = qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF);
+    g_assert_cmpuint(FIELD_EX32(sysclk_conf, SYSTEM_SYSCLK_CONF, SOC_CLK_SEL),
+                     ==, ESP32S3_CLK_SEL_XTAL);
+    g_assert_cmpuint(qtest_readl(qts, UART0_BASE + A_UART_LOWPULSE), <, default_pulse);
+
+    qtest_writel(qts, UART0_BASE + A_UART_AUTOBAUD,
+                 FIELD_DP32(0, UART_AUTOBAUD, EN, 1));
+    g_assert_cmpuint(qtest_readl(qts, UART0_BASE + A_UART_RXD_CNT), ==, 400);
+
+    qtest_quit(qts);
+}
+
 static uint64_t wait_for_uart_timeout_ns(QTestState *qts, uint64_t step_ns, uint64_t max_ns)
 {
     uint64_t elapsed = 0;
@@ -931,6 +959,7 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/i2c/done-ack", test_i2c_done_and_ack_semantics);
     qtest_add_func("/esp32s3/i2c/read-path-deferred", test_i2c_read_path_and_deferred_complete);
     qtest_add_func("/esp32s3/i2c/unsupported-modes", test_i2c_unsupported_modes);
+    qtest_add_func("/esp32s3/rtc/clk-update", test_rtc_clk_update_propagates_to_system_and_uart);
     qtest_add_func("/esp32s3/uart/clock-timing", test_uart_clock_dependent_timing);
     qtest_add_func("/esp32s3/uart/rx-timeout-multi-config", test_uart_rx_timeout_multi_config);
     qtest_add_func("/esp32s3/sha/irq", test_sha_irq);

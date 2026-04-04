@@ -59,8 +59,8 @@ This track removes the remaining QEMU-only shortcuts from the board control path
   Current tree: the path is centered on firmware-visible board control rather than a full silicon reset tree.
 - [ ] Inventory the remaining clock and reset shortcuts that are still masking real state transitions.
   Remaining focus: document what is still implicit between `hw/misc/esp32s3_rtc_cntl.c`, `hw/xtensa/esp32s3_clk.c`, and `hw/xtensa/esp32s3.c`.
-- [ ] Finish the clock-update path so RTC clock changes affect the parts of the board model that depend on them.
-  Current gap: `esp32s3_clk_update()` in `hw/xtensa/esp32s3.c` is still a no-op.
+- [x] Finish the clock-update path so RTC clock changes affect the parts of the board model that depend on them.
+  Current tree: RTC clock-update pulses now synchronize the SoC clock model so guest-visible consumers like UART timing follow the selected RTC clock source.
 - [ ] Add direct qtests for the wake, reset, and stall transitions that firmware actually observes.
   Current gap: there are no dedicated ESP32-S3 qtests covering sleep, wake, reset, or stall transitions yet.
 

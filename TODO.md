@@ -1,6 +1,6 @@
 # Deferred Foundation Priorities
 
-- [ ] Task 1: finish the clock-update path so RTC clock changes affect dependent board behavior
+- [x] Task 1: finish the clock-update path so RTC clock changes affect dependent board behavior
 - [ ] Task 1: add direct qtests for wake, reset, and stall transitions
 - [ ] Task 1: inventory the remaining clock/reset shortcuts still masking real state transitions
 - [ ] Task 2: inventory the cache/MMU operations the firmware depends on today
