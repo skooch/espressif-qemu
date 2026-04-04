@@ -90,7 +90,8 @@ static uint64_t esp32c3_jtag_read(void *opaque, hwaddr addr, unsigned int size)
         }
 
     case USB_SERIAL_JTAG_EP1_CONF_REG:
-        return (s->tx_buf_pos < USB_SERIAL_JTAG_TX_BUF_SIZE) ? 0x02 : 0;
+        return (s->tx_buf_pos < USB_SERIAL_JTAG_TX_BUF_SIZE ? 0x02 : 0) |
+               (fifo8_num_used(&s->rx_fifo) > 0 ? 0x04 : 0);
 
     case USB_SERIAL_JTAG_INT_RAW_REG:
         return s->int_raw;
