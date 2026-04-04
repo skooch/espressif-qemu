@@ -15,6 +15,7 @@
 #include "hw/registerfields.h"
 #include "hw/misc/esp32s3_xts_aes.h"
 #include "hw/misc/ssi_psram.h"
+#include "qemu/timer.h"
 
 #define TYPE_ESP32S3_CACHE "esp32s3.icache"
 #define TYPE_ESP32S3_DCACHE "esp32s3.dcache"
@@ -113,6 +114,7 @@ typedef struct {
 
     /* Registers for controlling the cache */
     uint32_t regs[ESP32S3_CACHE_REG_COUNT];
+    QEMUTimer completion_timer;
 
     ESP32S3XtsAesState *xts_aes;
     /* Define the MMU itself as an array, it shall be accessible from address ESP32S3_MMU_TABLE */
@@ -510,4 +512,3 @@ REG32(EXTMEM_CLOCK_GATE, 0x164)
 
 REG32(EXTMEM_DATE, 0x3FC)
     FIELD(EXTMEM_DATE, DATE, 0, 28)
-

@@ -28,24 +28,108 @@
 
 #define CACHE_DEBUG      0
 #define CACHE_WARNING    0
+#define CACHE_OP_DELAY_NS 1000
 
+typedef struct ESP32S3CacheDeferredOp {
+    hwaddr addr;
+    uint32_t ena_mask;
+    uint32_t done_mask;
+    bool dcache;
+} ESP32S3CacheDeferredOp;
 
-/**
- * @brief Checks that the enable flag is enabled in the I/O register. If that's the case,
- *        `done` flag is returned and the `enable` flag is cleared from register.
- *        Else, 0 is returned.
-*/
-static inline uint32_t check_and_reset_ena(uint32_t* hwreg, uint32_t ena_mask, uint32_t done_mask)
+static const ESP32S3CacheDeferredOp esp32s3_cache_deferred_ops[] = {
+    {
+        .addr = A_EXTMEM_DCACHE_SYNC_CTRL,
+        .ena_mask = R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK,
+        .done_mask = R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK,
+        .dcache = true,
+    },
+    {
+        .addr = A_EXTMEM_DCACHE_PRELOAD_CTRL,
+        .ena_mask = R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK,
+        .done_mask = R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_DONE_MASK,
+        .dcache = true,
+    },
+    {
+        .addr = A_EXTMEM_DCACHE_AUTOLOAD_CTRL,
+        .ena_mask = R_EXTMEM_DCACHE_AUTOLOAD_CTRL_AUTOLOAD_ENA_MASK,
+        .done_mask = R_EXTMEM_DCACHE_AUTOLOAD_CTRL_AUTOLOAD_DONE_MASK,
+        .dcache = true,
+    },
+    {
+        .addr = A_EXTMEM_ICACHE_SYNC_CTRL,
+        .ena_mask = R_EXTMEM_ICACHE_SYNC_CTRL_INVALIDATE_ENA_MASK,
+        .done_mask = R_EXTMEM_ICACHE_SYNC_CTRL_SYNC_DONE_MASK,
+        .dcache = false,
+    },
+    {
+        .addr = A_EXTMEM_ICACHE_PRELOAD_CTRL,
+        .ena_mask = R_EXTMEM_ICACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK,
+        .done_mask = R_EXTMEM_ICACHE_PRELOAD_CTRL_PRELOAD_DONE_MASK,
+        .dcache = false,
+    },
+    {
+        .addr = A_EXTMEM_ICACHE_AUTOLOAD_CTRL,
+        .ena_mask = R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_ENA_MASK,
+        .done_mask = R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_DONE_MASK,
+        .dcache = false,
+    },
+};
+
+static const ESP32S3CacheDeferredOp *esp32s3_cache_find_deferred_op(hwaddr addr)
 {
-    uint32_t regval = *hwreg;
-
-    if (regval & ena_mask) {
-        regval &= ~ena_mask;
-        regval |= done_mask;
-        *hwreg = regval;
+    for (size_t i = 0; i < ARRAY_SIZE(esp32s3_cache_deferred_ops); i++) {
+        if (esp32s3_cache_deferred_ops[i].addr == addr) {
+            return &esp32s3_cache_deferred_ops[i];
+        }
     }
 
-    return regval;
+    return NULL;
+}
+
+static bool esp32s3_cache_domain_busy(ESP32S3CacheState *s, bool dcache)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(esp32s3_cache_deferred_ops); i++) {
+        const ESP32S3CacheDeferredOp *op = &esp32s3_cache_deferred_ops[i];
+        const hwaddr index = ESP32S3_CACHE_REG_IDX(op->addr);
+
+        if (op->dcache == dcache && (s->regs[index] & op->ena_mask)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void esp32s3_cache_complete_deferred_ops(void *opaque)
+{
+    ESP32S3CacheState *s = ESP32S3_CACHE(opaque);
+
+    for (size_t i = 0; i < ARRAY_SIZE(esp32s3_cache_deferred_ops); i++) {
+        const ESP32S3CacheDeferredOp *op = &esp32s3_cache_deferred_ops[i];
+        const hwaddr index = ESP32S3_CACHE_REG_IDX(op->addr);
+
+        if (s->regs[index] & op->ena_mask) {
+            s->regs[index] &= ~op->ena_mask;
+            s->regs[index] |= op->done_mask;
+        }
+    }
+}
+
+static void esp32s3_cache_maybe_schedule_deferred_ops(ESP32S3CacheState *s)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(esp32s3_cache_deferred_ops); i++) {
+        const ESP32S3CacheDeferredOp *op = &esp32s3_cache_deferred_ops[i];
+        const hwaddr index = ESP32S3_CACHE_REG_IDX(op->addr);
+
+        if (s->regs[index] & op->ena_mask) {
+            timer_mod(&s->completion_timer,
+                      qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + CACHE_OP_DELAY_NS);
+            return;
+        }
+    }
+
+    timer_del(&s->completion_timer);
 }
 
 
@@ -142,37 +226,23 @@ static uint64_t esp32s3_cache_read(void *opaque, hwaddr addr, unsigned int size)
         case A_EXTMEM_ICACHE_CTRL1:
             r = s->regs[index];
             break;
-        /* For the following registers, mark the bit as done only if the feature was enabled */
         case A_EXTMEM_DCACHE_SYNC_CTRL:
-            s->regs[index] |= 1<<3;
-            r = check_and_reset_ena(&s->regs[index],
-                                    R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK,
-                                    R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK);
+            r = s->regs[index];
             break;
         case A_EXTMEM_ICACHE_SYNC_CTRL:
-            r = check_and_reset_ena(&s->regs[index],
-                                    R_EXTMEM_ICACHE_SYNC_CTRL_INVALIDATE_ENA_MASK,
-                                    R_EXTMEM_ICACHE_SYNC_CTRL_SYNC_DONE_MASK);
+            r = s->regs[index];
             break;
         case A_EXTMEM_DCACHE_AUTOLOAD_CTRL:
-            r = check_and_reset_ena(&s->regs[index],
-                                    R_EXTMEM_DCACHE_AUTOLOAD_CTRL_AUTOLOAD_ENA_MASK,
-                                    R_EXTMEM_DCACHE_AUTOLOAD_CTRL_AUTOLOAD_DONE_MASK);
+            r = s->regs[index];
             break;
         case A_EXTMEM_ICACHE_AUTOLOAD_CTRL:
-            r = check_and_reset_ena(&s->regs[index],
-                                    R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_ENA_MASK,
-                                    R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_DONE_MASK);
+            r = s->regs[index];
             break;
         case A_EXTMEM_DCACHE_PRELOAD_CTRL:
-            r = check_and_reset_ena(&s->regs[index],
-                                    R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK,
-                                    R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_DONE_MASK);
+            r = s->regs[index];
             break;
         case A_EXTMEM_ICACHE_PRELOAD_CTRL:
-            r = check_and_reset_ena(&s->regs[index],
-                                    R_EXTMEM_ICACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK,
-                                    R_EXTMEM_ICACHE_PRELOAD_CTRL_PRELOAD_DONE_MASK);
+            r = s->regs[index];
             break;
         case A_EXTMEM_DCACHE_FREEZE:
             r = s->regs[index];
@@ -181,11 +251,12 @@ static uint64_t esp32s3_cache_read(void *opaque, hwaddr addr, unsigned int size)
             r = s->regs[index];
             break;
         case A_EXTMEM_CACHE_STATE:
-            /* Return the state of ICache as idle:
-             * 1: Idle
-             * 0: Busy/Not idle */
-            r = 1 << R_EXTMEM_CACHE_STATE_DCACHE_STATE_SHIFT;
-            r |= 1 << R_EXTMEM_CACHE_STATE_ICACHE_STATE_SHIFT;
+            if (!esp32s3_cache_domain_busy(s, true)) {
+                r |= 1 << R_EXTMEM_CACHE_STATE_DCACHE_STATE_SHIFT;
+            }
+            if (!esp32s3_cache_domain_busy(s, false)) {
+                r |= 1 << R_EXTMEM_CACHE_STATE_ICACHE_STATE_SHIFT;
+            }
             break;
         case A_EXTMEM_DCACHE_SYNC_SIZE:
             break;
@@ -251,6 +322,16 @@ static void esp32s3_cache_write(void *opaque, hwaddr addr, uint64_t value,
                 break;
             default:
                 s->regs[index] = value;
+                {
+                    const ESP32S3CacheDeferredOp *op = esp32s3_cache_find_deferred_op(addr);
+
+                    if (op != NULL) {
+                        if (value & op->ena_mask) {
+                            s->regs[index] &= ~op->done_mask;
+                        }
+                        esp32s3_cache_maybe_schedule_deferred_ops(s);
+                    }
+                }
                 break;
         }
     } else if (addr >= ESP32S3_MMU_TABLE_OFFSET) {
@@ -273,6 +354,7 @@ static void esp32s3_cache_reset_hold(Object *obj, ResetType type)
 {
     ESP32S3CacheState *s = ESP32S3_CACHE(obj);
     memset(s->regs, 0, ESP32S3_CACHE_REG_COUNT * sizeof(*s->regs));
+    timer_del(&s->completion_timer);
 
     /* Initialize the MMU with invalid entries */
     for (int i = 0; i < ESP32S3_MMU_TABLE_ENTRY_COUNT; i++) {
@@ -322,6 +404,9 @@ static void esp32s3_cache_init(Object *obj)
 {
     ESP32S3CacheState *s = ESP32S3_CACHE(obj);
     SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
+
+    timer_init_ns(&s->completion_timer, QEMU_CLOCK_VIRTUAL,
+                  esp32s3_cache_complete_deferred_ops, s);
 
     /* Since the cache I/O region and the MMU I/O region are adjacent, let's use the same MemoryRegion object
      * for both, this will simplify the machine architecture. */

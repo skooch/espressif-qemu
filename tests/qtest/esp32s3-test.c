@@ -49,6 +49,7 @@
 #define SYSTEM_BASE             DR_REG_SYSTEM_BASE
 #define RTC_CNTL_BASE           DR_REG_RTCCNTL_BASE
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
+#define CACHE_OP_DELAY_NS       1000
 
 #define GPSPI_CMD_UPDATE_BIT    BIT(23)
 #define GPSPI_CMD_USR_BIT       BIT(24)
@@ -131,6 +132,109 @@ static void test_cache_flash_mmu_mapping_and_ctrl1_state(void)
 
     qtest_quit(qts);
     unlink(flash_path);
+}
+
+static void assert_cache_deferred_completion(QTestState *qts, uint32_t reg,
+                                             uint32_t trigger_bits,
+                                             uint32_t ena_mask,
+                                             uint32_t done_mask,
+                                             uint32_t idle_mask)
+{
+    uint32_t reg_value;
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + reg, trigger_bits);
+    reg_value = qtest_readl(qts, DR_REG_EXTMEM_BASE + reg);
+    g_assert_cmphex(reg_value & ena_mask, ==, trigger_bits & ena_mask);
+    g_assert_cmphex(reg_value & done_mask, ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_STATE) &
+                    idle_mask,
+                    ==, 0);
+
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS - 1);
+    reg_value = qtest_readl(qts, DR_REG_EXTMEM_BASE + reg);
+    g_assert_cmphex(reg_value & ena_mask, ==, trigger_bits & ena_mask);
+    g_assert_cmphex(reg_value & done_mask, ==, 0);
+
+    qtest_clock_step(qts, 1);
+    reg_value = qtest_readl(qts, DR_REG_EXTMEM_BASE + reg);
+    g_assert_cmphex(reg_value & ena_mask, ==, 0);
+    g_assert_cmphex(reg_value & done_mask, ==, done_mask);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_STATE) &
+                    idle_mask,
+                    ==, idle_mask);
+}
+
+static void test_cache_deferred_completion_semantics(void)
+{
+    QTestState *qts = qts_start();
+    const struct {
+        uint32_t reg;
+        uint32_t trigger_bits;
+        uint32_t ena_mask;
+        uint32_t done_mask;
+        uint32_t idle_mask;
+    } cases[] = {
+        {
+            .reg = A_EXTMEM_DCACHE_SYNC_CTRL,
+            .trigger_bits = R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK,
+            .ena_mask = R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK,
+            .done_mask = R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK,
+            .idle_mask = 1u << R_EXTMEM_CACHE_STATE_DCACHE_STATE_SHIFT,
+        },
+        {
+            .reg = A_EXTMEM_DCACHE_PRELOAD_CTRL,
+            .trigger_bits = R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK,
+            .ena_mask = R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK,
+            .done_mask = R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_DONE_MASK,
+            .idle_mask = 1u << R_EXTMEM_CACHE_STATE_DCACHE_STATE_SHIFT,
+        },
+        {
+            .reg = A_EXTMEM_DCACHE_AUTOLOAD_CTRL,
+            .trigger_bits = R_EXTMEM_DCACHE_AUTOLOAD_CTRL_AUTOLOAD_ENA_MASK |
+                            R_EXTMEM_DCACHE_AUTOLOAD_CTRL_AUTOLOAD_SCT0_ENA_MASK,
+            .ena_mask = R_EXTMEM_DCACHE_AUTOLOAD_CTRL_AUTOLOAD_ENA_MASK,
+            .done_mask = R_EXTMEM_DCACHE_AUTOLOAD_CTRL_AUTOLOAD_DONE_MASK,
+            .idle_mask = 1u << R_EXTMEM_CACHE_STATE_DCACHE_STATE_SHIFT,
+        },
+        {
+            .reg = A_EXTMEM_ICACHE_SYNC_CTRL,
+            .trigger_bits = R_EXTMEM_ICACHE_SYNC_CTRL_INVALIDATE_ENA_MASK,
+            .ena_mask = R_EXTMEM_ICACHE_SYNC_CTRL_INVALIDATE_ENA_MASK,
+            .done_mask = R_EXTMEM_ICACHE_SYNC_CTRL_SYNC_DONE_MASK,
+            .idle_mask = 1u << R_EXTMEM_CACHE_STATE_ICACHE_STATE_SHIFT,
+        },
+        {
+            .reg = A_EXTMEM_ICACHE_PRELOAD_CTRL,
+            .trigger_bits = R_EXTMEM_ICACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK,
+            .ena_mask = R_EXTMEM_ICACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK,
+            .done_mask = R_EXTMEM_ICACHE_PRELOAD_CTRL_PRELOAD_DONE_MASK,
+            .idle_mask = 1u << R_EXTMEM_CACHE_STATE_ICACHE_STATE_SHIFT,
+        },
+        {
+            .reg = A_EXTMEM_ICACHE_AUTOLOAD_CTRL,
+            .trigger_bits = R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_ENA_MASK |
+                            R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_SCT0_ENA_MASK,
+            .ena_mask = R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_ENA_MASK,
+            .done_mask = R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_DONE_MASK,
+            .idle_mask = 1u << R_EXTMEM_CACHE_STATE_ICACHE_STATE_SHIFT,
+        },
+    };
+
+    for (int i = 0; i < G_N_ELEMENTS(cases); i++) {
+        assert_cache_deferred_completion(qts, cases[i].reg,
+                                         cases[i].trigger_bits,
+                                         cases[i].ena_mask,
+                                         cases[i].done_mask,
+                                         cases[i].idle_mask);
+    }
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE,
+                 R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE) &
+                    R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK,
+                    ==, R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK);
+
+    qtest_quit(qts);
 }
 #endif
 
@@ -1129,6 +1233,8 @@ int main(int argc, char **argv)
 #ifndef _WIN32
     qtest_add_func("/esp32s3/cache/flash-mmu-mapping-ctrl1",
                    test_cache_flash_mmu_mapping_and_ctrl1_state);
+    qtest_add_func("/esp32s3/cache/deferred-completion",
+                   test_cache_deferred_completion_semantics);
 #endif
     qtest_add_func("/esp32s3/gpio/iomux", test_gpio_and_iomux_state);
     qtest_add_func("/esp32s3/gpspi/completion-irq", test_gpspi_completion_irq);

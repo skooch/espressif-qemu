@@ -81,11 +81,12 @@ Cache and MMU behavior is currently good enough to boot but not yet shaped aroun
   Current tree: MMU entry writes, invalidation, flash page fill, PSRAM selection, cache control bits, and IOMMU translation are present.
 - [x] Inventory the cache/MMU operations firmware depends on today.
   Current inventory: the active workload depends on live MMU-table visibility, ROM flash ops, Core 1 parking around flash writes/erases, and the boot-time PSRAM DBUS mapping path much more than on the broader EXTMEM register surface.
-- [ ] Separate immediate state changes from any deferred completion semantics.
-  Remaining focus: document which completion bits are still optimistic and which operations need a more explicit sequence.
+- [x] Separate immediate state changes from any deferred completion semantics.
+  Current behavior: sync/preload/autoload requests now clear DONE on write, hold busy state in `CACHE_STATE`, and complete on a short virtual timer instead of completing only when software reads the control register.
 - [x] Add regressions for the guest-visible ordering guarantees we care about first.
   Current coverage: qtests now exercise flash-backed MMU remapping and the `CTRL1` state used by PSRAM bring-up; the remaining direct gap is completion sequencing for sync/preload/autoload/freeze operations.
-- [ ] Leave broader cycle-accuracy work for a later stage.
+- [x] Leave broader cycle-accuracy work for a later stage.
+  Deferred scope: independent per-operation timing, contention, ROM-internal cache-disable depth, and more detailed freeze behavior remain intentionally out of scope for this stage.
 
 ### Task 2 exit criteria
 
