@@ -36,6 +36,21 @@
 
 #ifndef CONFIG_USER_ONLY
 
+static bool xtensa_paddr_in_memory(const XtensaMemory *memory, uint32_t paddr)
+{
+    unsigned i;
+
+    for (i = 0; i < memory->num; ++i) {
+        uint32_t base = memory->location[i].addr;
+        uint32_t size = memory->location[i].size;
+
+        if (size && paddr - base < size) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void HELPER(update_ccount)(CPUXtensaState *env)
 {
     XtensaCPU *cpu = env_archcpu(env);
@@ -74,8 +89,6 @@ void HELPER(update_ccompare)(CPUXtensaState *env, uint32_t i)
 /*!
  * Check vaddr accessibility/cache attributes and raise an exception if
  * specified by the ATOMCTL SR.
- *
- * Note: local memory exclusion is not implemented
  */
 void HELPER(check_atomctl)(CPUXtensaState *env, uint32_t pc, uint32_t vaddr)
 {
@@ -95,6 +108,14 @@ void HELPER(check_atomctl)(CPUXtensaState *env, uint32_t pc, uint32_t vaddr)
 
     if (rc) {
         HELPER(exception_cause_vaddr)(env, pc, rc, vaddr);
+    }
+
+    /*
+     * S32C1I accesses that resolve to local DataRAM bypass ATOMCTL and
+     * complete without using cache/PIF atomic paths.
+     */
+    if (xtensa_paddr_in_memory(&env->config->dataram, paddr)) {
+        return;
     }
 
     /*
