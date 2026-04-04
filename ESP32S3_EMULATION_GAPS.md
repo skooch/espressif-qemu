@@ -33,7 +33,7 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 | Generic MMIO surface | Narrower than before, but still present | Unknown registers can still appear to work via stored readback | High |
 | Clock / reset / sleep | Partially modeled | Deep sleep, wake, reset-domain, and wider clock-tree behavior remain incomplete | High |
 | Cache / MMU / external memory | Functional and boot-capable | Operations complete too eagerly and state reporting is too optimistic | High |
-| USB Serial/JTAG, I2C, UART, SHA | Narrow modeled surfaces with regression coverage | Error paths, uncommon timing, and unsupported modes are still incomplete | Medium |
+| USB Serial/JTAG, I2C, UART, SHA | Board-path complete with RX, completion semantics, clock-derived timing, and IRQ coverage | DMA error paths, uncommon timing modes, and multi-CPU interrupt routing remain incomplete | Medium |
 | PMS + RNG | Intentionally narrow modeled behavior | Useful for current firmware, not a full device-faithful implementation | Low to Medium |
 | Ethernet | Generic `open_eth` stand-in | Not an ESP32-S3-specific EMAC model | High if firmware depends on EMAC details |
 | RMT | Unimplemented | Entire block still absent | High if firmware depends on it |
@@ -42,13 +42,13 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 ## Current Gaps
 
 - Unimplemented MMIO is often papered over instead of modeled. There is a giant catch-all register window that stores writes and echoes them back on reads, and it forces the PLL-calibration-done bit high so polling loops keep moving. RMT and IO_MUX were also explicitly mapped as unimplemented devices.
-- Pin muxing and the GPIO matrix are not really driving peripherals yet. The GPIO func-in/func-out registers are stored, while GP-SPI routes traffic using hard-coded board pins like GPIO34, GPIO35, GPIO48, and GPIO3 rather than through routed signal decisions.
+- GP-SPI now reads chip-select and DC signals through the routed-signal layer (`esp32s3_gpio_get_routed_signal_level`) rather than hard-coded GPIO numbers. However, the default signal-to-pin assignments (EPD_CS→GPIO34, EPD_DC→GPIO35, SD_CS→GPIO48, LoRa_CS→GPIO3) are still hardwired in GPIO reset state rather than being derived from firmware-written routing registers.
 - SPI2/SPI3 were intentionally a minimum-function stub. Transfers complete instantly, `USR` clears immediately, and `TRANS_DONE` is raised right away instead of following a more realistic controller state progression.
 - Clock, reset, and sleep/power behavior are only partially modeled. The `SYSTEM` block handles a small subset of registers, RTC sleep/wake logic is tailored to current timer/GPIO/EXT1 paths, and reset still contains QEMU-specific shims.
-- Several peripherals are placeholders or heavily simplified. PMS is a dummy register file, RNG just returns host randomness, USB Serial/JTAG was TX-only with RX unimplemented and FIFO always ready, I2C had completion/readback shortcuts, and SHA documented DMA/IRQ behavior as incomplete.
+- Most previously placeholder peripherals have been tightened to board-path-complete behavior: USB Serial/JTAG now supports RX delivery, FIFO-used status reporting, and RX/TX interrupt state; I2C clears and sets DONE bits per-command with deferred completion IRQ delivery; UART derives baud and pulse timing from the active clock configuration (falling back to 40 MHz only when no clock device is linked); PMS returns RAZ/WI for addresses above 0x100 and a date register at 0xFFC; SHA asserts and clears interrupt state on completion for both DMA and non-DMA paths; RNG is intentionally narrow (only addr==0 && size==4 returns host entropy). Remaining gaps include DMA error paths, uncommon timing modes, unsupported I2C slave/APB-nonfifo modes, and multi-CPU interrupt routing.
 - External memory and cache behavior are functional rather than cycle-accurate. Cache/MMU operations complete immediately and cache state reports idle.
 - Some blocks are substituted with generic IP rather than an S3-specific model, notably Ethernet through `open_eth`.
-- SPI1 had an outright correctness bug in the flash transfer loop: the byte loop compared the payload value instead of the loop index, making the transfer path data-dependent.
+- SPI1 had an outright correctness bug in the flash transfer loop: the byte loop compared the payload value instead of the loop index, making the transfer path data-dependent. (Now fixed; see Stage 2.)
 - The generic Xtensa backend still has known accuracy gaps such as missing local memory exclusion behavior and unimplemented opcode paths.
 
 ### Current Risk Notes
@@ -57,23 +57,29 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 - Performance-sensitive guest code is likely to diverge from hardware because cache and MMU operations are modeled as functional state transitions rather than realistic completion and contention behavior.
 - Firmware that touches only the currently exercised board path is much more likely to work than firmware that depends on deep power-management, uncommon DMA/peripheral corner cases, EMAC, RMT, or architectural edge conditions.
 
+### Recently Resolved
+
+- **GDMA descriptor-address reconstruction**: The EPD black-screen regression was caused by incorrect DMA RAM buffer-address handling in descriptor reads. Fixed to use ESP32-S3 DMA RAM addressing semantics. A new non-destructive `esp_gdma_read_channel_data` function avoids modifying descriptor owner bits or channel link state during reads.
+- **SHA DMA path**: `esp_sha_continue_dma` reads GDMA OUT channel data and runs SHA compress blocks. DMA-backed SHA operations are now functional for the exercised command paths.
+- **GP-SPI two-phase transfer model**: Transfers now use a two-phase timer (800 ns execute + 1200 ns completion) with up to 4 retries and a clock-only fallback, replacing the old instant-complete model. A `transfer_prefers_fifo` heuristic avoids re-reading stale DMA descriptors for small FIFO-only transfers.
+
 ## Prioritized Backlog
 
 ### High Impact
 
-- `P0` Fix the SPI1 transfer-loop bug so TX/RX bounds use the loop index instead of the payload byte value.
-- `P1` Replace GP-SPI hard-coded board pin reads with a routed-signal layer backed by GPIO routing state and a minimal IO_MUX model for the current board path.
+- `P0` [DONE] Fix the SPI1 transfer-loop bug so TX/RX bounds use the loop index instead of the payload byte value.
+- `P1` [DONE] Replace GP-SPI hard-coded board pin reads with a routed-signal layer backed by GPIO routing state and a minimal IO_MUX model for the current board path.
 - `P1` Replace boot-critical generic-MMIO behavior with explicit narrow models for the firmware-touched offsets currently relied on.
-- `P1` Make GP-SPI completion semantics more faithful than an unconditional immediate `USR` clear plus `TRANS_DONE`.
+- `P1` [DONE] Make GP-SPI completion semantics more faithful than an unconditional immediate `USR` clear plus `TRANS_DONE`.
 
 ### Easy Wins
 
-- `P2` Add USB Serial/JTAG RX support, FIFO-ready/backpressure semantics, and interrupt updates.
-- `P2` Tighten I2C completion semantics, DONE-bit handling, ACK error behavior, and explicit rejection of unsupported modes.
-- `P2` Make UART pulse timing and baud calculation derive from active clock state instead of fixed 40 MHz assumptions.
-- `P2` Replace PMS raw echo behavior with reset/default/read-as-zero-write-ignore behavior for the currently touched surface.
-- `P2` Keep RNG host-backed, but restrict it to a small modeled data path instead of broad undefined behavior.
-- `P2` Wire SHA completion into realistic interrupt assert/clear behavior for existing command paths.
+- `P2` [DONE] Add USB Serial/JTAG RX support, FIFO-ready/backpressure semantics, and interrupt updates.
+- `P2` [DONE] Tighten I2C completion semantics, DONE-bit handling, ACK error behavior, and explicit rejection of unsupported modes.
+- `P2` [DONE] Make UART pulse timing and baud calculation derive from active clock state instead of fixed 40 MHz assumptions.
+- `P2` [DONE] Replace PMS raw echo behavior with reset/default/read-as-zero-write-ignore behavior for the currently touched surface.
+- `P2` [DONE] Keep RNG host-backed, but restrict it to a small modeled data path instead of broad undefined behavior.
+- `P2` [DONE] Wire SHA completion into realistic interrupt assert/clear behavior for existing command paths.
 
 ### Deferred
 
@@ -105,6 +111,8 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 
 - Fix SPI1 TX/RX loop bounds.
 - Add a regression that uses payload values both below and above the transfer length so the old byte-vs-index bug would fail deterministically.
+- Status:
+  - Done: SPI1 TX/RX loop bounds fixed; regression test covers payload values both below and above transfer length.
 
 ### Stage 3: IO_MUX + GPIO Matrix Routing
 
@@ -119,7 +127,7 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 - Remove boot-critical PLL/ANA progress behavior from the generic MMIO echo region.
 - Keep the fallback region only for genuinely unmodeled addresses that are outside the immediately supported firmware path.
 - Status:
-  - Done: boot-critical ANA `PLL_DONE` path moved into explicit model.
+  - Done: boot-critical ANA `PLL_DONE` bit (offset 0x40, bit 24) handled as a special case in the `esp32s3_ana_ops` memory region. The surrounding ANA register space at 0x6000e000 remains an echo store with no further special-case handling.
 
 ### Stage 5: Easy Wins
 
@@ -164,6 +172,7 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 
 - `hw/xtensa/esp32s3.c`
 - `hw/gpio/esp32s3_gpio.c`
+- `hw/gpio/esp32s3_iomux.c`
 - `hw/ssi/esp32s3_gpspi.c`
 - `hw/ssi/esp32s3_spi.c`
 - `hw/misc/esp32c3_jtag.c`
