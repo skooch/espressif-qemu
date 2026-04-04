@@ -51,6 +51,7 @@
 #define GPSPI_CMD_USR_BIT       BIT(24)
 #define GPSPI_INT_TRANS_DONE    BIT(12)
 #define USB_SERIAL_JTAG_EP1_DATA_FREE        BIT(1)
+#define USB_SERIAL_JTAG_EP1_DATA_AVAIL       BIT(2)
 #define USB_SERIAL_JTAG_EP1_WR_DONE         BIT(0)
 #define GDMA_SPI2_CHAN          0
 #define GDMA_OUT_DESC_SIZE      12
@@ -378,8 +379,8 @@ static void test_gpspi_dma_txrx_handoff(void)
                  ESP32S3_GPIO_IOMUX_FUNC_GPIO << ESP32S3_IOMUX_MCU_SEL_SHIFT);
     qtest_writel(qts, GPIO_BASE + GPIO_FUNC_OUT_SEL_CFG_REG(48),
                  ESP32S3_GPIO_SIG_SD_CS);
-    qtest_writel(qts, GPIO_ENABLE1_W1TS_REG, BIT(16));
-    qtest_writel(qts, GPIO_OUT1_W1TC_REG, BIT(16));
+    qtest_writel(qts, GPIO_BASE + GPIO_ENABLE1_W1TS_REG, BIT(16));
+    qtest_writel(qts, GPIO_BASE + GPIO_OUT1_W1TC_REG, BIT(16));
     g_assert_cmphex(qtest_readl(qts, GPIO_BASE + GPIO_IN1_REG) & BIT(16),
                     ==, 0);
 
@@ -484,6 +485,9 @@ static void test_usb_serial_jtag_rx_tx(void)
     g_assert_cmphex(qtest_readl(qts, JTAG_BASE + USB_SERIAL_JTAG_INT_RAW_REG) &
                     USB_SERIAL_JTAG_INT_RX_AVAIL,
                     ==, USB_SERIAL_JTAG_INT_RX_AVAIL);
+    g_assert_cmphex(qtest_readl(qts, JTAG_BASE + USB_SERIAL_JTAG_EP1_CONF_REG) &
+                    USB_SERIAL_JTAG_EP1_DATA_AVAIL,
+                    ==, USB_SERIAL_JTAG_EP1_DATA_AVAIL);
     g_assert_cmphex(qtest_readl(qts, JTAG_BASE + USB_SERIAL_JTAG_EP1_REG), ==, 'Z');
     for (size_t i = 0; i < 64; i++) {
         rx_block[i] = (char)('A' + (i % 26));
