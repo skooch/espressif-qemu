@@ -17,6 +17,7 @@
 - [x] Task 4: land the first per-core cache access-reject slice with direct qtest coverage
 - [x] Task 4: fix the `esp32s3 -smp 1` reset path so one-core softmmu probes do not crash the host during board reset
 - [x] Task 4: finish a reliable real-board cache-alias fault repro so `esp32s3` softmmu probes reach guest-controlled fault handling and can prove the remaining exception-delivery behavior
-- [ ] Task 4: promote the now-working board cache-alias repro into an in-tree regression so core0/core1 reject handling is no longer proved only by temporary probes
+- [x] Task 4: promote the now-working board cache-alias repro into a first in-tree regression for the core0 board path
+- [ ] Task 4: extend the board cache-alias regression to the core1 reject path so both guest-visible cores are no longer proved only by temporary probes
 - [ ] Task 3: implement the minimum packet and link bring-up behavior needed by firmware if a guest starts using EMAC
 - [ ] Task 3: add a regression for that future link bring-up and packet behavior

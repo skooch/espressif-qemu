@@ -218,6 +218,7 @@ tests_x86_64_system_thorough = [
 
 tests_xtensa_system_thorough = [
   'xtensa_lx60',
+  'xtensa_esp32s3_cache_reject',
 ]
 
 precache_all = []

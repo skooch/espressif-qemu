@@ -21,16 +21,17 @@ This queue keeps the ESP32-S3 architectural/backend work separate from the perip
 - `hw/misc/esp32s3_cache.c`, `include/hw/misc/esp32s3_cache.h`, `hw/xtensa/esp32s3.c`, and `tests/qtest/esp32s3-test.c` now land the first per-core access-reject slice: flash-backed write rejects latch the `CORE0/1_ACS_CACHE_INT_*` state plus the matching `CORE0/1_{DBUS,IBUS}_REJECT_{ST,VADDR}` metadata, route to `ETS_CACHE_CORE0/1_ACS_INTR_SOURCE`, and have direct qtest coverage for both core0 DBUS and core0 IBUS reject assert/clear paths.
 - `hw/xtensa/esp32s3.c` and `tests/qtest/esp32s3-test.c` now also cover the one-core board path: `esp32s3 -smp 1` no longer crashes in `esp32s3_soc_reset()`, and the qtest suite includes a direct single-CPU boot smoke test.
 - `hw/xtensa/esp32s3.c` now fixes the board ROM handoff itself: `-bios` resolves through the BIOS search path, ROM ELFs load into each CPU address space directly, and raw ROM images still fall back to fixed IROM loading. Temporary `esp32s3` softmmu probes now take control reliably on both `-smp 1` and `-smp 2`, and manual board runs confirm recoverable guest DBUS reject handling for both CPU0 and CPU1.
+- `tests/functional/test_xtensa_esp32s3_cache_reject.py` now turns part of that manual proof into an in-tree regression: the functional suite embeds a minimal ROM ELF probe and proves the single-core/core0 board path exits cleanly through a recoverable cache-alias reject handler on `esp32s3`.
 - The current guest stress path already has translator support for `ee.movi.32.a`, `ee.zero.accx`, and `ee.vmulas.s16.accx`, so those SIMD/TIE instructions are not the first blocker.
 
 ## Active ranked queue
 
-### P0: Remaining ESP32-S3 reject surface beyond the current qtest matrix
+### P0: Remaining ESP32-S3 reject surface beyond the current qtest and board-regression matrix
 
-- Code evidence: the first per-core reject contract now exists for flash-backed write rejects on the active cache windows, the board now reliably boots custom ROM ELFs via `-bios`, and temporary `esp32s3` softmmu probes have now confirmed recoverable guest DBUS reject handling on both CPU0 and CPU1. What is still missing is checked-in regression coverage for that board path plus the still-idle reject/write-IC/access-mask bits advertised by `CORE0/1_ACS_CACHE_INT_*`.
-- Guest relevance: this is no longer blocked by board ROM takeover or exception delivery, but it is still the remaining architectural surface before future firmware can rely on more than the shared MMU-entry fault path and the currently covered core0 qtest contracts.
-- Why this is next: the model and manual board proof now agree, so the highest-value next slice is to turn that proof into an in-tree regression and only widen the register surface if guest code starts depending on the remaining bits.
-- Suggested first slice: add a permanent `esp32s3` softmmu or functional regression that exercises the board cache-alias write fault path for at least one guest-visible core, then decide whether the still-uncovered write-IC/access-mask bits need more model work or only more coverage.
+- Code evidence: the first per-core reject contract now exists for flash-backed write rejects on the active cache windows, the board now reliably boots custom ROM ELFs via `-bios`, and the tree now has checked-in board coverage for the single-core/core0 path through `tests/functional/test_xtensa_esp32s3_cache_reject.py`. What is still missing is in-tree board coverage for the CPU1 path plus the still-idle reject/write-IC/access-mask bits advertised by `CORE0/1_ACS_CACHE_INT_*`.
+- Guest relevance: this is no longer blocked by board ROM takeover or exception delivery, but it is still the remaining architectural surface before future firmware can rely on more than the shared MMU-entry fault path and the currently covered core0 contracts.
+- Why this is next: the model, qtests, manual board proof, and a first functional board regression now agree, so the highest-value next slice is to extend that checked-in board proof to CPU1 and only widen the register surface if guest code starts depending on the remaining bits.
+- Suggested first slice: add a permanent board regression for the CPU1 reject path, then decide whether the still-uncovered write-IC/access-mask bits need more model work or only more coverage.
 
 ### P1: Remaining missing Xtensa opcodes beyond current ESP32-S3 coverage
 
@@ -47,5 +48,5 @@ This queue keeps the ESP32-S3 architectural/backend work separate from the perip
 
 ## Next recommended move
 
-- Start the next Task 4 slice by promoting the now-working manual board repro into an in-tree regression, because the actual guest-visible fault path is now working and the main risk is losing that proof.
-- Once that regression exists, come back to the remaining reject surface and only widen the model to the still-idle write-IC and access-mask bits if guest code starts reading them.
+- Start the next Task 4 slice by extending the new board regression to the CPU1 reject path, because the tree now preserves the core0 proof and the main remaining gap is multi-core guest-visible coverage.
+- After that, come back to the remaining reject surface and only widen the model to the still-idle write-IC and access-mask bits if guest code starts reading them.

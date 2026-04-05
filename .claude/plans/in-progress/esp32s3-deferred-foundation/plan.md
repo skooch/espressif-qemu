@@ -144,8 +144,10 @@ The backend still has guest-observed architectural gaps. These should stay track
   Current tree: `hw/xtensa/esp32s3.c` now respects `machine->smp.cpus` in reset and ROM/clock CPU wiring, and the ESP32-S3 qtest suite includes a direct `-smp 1` boot smoke test.
 - [x] Finish a reliable real-board cache-alias fault repro before relying on `esp32s3` softmmu regressions for the per-core reject state.
   Current tree: `hw/xtensa/esp32s3.c` now resolves `-bios` through the BIOS search path, loads ROM ELFs into each CPU address space directly, and falls back to raw ROM images when the file is not ELF. Temporary custom-ROM probes now take control reliably on both `-smp 1` and `-smp 2`, and manual board runs confirm recoverable guest DBUS reject handling for both CPU0 and CPU1 on cache-alias writes.
-- [ ] Promote the now-working board cache-alias repro into an in-tree regression.
-  Current next step: the guest-visible path is now proven manually, but the coverage still lives in temporary ROM probes outside the tree rather than a checked-in functional or softmmu regression.
+- [x] Promote the now-working board cache-alias repro into a first in-tree regression.
+  Current tree: `tests/functional/test_xtensa_esp32s3_cache_reject.py` now embeds a minimal ROM ELF probe and exercises the real `esp32s3` board path under semihosting, proving that the fixed `-bios` loader reaches a recoverable core0 cache-alias reject handler in-tree.
+- [ ] Extend the board cache-alias regression to the core1 reject path.
+  Current next step: manual `-smp 2` probes still prove the CPU1 path today, but the checked-in regression only covers the single-core/core0 board path so far.
 - [x] Keep this track separate from peripheral work so the dependency chain stays visible.
   Current structure: the blocker queue lives beside this plan rather than being folded into the peripheral backlog.
 
