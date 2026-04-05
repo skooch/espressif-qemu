@@ -4,7 +4,7 @@
 
 This document tracks the known fidelity gaps in the `esp32s3` machine model in this fork and the immediate implementation program for closing the highest-value ones first.
 
-The immediate peripheral and deferred-foundation programs described here are now historical records. Active follow-on prioritization for the T-Deck Pro target lives in `.claude/plans/new/esp32s3-tdeck-pro-fidelity/plan.md`.
+The immediate peripheral and deferred-foundation programs described here are now historical records. Active follow-on prioritization for the T-Deck Pro target lives in `docs/plans/new/esp32s3-tdeck-pro-fidelity/plan.md`.
 
 The current scope is intentionally limited to the previously identified high-impact fixes and easy wins:
 
@@ -115,7 +115,7 @@ Current firmware and board-path findings:
 
 ### Task 4 Xtensa Backend Queue (2026-04-04)
 
-The active Xtensa/backend queue now lives in `.claude/plans/implemented/esp32s3-deferred-foundation/xtensa-blockers.md` so it stays separate from the peripheral backlog and tied to current firmware behavior.
+The active Xtensa/backend queue now lives in `docs/plans/implemented/esp32s3-deferred-foundation/xtensa-blockers.md` so it stays separate from the peripheral backlog and tied to current firmware behavior.
 
 Current ranking:
 
@@ -247,7 +247,7 @@ Recently resolved in this track:
 
 ### Stage 6 Status
 
-- Captured in the implemented deferred-foundation plan at `.claude/plans/implemented/esp32s3-deferred-foundation/plan.md`.
+- Captured in the implemented deferred-foundation plan at `docs/plans/implemented/esp32s3-deferred-foundation/plan.md`.
 
 ## Source References
 
