@@ -50,7 +50,7 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 - Some blocks are substituted with generic IP rather than an S3-specific model, notably Ethernet through `open_eth`, though the current T-Deck Pro firmware path does not appear to exercise the EMAC block at all.
 - SPI1 had an outright correctness bug in the flash transfer loop: the byte loop compared the payload value instead of the loop index, making the transfer path data-dependent. (Now fixed; see Stage 2.)
 - The generic Xtensa backend still has known accuracy gaps such as remaining reject-surface coverage gaps and unimplemented opcode paths.
-- Real `esp32s3` board guest probing is no longer blocked by ROM handoff. The board now loads custom ROM ELFs through `-bios` into each CPU address space correctly, temporary `esp32s3` softmmu probes have confirmed recoverable guest DBUS reject handling on both CPU0 and CPU1 for cache-alias writes, and the tree now has a first functional regression for the single-core/core0 board path. The remaining gap is extending that checked-in board proof to CPU1 and the rest of the reject surface.
+- Real `esp32s3` board guest probing is no longer blocked by ROM handoff. The board now loads custom ROM ELFs through `-bios` into each CPU address space correctly, and the tree now has checked-in functional regressions for recoverable cache-alias reject handling on both CPU0 and CPU1. The remaining gap is only the broader reject surface beyond the active board path.
 
 ### Task 1 Shortcut Inventory (2026-04-04)
 
@@ -113,14 +113,14 @@ The active Xtensa/backend queue now lives in `.claude/plans/in-progress/esp32s3-
 
 Current ranking:
 
-- `P0` Remaining ESP32-S3 reject surface beyond the current qtest and board-regression matrix. The shared illegal-cache path and the first `CORE0/1` reject path now exist, the tree has a checked-in board regression for the single-core/core0 path, and the board guest path is still manually proven on CPU1, but the rest of the reject/write-IC/access-mask matrix is only partially modeled.
+- `P0` Remaining ESP32-S3 reject surface beyond the current qtest and board-regression matrix. The shared illegal-cache path and the first `CORE0/1` reject path now exist, and the tree has checked-in board regressions for both the single-core/core0 path and the SMP/core1 path, but the rest of the reject/write-IC/access-mask matrix is only partially modeled.
 - `P1` Remaining missing Xtensa opcodes beyond the current ESP32-S3 core/FPU/TIE coverage. The generic unimplemented-opcode fallback still exists, but the current guest stress instructions (`ee.movi.32.a`, `ee.zero.accx`, `ee.vmulas.s16.accx`) are already translated, so no active firmware blocker is confirmed there yet.
 
 Recently resolved in this track:
 
 - `HELPER(check_atomctl)` now skips `ATOMCTL` cache/PIF gating for accesses that resolve to local DataRAM, matching the `s32c1i` local-memory contract used by ESP32-class Xtensa cores.
 - Xtensa softmmu coverage now includes an `esp32s3`-specific `test_s32c1i_atomctl` regression that proves `ATOMCTL=0` still faults on backed sysram (`0x6000_0100`) while succeeding on local DataRAM.
-- The `esp32s3` board path now has a checked-in functional cache-reject regression in `tests/functional/test_xtensa_esp32s3_cache_reject.py`, proving that a ROM ELF loaded via `-bios` reaches a recoverable core0 cache-alias reject handler under semihosting.
+- The `esp32s3` board path now has checked-in functional cache-reject regressions in `tests/functional/test_xtensa_esp32s3_cache_reject.py`, proving that ROM ELFs loaded via `-bios` reach recoverable cache-alias reject handlers on both core0 and core1.
 - The Xtensa TCG linker script now places the reset stub at `XCHAL_RESET_VECTOR0_VADDR`, which was required for `esp32`/`esp32s3` softmmu guests to boot on the generic `sim` machine at all.
 - The ESP32-S3 cache model now latches `EXTMEM_CACHE_ILG_INT_ST` and `EXTMEM_CACHE_MMU_FAULT_{CONTENT,VADDR}` on invalid MMU accesses, and the board routes the resulting illegal-cache IRQ to `ETS_CACHE_IA_INTR_SOURCE` with direct qtest coverage.
 - The ESP32-S3 cache model now also latches the first per-core reject metadata and IRQ path: flash-backed write rejects populate `CORE0/1_ACS_CACHE_INT_ST` plus the matching `CORE0/1_{DBUS,IBUS}_REJECT_{ST,VADDR}` registers, the board routes those lines to `ETS_CACHE_CORE0/1_ACS_INTR_SOURCE`, and the qtest suite covers both core0 DBUS and core0 IBUS reject assert/clear contracts.

@@ -6,11 +6,12 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+import asyncio
 import base64
 from pathlib import Path
 import zlib
 
-from qemu_test import QemuSystemTest
+from qemu_test import QemuSystemTest, wait_for_console_pattern
 
 
 CORE0_ROM_ELF_ZLIB_B64 = (
@@ -37,6 +38,28 @@ CORE0_ROM_ELF_ZLIB_B64 = (
     "/Ldc4JcXiI6fu8wOujTR8fO4vYMuT+fl5xobrigP64poA6Q//y45SnDQ5RTxebkZlbdT"
     "n87q0/2EuhvKwzqlLzN/iouYQWJI3t6a/DQa8j+nwjKIN/XGI8bb3afb3AVw9hHr+wuk"
     "EZk2"
+)
+
+CORE1_ROM_ELF_ZLIB_B64 = (
+    "eNrtV0FsG0UUnfGuU5os7bY5QSJkIyoFJKy4qppWUOGN7TRWrdqK7bZcutnYG2Li2tZ6XQUJKVdU"
+    "OFQ9Re0lFyREQagnrhGVIEICRQWq0kPLqRiIIBWV2kOl6Z/dGe+3mx4oXJA6ysz89/bN35n5M3/j"
+    "5XR2ilJKZAmR08RDKkkcgG58CBqFkAMkAvwYGSKDJFCTBK/nw4TwGuaMTp6VZ+V/UwbgMH8OZ50y"
+    "tvq04/Xw04//L+avhv/d/Ito/Vvs1lu74fJfvgwgr83eS2izYL35MZRleM8l1bvzs+egHwW8D+pB"
+    "qEehnoRahbrnL6btjWSGtVBkeji6ySJ3hiF7rP6hrK7eu/I7+/JiVAvFf2OvKqOheAe6aIdBfzhk"
+    "dBjtsDWYFGPwF73D9qvko8Lh0Ejq64fs+S3p4mdwcSLSUbS/Jy68FPlTid9gExeikStK/CYYrxg3"
+    "Gb0u3BDjBqM/CGBcZ3RD2j8y+p20rzH6rbQ3GP1G2Ml8KW7mjg0Sz5gyMlkzaZQKaUycMFKpGUyk"
+    "88k4xqlcaTLbM6R0PH0qn04W0ynMFoq5GZBpsLkRqDzHnnLtessyM/X5BoHXmsZkIZctFdNmNlNM"
+    "zxjZwpHxQWMyAy2cQYhHini5OqF4eRxMxYsVeW4MKtgDgt8leZ68kT6J9NNIfxzp15D+KtKvI/33"
+    "SM+/I935qGg+KpqPGuh1YatjwZr4XhSFzfUrSL8i/L8M9RLiub1b6D9FPLdDQv8ZP/eC5zlgv9Df"
+    "RvwvYGtCv4n8bCL+AeIfIJ7fS8lzWxP+dcTr4UA/ivhti9hXRXyBE10c8vBaFyu+XpVY7XMT7sMD"
+    "fXgH/sbD6LtME3skmRG0Do5jaL0cHxExk3gaxY3jGWjPIXwa2mU03kHx5Ph9EQuJP0Tx4PgiigPH"
+    "n6D95PgLaPch/BW0BxH+CdqjCP8K7UmE70NbRXiIBvHQYbdeoH7u9PFdZqD918GI0iBeOsTrdRrE"
+    "S+fxKpdz5fyxQwuxBlm0nbpdMxeseqVmO6Rdt5eadtm1K12q0mjP1ewudGyrZrZcy3FJudkeN6vA"
+    "knmrXXOBbTjcrtZ806w06rZ5pvUOaYPcbLbdlv90zqqYZavdsgN41qpUnADazXKcNBa9wb1Deilv"
+    "WC/FhwaMmH0XowVy7iyYDcf0d4GY87Cw8qJk4W2OtH0/hMRa751xrTnoXcfvF6TlK2PCl4SeEwmE"
+    "l5hrL7kktuTl3FiV51wAsVrVI2NNp9H8J9/VEZG3BuS9hRDv6rlTfnkN6fj5SDxBN4F0/NysPUE3"
+    "hd/Lzx88OE8f12Wh7kDj+f/vhxCWQ95GNi/r4d78JJ9ZfboN0K3Tx3VU5EBZVmASW0DuBPtFMT/+"
+    "E2Kn/7OjWz4A4o1t/O3p012Fb+G728zvET5YlQ4="
 )
 
 class XTensaEsp32S3CacheReject(QemuSystemTest):
@@ -68,9 +91,35 @@ class XTensaEsp32S3CacheReject(QemuSystemTest):
             f"ESP32-S3 ROM probe failed:\n{self.vm.get_log()}",
         )
 
+    def _run_console_rom_probe(self, name: str, data_b64: str, smp: int,
+                               success_message: str,
+                               failure_message: str) -> None:
+        self.set_machine('esp32s3')
+        rom_path = self._write_rom(name, data_b64)
+
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
+        self.vm.set_console()
+        self.vm.add_args(
+            '-machine', 'esp32s3',
+            '-smp', str(smp),
+            '-bios', str(rom_path),
+        )
+        self.vm.launch()
+        wait_for_console_pattern(self, success_message, failure_message)
+        self.vm.shutdown(hard=True, timeout=5)
+
     def test_cache_reject_core0(self):
         self._run_rom_probe('esp32s3-cache-reject-core0.elf',
                             CORE0_ROM_ELF_ZLIB_B64, 1)
+
+    def test_cache_reject_core1(self):
+        self._run_console_rom_probe('esp32s3-cache-reject-core1.elf',
+                                    CORE1_ROM_ELF_ZLIB_B64, 2,
+                                    'CPU1_OK', 'CPU1_FAIL')
 
 
 if __name__ == '__main__':
