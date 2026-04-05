@@ -189,6 +189,18 @@ REG32(EXTMEM_DCACHE_SYNC_ADDR, 0x02C)
 REG32(EXTMEM_DCACHE_SYNC_SIZE, 0x030)
     FIELD(EXTMEM_DCACHE_SYNC_SIZE, SYNC_SIZE, 0, 23)
 
+_Static_assert(A_EXTMEM_DCACHE_SYNC_ADDR == A_EXTMEM_DCACHE_SYNC_CTRL + 4,
+               "DCache sync address register must immediately follow sync control");
+_Static_assert(A_EXTMEM_DCACHE_SYNC_SIZE == A_EXTMEM_DCACHE_SYNC_ADDR + 4,
+               "DCache sync size register must immediately follow sync address");
+_Static_assert(R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK == 0x00000001,
+               "DCache invalidate enable bit must match the ESP32-S3 PAC layout");
+_Static_assert(R_EXTMEM_DCACHE_SYNC_CTRL_WRITEBACK_ENA_MASK == 0x00000002,
+               "DCache writeback enable bit must match the ESP32-S3 PAC layout");
+_Static_assert(R_EXTMEM_DCACHE_SYNC_CTRL_CLEAN_ENA_MASK == 0x00000004,
+               "DCache clean enable bit must match the ESP32-S3 PAC layout");
+_Static_assert(R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK == 0x00000008,
+               "DCache sync done bit must match the ESP32-S3 PAC layout");
 
 REG32(EXTMEM_DCACHE_PRELOAD_CTRL, 0x040)
     FIELD(EXTMEM_DCACHE_PRELOAD_CTRL, PRELOAD_ORDER, 2, 1)
@@ -253,6 +265,15 @@ REG32(EXTMEM_ICACHE_SYNC_ADDR, 0x08C)
 
 REG32(EXTMEM_ICACHE_SYNC_SIZE, 0x090)
     FIELD(EXTMEM_ICACHE_SYNC_SIZE, SYNC_SIZE, 0, 23)
+
+_Static_assert(A_EXTMEM_ICACHE_SYNC_ADDR == A_EXTMEM_ICACHE_SYNC_CTRL + 4,
+               "ICache sync address register must immediately follow sync control");
+_Static_assert(A_EXTMEM_ICACHE_SYNC_SIZE == A_EXTMEM_ICACHE_SYNC_ADDR + 4,
+               "ICache sync size register must immediately follow sync address");
+_Static_assert(R_EXTMEM_ICACHE_SYNC_CTRL_INVALIDATE_ENA_MASK == 0x00000001,
+               "ICache invalidate enable bit must match the ESP32-S3 PAC layout");
+_Static_assert(R_EXTMEM_ICACHE_SYNC_CTRL_SYNC_DONE_MASK == 0x00000002,
+               "ICache sync done bit must match the ESP32-S3 PAC layout");
 
 REG32(EXTMEM_ICACHE_PRELOAD_CTRL, 0x094)
     FIELD(EXTMEM_ICACHE_PRELOAD_CTRL, PRELOAD_ORDER, 2, 1)

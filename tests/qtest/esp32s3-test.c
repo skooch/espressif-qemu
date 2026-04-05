@@ -249,6 +249,15 @@ static void test_cache_deferred_completion_semantics(void)
             .idle_mask = 1u << R_EXTMEM_CACHE_STATE_DCACHE_STATE_SHIFT,
         },
         {
+            .reg = A_EXTMEM_DCACHE_SYNC_CTRL,
+            .trigger_bits = R_EXTMEM_DCACHE_SYNC_CTRL_CLEAN_ENA_MASK,
+            .ena_mask = R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK |
+                        R_EXTMEM_DCACHE_SYNC_CTRL_WRITEBACK_ENA_MASK |
+                        R_EXTMEM_DCACHE_SYNC_CTRL_CLEAN_ENA_MASK,
+            .done_mask = R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK,
+            .idle_mask = 1u << R_EXTMEM_CACHE_STATE_DCACHE_STATE_SHIFT,
+        },
+        {
             .reg = A_EXTMEM_DCACHE_PRELOAD_CTRL,
             .trigger_bits = R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK,
             .ena_mask = R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK,
