@@ -8,7 +8,7 @@
 - [x] Task 2: separate immediate state changes from deferred completion semantics
 - [x] Task 2: leave broader cycle-accuracy work for a later stage
 - [x] Task 3: inventory the exact EMAC behavior the firmware touches
-- [x] Task 3: decide between a replacement model and a board adapter around the existing path (decision: defer until firmware actually touches EMAC)
+- [x] Task 3: decide between a replacement model and tightening the existing path (decision: keep `open_eth` for now and make its guest-visible contract explicit)
 - [x] Task 4: record which missing Xtensa instructions or local-memory behaviors actually block guest code
 - [x] Task 4: rank those blockers so the smallest guest-visible fixes land first
 - [x] Task 4: keep this track separate from peripheral work so the dependency chain stays visible
@@ -19,5 +19,5 @@
 - [x] Task 4: finish a reliable real-board cache-alias fault repro so `esp32s3` softmmu probes reach guest-controlled fault handling and can prove the remaining exception-delivery behavior
 - [x] Task 4: promote the now-working board cache-alias repro into a first in-tree regression for the core0 board path
 - [x] Task 4: extend the board cache-alias regression to the core1 reject path so both guest-visible cores are no longer proved only by temporary probes
-- [ ] Task 3: implement the minimum packet and link bring-up behavior needed by firmware if a guest starts using EMAC
-- [ ] Task 3: add a regression for that future link bring-up and packet behavior
+- [x] Task 3: implement the minimum packet and link bring-up behavior needed by firmware if a guest starts using EMAC
+- [x] Task 3: add a regression for that future link bring-up and packet behavior

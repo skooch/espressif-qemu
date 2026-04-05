@@ -381,10 +381,9 @@ static bool open_eth_can_receive(NetClientState *nc)
     return GET_REGBIT(s, MODER, RXEN) && (s->regs[TX_BD_NUM] < 0x80);
 }
 
-static ssize_t open_eth_receive(NetClientState *nc,
+static ssize_t open_eth_receive_frame(OpenEthState *s,
         const uint8_t *buf, size_t size)
 {
-    OpenEthState *s = qemu_get_nic_opaque(nc);
     size_t maxfl = GET_REGFIELD(s, PACKETLEN, MAXFL);
     size_t minfl = GET_REGFIELD(s, PACKETLEN, MINFL);
     size_t fcsl = 4;
@@ -498,6 +497,14 @@ static ssize_t open_eth_receive(NetClientState *nc,
     return size;
 }
 
+static ssize_t open_eth_receive(NetClientState *nc,
+        const uint8_t *buf, size_t size)
+{
+    OpenEthState *s = qemu_get_nic_opaque(nc);
+
+    return open_eth_receive_frame(s, buf, size);
+}
+
 static NetClientInfo net_open_eth_info = {
     .type = NET_CLIENT_DRIVER_NIC,
     .size = sizeof(NICState),
@@ -536,7 +543,13 @@ static void open_eth_start_xmit(OpenEthState *s, desc *tx)
     if (tx_len > len) {
         memset(buf + len, 0, tx_len - len);
     }
-    qemu_send_packet(qemu_get_queue(s->nic), buf, tx_len);
+    if (GET_REGBIT(s, MODER, LOOPBCK)) {
+        if (GET_REGBIT(s, MODER, RXEN) && s->regs[TX_BD_NUM] < 0x80) {
+            open_eth_receive_frame(s, buf, tx_len);
+        }
+    } else {
+        qemu_send_packet(qemu_get_queue(s->nic), buf, tx_len);
+    }
     if (tx_len > sizeof(buffer)) {
         g_free(buf);
     }
@@ -655,6 +668,8 @@ static void open_eth_mii_command_host_write(OpenEthState *s, uint32_t val)
     unsigned fiad = GET_REGFIELD(s, MIIADDRESS, FIAD);
     unsigned rgad = GET_REGFIELD(s, MIIADDRESS, RGAD);
 
+    s->regs[MIICOMMAND] = val;
+
     if (val & MIICOMMAND_WCTRLDATA) {
         if (fiad == DEFAULT_PHY) {
             mii_write_host(&s->mii, rgad,
@@ -668,6 +683,8 @@ static void open_eth_mii_command_host_write(OpenEthState *s, uint32_t val)
         } else {
             s->regs[MIIRX_DATA] = 0xffff;
         }
+    }
+    if (val & (MIICOMMAND_RSTAT | MIICOMMAND_SCANSTAT)) {
         SET_REGFIELD(s, MIISTATUS, LINKFAIL, qemu_get_queue(s->nic)->link_down);
     }
 }

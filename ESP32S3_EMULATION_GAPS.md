@@ -12,7 +12,7 @@ The current scope is intentionally limited to the previously identified high-imp
 - removal of boot-critical dependence on the generic MMIO echo region
 - tighter USB Serial/JTAG, I2C, UART, PMS, RNG, and SHA behavior
 
-Deferred items such as deep clock/reset rework, cache/MMU timing realism, `open_eth` replacement, and broader Xtensa backend fidelity remain out of scope for this immediate program.
+Deferred items such as deep clock/reset rework, cache/MMU timing realism beyond the current packet/link contract, a full ESP32-S3-specific EMAC replacement, and broader Xtensa backend fidelity remain out of scope for this immediate program.
 
 ## Current State Snapshot
 
@@ -35,7 +35,7 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 | Cache / MMU / external memory | Functional and boot-capable | Operations complete too eagerly and state reporting is too optimistic | High |
 | USB Serial/JTAG, I2C, UART, SHA | Board-path complete with RX, completion semantics, clock-derived timing, and IRQ coverage | DMA error paths, uncommon timing modes, and multi-CPU interrupt routing remain incomplete | Medium |
 | PMS + RNG | Intentionally narrow modeled behavior | Useful for current firmware, not a full device-faithful implementation | Low to Medium |
-| Ethernet | Generic `open_eth` stand-in, apparently unused by the current firmware path | Not an ESP32-S3-specific EMAC model | Low for the current workload, High if future firmware depends on EMAC details |
+| Ethernet | Generic `open_eth` stand-in with direct link/MII and descriptor loopback regression coverage | Still not an ESP32-S3-specific EMAC model or full PHY implementation | Low for the current workload, Medium to High if future firmware depends on deeper EMAC details |
 | RMT | Unimplemented | Entire block still absent | High if firmware depends on it |
 | Xtensa backend | Sufficient for current guest path | Architectural edge cases and local-memory exclusion remain incomplete | High for broader firmware coverage |
 
@@ -47,7 +47,7 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 - Clock, reset, and sleep/power behavior are only partially modeled. The `SYSTEM` block handles a small subset of registers, RTC sleep/wake logic is tailored to current timer/GPIO/EXT1 paths, and reset still contains QEMU-specific shims.
 - Most previously placeholder peripherals have been tightened to board-path-complete behavior: USB Serial/JTAG now supports RX delivery, FIFO-used status reporting, and RX/TX interrupt state; I2C clears and sets DONE bits per-command with deferred completion IRQ delivery; UART derives baud and pulse timing from the active clock configuration (falling back to 40 MHz only when no clock device is linked); PMS returns RAZ/WI for addresses above 0x100 and a date register at 0xFFC; SHA asserts and clears interrupt state on completion for both DMA and non-DMA paths; RNG is intentionally narrow (only addr==0 && size==4 returns host entropy). Remaining gaps include DMA error paths, uncommon timing modes, unsupported I2C slave/APB-nonfifo modes, and multi-CPU interrupt routing.
 - External memory and cache behavior are still functional rather than cycle-accurate. Flash-backed MMU remaps are immediate, but cache sync/preload/autoload requests now complete after a short deferred timer and drive `CACHE_STATE` busy/idle reporting instead of reporting completion only when software reads the control register.
-- Some blocks are substituted with generic IP rather than an S3-specific model, notably Ethernet through `open_eth`, though the current T-Deck Pro firmware path does not appear to exercise the EMAC block at all.
+- Some blocks are substituted with generic IP rather than an S3-specific model. Ethernet still uses `open_eth`, but the current tree now makes the QEMU-visible contract explicit: `MIICOMMAND`/MII link polling stays latched correctly, backend link toggles update `MIISTATUS`, and loopback mode can drive descriptor RX from TX for direct regression coverage.
 - SPI1 had an outright correctness bug in the flash transfer loop: the byte loop compared the payload value instead of the loop index, making the transfer path data-dependent. (Now fixed; see Stage 2.)
 - The generic Xtensa backend still has known accuracy gaps such as remaining reject-surface coverage gaps and unimplemented opcode paths.
 - Real `esp32s3` board guest probing is no longer blocked by ROM handoff. The board now loads custom ROM ELFs through `-bios` into each CPU address space correctly, and the tree now has checked-in functional regressions for recoverable cache-alias reject handling on both CPU0 and CPU1. The remaining gap is only the broader reject surface beyond the active board path.
@@ -91,7 +91,7 @@ Current firmware and library code rely on a narrower subset of cache/MMU behavio
 - The current reviewed firmware does not appear to rely on the broader EXTMEM management surface such as cache prelock/lock controls, preload/autoload sequencing, PMS reject capture, wraparound control, or cache/MMU fault reporting. Those registers exist in the header today, but they are not part of the confirmed dependency set for the active T-Deck Pro workload.
 - There is now direct ESP32-S3 qtest coverage for flash-backed MMU remapping, the `CTRL1` state touched by PSRAM bring-up, and the deferred completion path for sync/preload/autoload operations. Remaining cache/MMU simplifications are now mostly in the "leave cycle-accuracy for later" bucket: coalesced completion timing, simplified freeze semantics, and no attempt to model contention or ROM-internal cache-disable depth.
 
-### Task 3 EMAC Inventory (2026-04-04)
+### Task 3 EMAC Inventory And Current Contract (2026-04-05)
 
 Background commits reviewed for the current Ethernet path:
 
@@ -105,11 +105,15 @@ Current firmware and board-path findings:
 - There is no app-level evidence that the current firmware reads or writes the ESP32-S3 EMAC register block, configures an external PHY, or expects RMII link state from the board.
 - The QEMU board path is correspondingly generic rather than board-specific. It instantiates `open_eth`, maps its two MMIO windows, and routes its interrupt, but it does not model a T-Deck-specific Ethernet PHY or any exercised board wiring around that block.
 - The exact EMAC behavior the current firmware touches is therefore effectively none. `open_eth` is a latent fidelity risk for future Ethernet-aware guests, not an actively exercised dependency of the current Wi-Fi-based T-Deck Pro workload.
-- Scope decision: defer EMAC replacement work until a guest actually touches the EMAC surface. For the current workload, the lowest-risk path is to keep `open_eth` dormant and move active fidelity work to the Xtensa/backend queue.
+- Local ESP-IDF context matters here: the bundled `components/esp_eth/src/openeth/esp_eth_mac_openeth.c` driver is already a QEMU-only OpenCores path, so the smallest correct slice is not replacing `open_eth` but making that path explicit and testable.
+- Current scope decision: keep `open_eth` for the present board path, but tighten its visible contract instead of leaving it as an untested dormant placeholder.
+- Current tree: `open_eth` now latches `MIICOMMAND`, preserves `SCANSTAT`-driven link polling behavior across host reads, updates `MIISTATUS.LINKFAIL` when the backend link changes, and supports descriptor TX-to-RX loopback when `MODER.LOOPBCK` is enabled.
+- Current coverage: the ESP32-S3 qtest suite now boots the board with `-nic user,id=emac0,model=open_eth`, uses QMP `set_link` to verify MII-visible link up/down transitions, and proves TX/RX descriptor plus IRQ behavior through loopback.
+- Remaining future risk: the board still does not model an ESP32-S3-specific EMAC block or a realistic external PHY beyond the OpenCores/QEMU path. That replacement stays deferred until a guest actually needs more than the current QEMU-targeted contract.
 
 ### Task 4 Xtensa Backend Queue (2026-04-04)
 
-The active Xtensa/backend queue now lives in `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md` so it stays separate from the peripheral backlog and tied to current firmware behavior.
+The active Xtensa/backend queue now lives in `.claude/plans/implemented/esp32s3-deferred-foundation/xtensa-blockers.md` so it stays separate from the peripheral backlog and tied to current firmware behavior.
 
 Current ranking:
 
@@ -128,9 +132,9 @@ Recently resolved in this track:
 
 ### Current Risk Notes
 
-- The highest remaining accuracy risk is no longer the active display path. The bigger remaining problems are the deferred foundation items: clock/reset/sleep fidelity, cache/MMU sequencing, generic-MMIO dependence, `open_eth`, and broader Xtensa accuracy.
+- The highest remaining accuracy risk is no longer the active display path. The bigger remaining problems are the deferred foundation items: clock/reset/sleep fidelity, cache/MMU sequencing, generic-MMIO dependence, deeper EMAC fidelity beyond the current OpenCores contract, and broader Xtensa accuracy.
 - Performance-sensitive guest code is likely to diverge from hardware because cache and MMU operations are modeled as functional state transitions rather than realistic completion and contention behavior.
-- Firmware that touches only the currently exercised board path is much more likely to work than firmware that depends on deep power-management, uncommon DMA/peripheral corner cases, EMAC, RMT, or architectural edge conditions.
+- Firmware that touches only the currently exercised board path is much more likely to work than firmware that depends on deep power-management, uncommon DMA/peripheral corner cases, EMAC behavior beyond the current OpenCores contract, RMT, or architectural edge conditions.
 
 ### Recently Resolved
 
@@ -160,7 +164,7 @@ Recently resolved in this track:
 
 - `P3` Deep clock/reset/sleep fidelity rework to eliminate QEMU-only identity/workaround behavior.
 - `P3` Cache/MMU sequencing and timing realism beyond boot-critical paths.
-- `P3` Replace `open_eth` with a more ESP32-S3-specific EMAC model if firmware needs it.
+- `P3` Replace `open_eth` with a more ESP32-S3-specific EMAC model if firmware needs more than the current QEMU OpenCores link / packet contract.
 - `P3` Broader Xtensa architectural fidelity work once guest firmware depends on those features.
 
 ## Immediate Program
@@ -241,7 +245,7 @@ Recently resolved in this track:
 
 ### Stage 6 Status
 
-- Broken into a dedicated in-progress plan at `.claude/plans/in-progress/esp32s3-deferred-foundation/plan.md`.
+- Captured in the implemented deferred-foundation plan at `.claude/plans/implemented/esp32s3-deferred-foundation/plan.md`.
 
 ## Source References
 

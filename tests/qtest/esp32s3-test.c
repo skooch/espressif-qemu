@@ -28,6 +28,7 @@
 #include "hw/misc/esp32s3_cache.h"
 #include "hw/misc/esp32s3_rtc_cntl.h"
 #include "hw/dma/esp32s3_gdma.h"
+#include "hw/net/mii.h"
 #include "hw/misc/esp32s3_rng.h"
 #include "hw/misc/esp32s3_reg.h"
 #include "hw/misc/esp_sha.h"
@@ -44,6 +45,7 @@
 #define IOMUX_BASE              DR_REG_IO_MUX_BASE
 #define JTAG_BASE               DR_REG_USB_SERIAL_JTAG_BASE
 #define I2C0_BASE               DR_REG_I2C_EXT_BASE
+#define EMAC_BASE               DR_REG_EMAC_BASE
 #define UART0_BASE              DR_REG_UART_BASE
 #define SHA_BASE                DR_REG_SHA_BASE
 #define SYSTEM_BASE             DR_REG_SYSTEM_BASE
@@ -52,6 +54,43 @@
 #define CACHE_OP_DELAY_NS              1000
 #define ESP32S3_CACHE_IA_SOURCE        56
 #define ESP32S3_CACHE_CORE0_ACS_SOURCE 94
+#define ESP32S3_EMAC_SOURCE            0
+
+#define OPENETH_MODER_DEFAULT          0xa000
+#define OPENETH_MODER_LOOPBCK          BIT(7)
+#define OPENETH_MODER_PRO              BIT(5)
+#define OPENETH_MODER_TXEN             BIT(1)
+#define OPENETH_MODER_RXEN             BIT(0)
+#define OPENETH_INT_SOURCE_RXB         BIT(2)
+#define OPENETH_INT_SOURCE_TXB         BIT(0)
+#define OPENETH_MIICOMMAND_RSTAT       BIT(1)
+#define OPENETH_MIICOMMAND_SCANSTAT    BIT(0)
+#define OPENETH_MIISTATUS_LINKFAIL     BIT(0)
+#define OPENETH_DEFAULT_PHY            1
+#define OPENETH_MIIADDRESS_RGAD_SHIFT  8
+#define OPENETH_MIIADDRESS_FIAD_SHIFT  0
+#define OPENETH_TXD_RD                 BIT(15)
+#define OPENETH_TXD_IRQ                BIT(14)
+#define OPENETH_RXD_E                  BIT(15)
+#define OPENETH_RXD_IRQ                BIT(14)
+#define OPENETH_RXD_M                  BIT(7)
+
+#define OPENETH_INT_SOURCE_REG         (EMAC_BASE + 0x04)
+#define OPENETH_INT_MASK_REG           (EMAC_BASE + 0x08)
+#define OPENETH_TX_BD_NUM_REG          (EMAC_BASE + 0x20)
+#define OPENETH_MIICOMMAND_REG         (EMAC_BASE + 0x2c)
+#define OPENETH_MIIADDRESS_REG         (EMAC_BASE + 0x30)
+#define OPENETH_MIIRX_DATA_REG         (EMAC_BASE + 0x38)
+#define OPENETH_MIISTATUS_REG          (EMAC_BASE + 0x3c)
+#define OPENETH_MAC_ADDR0_REG          (EMAC_BASE + 0x40)
+#define OPENETH_MAC_ADDR1_REG          (EMAC_BASE + 0x44)
+#define OPENETH_DESC_BASE              (EMAC_BASE + 0x400)
+#define OPENETH_DESC_SIZE              8
+#define OPENETH_RX_DESC_INDEX          0x40
+#define OPENETH_TX_DESC0_ADDR          (OPENETH_DESC_BASE + 0 * OPENETH_DESC_SIZE)
+#define OPENETH_RX_DESC0_ADDR          (OPENETH_DESC_BASE + OPENETH_RX_DESC_INDEX * OPENETH_DESC_SIZE)
+#define OPENETH_TX_BUF_BASE            (ESP_GDMA_RAM_ADDR + 0x2000)
+#define OPENETH_RX_BUF_BASE            (ESP_GDMA_RAM_ADDR + 0x2100)
 
 #define GPSPI_CMD_UPDATE_BIT    BIT(23)
 #define GPSPI_CMD_USR_BIT       BIT(24)
@@ -76,6 +115,11 @@ static QTestState *qts_start(void)
 static QTestState *qts_start_smp1(void)
 {
     return qtest_init("-M esp32s3 -smp 1");
+}
+
+static QTestState *qts_start_with_openeth(void)
+{
+    return qtest_init("-M esp32s3 -nic user,id=emac0,model=open_eth");
 }
 
 #ifndef _WIN32
@@ -1372,6 +1416,146 @@ static void test_pms_modeled_surface(void)
     qtest_quit(qts);
 }
 
+static uint16_t openeth_mii_read(QTestState *qts, uint8_t reg)
+{
+    uint32_t cmd = qtest_readl(qts, OPENETH_MIICOMMAND_REG);
+
+    qtest_writel(qts, OPENETH_MIIADDRESS_REG,
+                 (reg << OPENETH_MIIADDRESS_RGAD_SHIFT) |
+                 (OPENETH_DEFAULT_PHY << OPENETH_MIIADDRESS_FIAD_SHIFT));
+    qtest_writel(qts, OPENETH_MIICOMMAND_REG, cmd | OPENETH_MIICOMMAND_RSTAT);
+
+    return qtest_readl(qts, OPENETH_MIIRX_DATA_REG) & 0xffff;
+}
+
+static void openeth_read_mac(QTestState *qts, uint8_t mac[6])
+{
+    uint32_t mac0 = qtest_readl(qts, OPENETH_MAC_ADDR0_REG);
+    uint32_t mac1 = qtest_readl(qts, OPENETH_MAC_ADDR1_REG);
+
+    mac[0] = (mac1 >> 8) & 0xff;
+    mac[1] = mac1 & 0xff;
+    mac[2] = (mac0 >> 24) & 0xff;
+    mac[3] = (mac0 >> 16) & 0xff;
+    mac[4] = (mac0 >> 8) & 0xff;
+    mac[5] = mac0 & 0xff;
+}
+
+static void openeth_wait_for_link_state(QTestState *qts, bool up)
+{
+    uint32_t expected_linkfail = up ? 0 : OPENETH_MIISTATUS_LINKFAIL;
+
+    for (int i = 0; i < 100; i++) {
+        uint16_t bmsr = openeth_mii_read(qts, MII_BMSR);
+        uint32_t miistatus = qtest_readl(qts, OPENETH_MIISTATUS_REG) &
+                             OPENETH_MIISTATUS_LINKFAIL;
+
+        if (!!(bmsr & MII_BMSR_LINK_ST) == up &&
+            miistatus == expected_linkfail) {
+            return;
+        }
+
+        qtest_clock_step(qts, 1);
+    }
+
+    g_assert_not_reached();
+}
+
+static void test_emac_link_and_loopback_surface(void)
+{
+    QTestState *qts = qts_start_with_openeth();
+    uint8_t mac[6];
+    uint8_t tx_frame[64] = { 0 };
+    uint8_t rx_frame[sizeof(tx_frame) + 4];
+    uint32_t tx_len_flags;
+    uint32_t rx_len_flags;
+
+    qtest_irq_intercept_in(qts, "/machine/soc/intmatrix");
+
+    g_assert_cmphex(qtest_readl(qts, EMAC_BASE + 0x00), ==, OPENETH_MODER_DEFAULT);
+
+    qtest_writel(qts, OPENETH_MIICOMMAND_REG, OPENETH_MIICOMMAND_SCANSTAT);
+    g_assert_cmphex(qtest_readl(qts, OPENETH_MIICOMMAND_REG) &
+                    OPENETH_MIICOMMAND_SCANSTAT,
+                    ==, OPENETH_MIICOMMAND_SCANSTAT);
+    g_assert_cmphex(openeth_mii_read(qts, MII_BMSR) & MII_BMSR_LINK_ST,
+                    ==, MII_BMSR_LINK_ST);
+    g_assert_cmphex(qtest_readl(qts, OPENETH_MIISTATUS_REG) &
+                    OPENETH_MIISTATUS_LINKFAIL,
+                    ==, 0);
+
+    qtest_qmp_assert_success(qts,
+                             "{ 'execute': 'set_link', 'arguments': { "
+                             "'name': 'emac0', 'up': false } }");
+    openeth_wait_for_link_state(qts, false);
+
+    qtest_qmp_assert_success(qts,
+                             "{ 'execute': 'set_link', 'arguments': { "
+                             "'name': 'emac0', 'up': true } }");
+    openeth_wait_for_link_state(qts, true);
+
+    openeth_read_mac(qts, mac);
+    memcpy(tx_frame, mac, sizeof(mac));
+    tx_frame[6] = 0x02;
+    tx_frame[7] = 0x00;
+    tx_frame[8] = 0x00;
+    tx_frame[9] = 0x00;
+    tx_frame[10] = 0x00;
+    tx_frame[11] = 0x01;
+    tx_frame[12] = 0x08;
+    tx_frame[13] = 0x00;
+    for (size_t i = 14; i < sizeof(tx_frame); i++) {
+        tx_frame[i] = i;
+    }
+
+    qtest_memwrite(qts, OPENETH_TX_BUF_BASE, tx_frame, sizeof(tx_frame));
+    qtest_memset(qts, OPENETH_RX_BUF_BASE, 0xcc, sizeof(rx_frame));
+
+    qtest_writel(qts, OPENETH_INT_SOURCE_REG, 0xffffffff);
+    qtest_writel(qts, OPENETH_INT_MASK_REG,
+                 OPENETH_INT_SOURCE_RXB | OPENETH_INT_SOURCE_TXB);
+
+    qtest_writel(qts, OPENETH_RX_DESC0_ADDR + 4, OPENETH_RX_BUF_BASE);
+    qtest_writel(qts, OPENETH_RX_DESC0_ADDR + 0,
+                 OPENETH_RXD_E | OPENETH_RXD_IRQ);
+
+    qtest_writel(qts, EMAC_BASE + 0x00,
+                 OPENETH_MODER_DEFAULT |
+                 OPENETH_MODER_LOOPBCK |
+                 OPENETH_MODER_PRO |
+                 OPENETH_MODER_TXEN |
+                 OPENETH_MODER_RXEN);
+
+    qtest_writel(qts, OPENETH_TX_DESC0_ADDR + 4, OPENETH_TX_BUF_BASE);
+    qtest_writel(qts, OPENETH_TX_DESC0_ADDR + 0,
+                 (sizeof(tx_frame) << 16) |
+                 OPENETH_TXD_IRQ |
+                 OPENETH_TXD_RD);
+
+    g_assert_true(qtest_get_irq(qts, ESP32S3_EMAC_SOURCE));
+    g_assert_cmphex(qtest_readl(qts, OPENETH_INT_SOURCE_REG) &
+                    (OPENETH_INT_SOURCE_RXB | OPENETH_INT_SOURCE_TXB),
+                    ==, OPENETH_INT_SOURCE_RXB | OPENETH_INT_SOURCE_TXB);
+
+    tx_len_flags = qtest_readl(qts, OPENETH_TX_DESC0_ADDR + 0);
+    g_assert_cmphex(tx_len_flags & OPENETH_TXD_RD, ==, 0);
+
+    rx_len_flags = qtest_readl(qts, OPENETH_RX_DESC0_ADDR + 0);
+    g_assert_cmphex(rx_len_flags & OPENETH_RXD_E, ==, 0);
+    g_assert_cmphex(rx_len_flags & OPENETH_RXD_M, ==, 0);
+    g_assert_cmpuint(rx_len_flags >> 16, ==, sizeof(tx_frame) + 4);
+
+    qtest_memread(qts, OPENETH_RX_BUF_BASE, rx_frame, sizeof(rx_frame));
+    g_assert_cmpmem(rx_frame, sizeof(tx_frame), tx_frame, sizeof(tx_frame));
+    g_assert_cmphex(ldl_le_p(&rx_frame[sizeof(tx_frame)]), ==, 0);
+
+    qtest_writel(qts, OPENETH_INT_SOURCE_REG,
+                 OPENETH_INT_SOURCE_RXB | OPENETH_INT_SOURCE_TXB);
+    g_assert_false(qtest_get_irq(qts, ESP32S3_EMAC_SOURCE));
+
+    qtest_quit(qts);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -1412,6 +1596,7 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/sha/irq", test_sha_irq);
     qtest_add_func("/esp32s3/sha/dma-start-continue", test_sha_dma_start_and_continue_irq_paths);
     qtest_add_func("/esp32s3/gpspi/dma-tx-rx-handoff", test_gpspi_dma_txrx_handoff);
+    qtest_add_func("/esp32s3/emac/link-loopback", test_emac_link_and_loopback_surface);
     qtest_add_func("/esp32s3/pms/modeled-surface", test_pms_modeled_surface);
     qtest_add_func("/esp32s3/rng/modeled-surface", test_rng_modeled_surface);
 

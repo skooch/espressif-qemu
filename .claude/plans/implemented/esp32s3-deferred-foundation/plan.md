@@ -16,15 +16,14 @@
 
 **Branch:** `tdeck-peripherals`
 
-**HEAD:** `32d0563ca1`
+**HEAD:** `0accecd48a`
 
-This plan was updated against the current tree, not the original backlog description. Several parts of the deferred foundation work are already partially implemented and should no longer be treated as untouched.
+This plan was updated against the current tree, not the original backlog description. Several parts of the deferred foundation work are already implemented and should no longer be treated as untouched.
 
-- Task 1 is **partially complete**. The RTC block now models sleep state, wake causes, CPU reset requests, CPU stall requests, and clock-update signaling, and the board wires those paths through the SoC.
-- Task 2 is **partially complete**. The cache/MMU model already implements MMU entry storage, invalidation, flash/PSRAM mapping, and IOMMU-backed translation.
-- Task 3 is **explicitly deferred**. The board still instantiates `open_eth`, but the current T-Deck Pro firmware path is Wi-Fi-only, so EMAC replacement work is postponed until a guest actually touches that block.
-- Task 4 is **now a tracked queue**. The backend blockers are captured in `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md` and ranked against the current firmware path.
-- Task 4 now has a narrower real-board prerequisite for guest-visible reject regressions on the `esp32s3` machine: the first investigation exposed both a one-core board reset crash and a still-unfinished custom repro handoff, so the next slice needs a reliable `esp32s3` softmmu fault harness before we can definitively measure the remaining cache-alias exception-delivery behavior.
+- Task 1 is **complete for this stage**. The RTC block now models sleep state, wake causes, CPU reset requests, CPU stall requests, and clock-update signaling, and the board wires those paths through the SoC with direct qtest coverage for wake, reset, and stall behavior.
+- Task 2 is **complete for this stage**. The cache/MMU model now exposes the guest-visible mapping and completion semantics the active workload depends on, with direct qtest coverage for remapping, `CTRL1`, deferred cache-op completion, MMU faults, and the first reject paths.
+- Task 3 is **now closed for the current workload**. The board still instantiates `open_eth`, but the minimum guest-visible EMAC contract is now explicit: link-state MII polling latches correctly, backend link toggles propagate into the modeled MAC/PHY surface, and descriptor TX can loop back into RX for direct board-path regression coverage.
+- Task 4 is **complete for the currently ranked blocker set**. The backend blockers are captured in `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md`, and the tree now has direct regressions for the `ATOMCTL` local-memory fix plus board-path cache-reject handling on both core0 and core1.
 
 ---
 
@@ -39,7 +38,7 @@ This plan was updated against the current tree, not the original backlog descrip
 - **Modify:** `hw/gpio/esp32s3_gpio.c` - keep RTC wakeup integration aligned with the RTC sleep path
 - **Modify:** `hw/misc/esp32s3_rtc_cntl.c` - finish the remaining reset/sleep/wake fidelity work around the existing state machine
 - **Modify:** `include/hw/misc/esp32s3_rtc_cntl.h` - track any additional RTC state needed by the remaining board-control work
-- **Modify:** `hw/net/` or replacement device model - replace `open_eth` with a more ESP32-S3-specific EMAC path if firmware requires it
+- **Modify:** `hw/net/opencores_eth.c` - tighten the generic OpenCores path to the minimum guest-visible EMAC contract used by QEMU-targeted ESP-IDF guests
 - **Modify:** `target/xtensa/` - track guest-observed Xtensa backend gaps as they become firmware blockers
 - **Modify:** `tests/qtest/esp32s3-test.c` - keep direct ESP32-S3 regression coverage aligned with the guest-visible cache/MMU and board-control contract
 - **Add:** `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md` - repo-visible ranked queue for Xtensa/backend blockers tied to current firmware behavior
@@ -99,29 +98,29 @@ Cache and MMU behavior is currently good enough to boot but not yet shaped aroun
 - Cache/MMU operations are explicit enough that guest-visible ordering is understandable and testable.
 - The guest-observed sequence is captured by a regression.
 
-## Task 3: Replace `open_eth`
+## Task 3: Tighten The `open_eth` Board Path
 
 **Files:**
 - Modify: `hw/net/`
 - Modify: `hw/xtensa/esp32s3.c`
 
-The current Ethernet story is still anchored by generic IP. This track replaces it with either an ESP32-S3-specific model or a narrow dedicated replacement that matches the board surface firmware expects.
+The current Ethernet story is still anchored by generic IP. For the current workload, this track makes the existing `open_eth` path explicit and testable rather than replacing it outright.
 
 - [x] Confirm whether this track is still needed.
   Current tree: yes. `hw/xtensa/esp32s3.c` still instantiates `open_eth` for the active Ethernet path.
 - [x] Inventory the exact EMAC behavior the firmware touches.
   Current inventory: the active T-Deck Pro firmware path is Wi-Fi-only (`esp_radio::wifi` + `embassy-net`) and shows no direct EMAC, RMII, or PHY usage, so `open_eth` is currently a dormant generic stand-in rather than an exercised board dependency.
 - [x] Decide whether the first slice is a replacement model or a board adapter around the existing path.
-  Current decision: neither for now. By explicit scope choice, this track is deferred until guest firmware actually touches the EMAC surface.
-- [ ] Implement the minimum packet and link bring-up behavior that the firmware needs.
-  Deferred trigger: start this only when a guest begins reading or writing the EMAC surface or requires link behavior beyond the current dormant `open_eth` stand-in.
-- [ ] Add a regression for link bring-up and packet path behavior.
-  Deferred with the implementation work above.
+  Current decision: keep the existing `open_eth` device for now and tighten only the guest-visible link / packet surface that ESP-IDF's QEMU path expects.
+- [x] Implement the minimum packet and link bring-up behavior that the firmware needs.
+  Current tree: `open_eth` now latches `MIICOMMAND`, keeps `SCANSTAT` active across host reads, updates `MIISTATUS.LINKFAIL` when the backend link changes, and loops TX traffic back into RX when `MODER.LOOPBCK` is enabled so descriptor-driven packet handling is testable without a board-specific EMAC replacement.
+- [x] Add a regression for link bring-up and packet path behavior.
+  Current coverage: the ESP32-S3 qtest suite now boots `-nic user,id=emac0,model=open_eth`, drives QMP `set_link` up/down transitions through the MII surface, and proves descriptor TX-to-RX loopback plus IRQ assertion and clear behavior on the board path.
 
 ### Task 3 exit criteria
 
-- Firmware no longer depends on a generic device for the active Ethernet path.
-- There is a direct regression for the modeled packet surface.
+- The guest-visible EMAC surface used by QEMU-targeted firmware is explicit and regression-tested.
+- A future ESP32-S3-specific EMAC replacement remains optional rather than blocking current board fidelity.
 
 ## Task 4: Xtensa Backend Gaps
 
@@ -160,6 +159,6 @@ The backend still has guest-observed architectural gaps. These should stay track
 
 - Stage 1 and the immediate peripheral work remain green.
 - Task 1 and Task 2 have direct regressions for their guest-visible behavior, not just modeled code paths.
-- Task 3 has either a direct regression or a clearly defined prerequisite for replacing `open_eth`.
+- Task 3 has a direct regression for the current guest-visible EMAC contract, and any later replacement of `open_eth` is a separate future choice.
 - Task 4 has a repo-visible blocker queue that maps backend work to guest-observed failures.
 - The next implementation step can be assigned without re-litigating scope.
