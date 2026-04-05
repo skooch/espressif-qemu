@@ -142,9 +142,10 @@ The backend still has guest-observed architectural gaps. These should stay track
   Current tree: flash-backed write rejects now latch `CORE0/1_ACS_CACHE_INT_ST` plus the matching `CORE0/1_{DBUS,IBUS}_REJECT_{ST,VADDR}` registers, the SoC routes those lines to `ETS_CACHE_CORE0/1_ACS_INTR_SOURCE`, and the direct ESP32-S3 qtest suite now covers both core0 DBUS and core0 IBUS reject assert/clear contracts.
 - [x] Remove the one-core board reset crash that was blocking `esp32s3 -smp 1` softmmu repros.
   Current tree: `hw/xtensa/esp32s3.c` now respects `machine->smp.cpus` in reset and ROM/clock CPU wiring, and the ESP32-S3 qtest suite includes a direct `-smp 1` boot smoke test.
-- [ ] Finish a reliable real-board cache-alias fault repro before relying on `esp32s3` softmmu regressions for the per-core reject state.
-  Current blocker: the one-core board path no longer crashes, but the temporary custom-ROM probe still needs a stable boot/repro handoff before it can prove whether the remaining real-board problem is exception delivery, ROM takeover, or both.
-  Current blocker: temporary ROM probes that set MMU entry 0 and then store to `0x3c000000` currently land in the double-exception path with `EXCCAUSE=15` on both CPU0 and CPU1, so a guest kernel handler never gets a clean chance to observe the already-modeled `CORE0/1_{DBUS,IBUS}_REJECT_*` registers.
+- [x] Finish a reliable real-board cache-alias fault repro before relying on `esp32s3` softmmu regressions for the per-core reject state.
+  Current tree: `hw/xtensa/esp32s3.c` now resolves `-bios` through the BIOS search path, loads ROM ELFs into each CPU address space directly, and falls back to raw ROM images when the file is not ELF. Temporary custom-ROM probes now take control reliably on both `-smp 1` and `-smp 2`, and manual board runs confirm recoverable guest DBUS reject handling for both CPU0 and CPU1 on cache-alias writes.
+- [ ] Promote the now-working board cache-alias repro into an in-tree regression.
+  Current next step: the guest-visible path is now proven manually, but the coverage still lives in temporary ROM probes outside the tree rather than a checked-in functional or softmmu regression.
 - [x] Keep this track separate from peripheral work so the dependency chain stays visible.
   Current structure: the blocker queue lives beside this plan rather than being folded into the peripheral backlog.
 

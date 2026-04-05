@@ -709,6 +709,85 @@ static uint64_t translate_phys_addr(void *opaque, uint64_t addr)
     return cpu_get_phys_page_debug(CPU(cpu), addr);
 }
 
+static void esp32s3_install_reset_jump(Esp32s3SocState *ss, int cpu_index,
+                                       uint64_t elf_entry)
+{
+    uint8_t p[4];
+    g_autofree char *name = NULL;
+    uint8_t boot[] = {
+        0x06, 0x01, 0x00,       /* j    1 */
+        0x00,                   /* .literal_position */
+        0x00, 0x00, 0x00, 0x00, /* .literal elf_entry */
+                                /* 1: */
+        0x01, 0xff, 0xff,       /* l32r a0, elf_entry */
+        0xa0, 0x00, 0x00,       /* jx   a0 */
+    };
+
+    memcpy(p, &elf_entry, sizeof(p));
+    memcpy(&boot[4], p, sizeof(p));
+    name = g_strdup_printf("esp32s3.boot.cpu%d", cpu_index);
+    rom_add_blob_fixed_as(name, boot, sizeof(boot), XCHAL_RESET_VECTOR_PADDR,
+                          CPU(&ss->cpu[cpu_index])->as);
+    ss->cpu[cpu_index].env.pc = XCHAL_RESET_VECTOR_PADDR;
+}
+
+static void esp32s3_load_bios(Esp32s3SocState *ss, MachineState *machine)
+{
+    const char *bios_name = machine->firmware;
+    const struct MemmapEntry *memmap = esp32s3_memmap;
+    g_autofree char *bios_path = qemu_find_file(QEMU_FILE_TYPE_BIOS, bios_name);
+    uint64_t elf_entry = XCHAL_RESET_VECTOR_PADDR;
+    ssize_t size;
+
+    if (bios_path == NULL) {
+        error_report("Error: could not find BIOS '%s'", bios_name);
+        exit(1);
+    }
+
+    /*
+     * The ROM window lives in each CPU's private address space, so a ROM ELF
+     * needs to be loaded directly into the CPU AS instead of going through the
+     * MMU debug translation callback used by -kernel payloads.
+     */
+    size = load_elf_as(bios_path, NULL, NULL, NULL, &elf_entry, NULL, NULL,
+                       NULL, 0, EM_XTENSA, 0, 0, CPU(&ss->cpu[0])->as);
+    if (size == ELF_LOAD_NOT_ELF) {
+        for (int i = 0; i < machine->smp.cpus; ++i) {
+            size = load_image_targphys_as(bios_path,
+                                          memmap[ESP32S3_MEMREGION_IROM].base,
+                                          memmap[ESP32S3_MEMREGION_IROM].size,
+                                          CPU(&ss->cpu[i])->as);
+            if (size < 0) {
+                error_report("Error: could not load ROM binary '%s'", bios_path);
+                exit(1);
+            }
+        }
+        return;
+    }
+
+    if (size < 0) {
+        error_report("Error: could not load BIOS ELF '%s': %s",
+                     bios_path, load_elf_strerror(size));
+        exit(1);
+    }
+
+    for (int i = 1; i < machine->smp.cpus; ++i) {
+        size = load_elf_as(bios_path, NULL, NULL, NULL, NULL, NULL, NULL,
+                           NULL, 0, EM_XTENSA, 0, 0, CPU(&ss->cpu[i])->as);
+        if (size < 0) {
+            error_report("Error: could not load BIOS ELF '%s' for CPU%d: %s",
+                         bios_path, i, load_elf_strerror(size));
+            exit(1);
+        }
+    }
+
+    if (elf_entry != XCHAL_RESET_VECTOR_PADDR) {
+        for (int i = 0; i < machine->smp.cpus; ++i) {
+            esp32s3_install_reset_jump(ss, i, elf_entry);
+        }
+    }
+}
+
 OBJECT_DECLARE_SIMPLE_TYPE(Esp32s3MachineState, ESP32S3_MACHINE)
 
 // -----------------------------------------------
@@ -1192,16 +1271,9 @@ static void esp32s3_machine_init(MachineState *machine)
      */
     ss->cpu[0].env.sregs[CPENABLE] = 0xff;
 
-    const char *load_elf_filename = NULL;
-    if (machine->firmware) {
-        load_elf_filename = machine->firmware;
-    }
     if (machine->kernel_filename) {
+        const char *load_elf_filename = machine->kernel_filename;
         qemu_log("Warning: both -bios and -kernel arguments specified. Only loading the the -kernel file.\n");
-        load_elf_filename = machine->kernel_filename;
-    }
-
-    if (load_elf_filename) {
         uint64_t elf_entry;
         uint64_t elf_lowaddr;
         int size = load_elf(load_elf_filename, NULL,
@@ -1231,6 +1303,8 @@ static void esp32s3_machine_init(MachineState *machine)
             rom_add_blob_fixed_as("boot", boot, sizeof(boot), XCHAL_RESET_VECTOR_PADDR, CPU(&ss->cpu[0])->as);
             ss->cpu[0].env.pc = XCHAL_RESET_VECTOR_PADDR;
         }
+    } else if (machine->firmware) {
+        esp32s3_load_bios(ss, machine);
     } else {
         char *rom_binary = qemu_find_file(QEMU_FILE_TYPE_BIOS, "esp32s3_rev0_rom.bin");
         if (rom_binary == NULL) {

@@ -49,8 +49,8 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 - External memory and cache behavior are still functional rather than cycle-accurate. Flash-backed MMU remaps are immediate, but cache sync/preload/autoload requests now complete after a short deferred timer and drive `CACHE_STATE` busy/idle reporting instead of reporting completion only when software reads the control register.
 - Some blocks are substituted with generic IP rather than an S3-specific model, notably Ethernet through `open_eth`, though the current T-Deck Pro firmware path does not appear to exercise the EMAC block at all.
 - SPI1 had an outright correctness bug in the flash transfer loop: the byte loop compared the payload value instead of the loop index, making the transfer path data-dependent. (Now fixed; see Stage 2.)
-- The generic Xtensa backend still has known accuracy gaps such as incomplete cache/local-memory reject plumbing and unimplemented opcode paths.
-- Real `esp32s3` board guest probing is still incomplete on the cache-alias write path. The one-core board crash used for focused repros is now fixed, but the temporary custom-ROM harness still needs a reliable early boot handoff before it can conclusively measure the remaining guest-visible exception path for the modeled `CORE0/1_*` reject registers.
+- The generic Xtensa backend still has known accuracy gaps such as remaining reject-surface coverage gaps and unimplemented opcode paths.
+- Real `esp32s3` board guest probing is no longer blocked by ROM handoff. The board now loads custom ROM ELFs through `-bios` into each CPU address space correctly, and temporary `esp32s3` softmmu probes have confirmed recoverable guest DBUS reject handling on both CPU0 and CPU1 for cache-alias writes. The remaining gap is that this proof is still manual rather than an in-tree regression.
 
 ### Task 1 Shortcut Inventory (2026-04-04)
 
@@ -113,10 +113,8 @@ The active Xtensa/backend queue now lives in `.claude/plans/in-progress/esp32s3-
 
 Current ranking:
 
-- `P0` Remaining ESP32-S3 reject surface beyond the covered core0 paths. The shared illegal-cache path and the first `CORE0/1` reject path now exist, and both core0 DBUS/IBUS paths have direct qtest coverage, but core1-specific behavior and the rest of the reject/write-IC/access-mask matrix are still only partially modeled.
-- `P0` Real-board repro for cache-alias write faults on the `esp32s3` machine. The one-core reset crash is fixed, but a stable custom repro still needs to seize control early enough on the board path before we can conclusively measure the remaining guest-visible fault-delivery behavior for the per-core reject registers.
-- `P1` Remaining ESP32-S3 reject surface beyond the covered core0 paths. The shared illegal-cache path and the first `CORE0/1` reject path now exist, and both core0 DBUS/IBUS paths have direct qtest coverage, but core1-specific behavior and the rest of the reject/write-IC/access-mask matrix are still only partially modeled once the board-side exception path is fixed.
-- `P2` Remaining missing Xtensa opcodes beyond the current ESP32-S3 core/FPU/TIE coverage. The generic unimplemented-opcode fallback still exists, but the current guest stress instructions (`ee.movi.32.a`, `ee.zero.accx`, `ee.vmulas.s16.accx`) are already translated, so no active firmware blocker is confirmed there yet.
+- `P0` Remaining ESP32-S3 reject surface beyond the current qtest matrix. The shared illegal-cache path and the first `CORE0/1` reject path now exist, the board guest path is manually proven on both CPU0 and CPU1, but the board repro still needs an in-tree regression and the rest of the reject/write-IC/access-mask matrix is only partially modeled.
+- `P1` Remaining missing Xtensa opcodes beyond the current ESP32-S3 core/FPU/TIE coverage. The generic unimplemented-opcode fallback still exists, but the current guest stress instructions (`ee.movi.32.a`, `ee.zero.accx`, `ee.vmulas.s16.accx`) are already translated, so no active firmware blocker is confirmed there yet.
 
 Recently resolved in this track:
 
