@@ -16,14 +16,17 @@
 
 **Branch:** `tdeck-peripherals`
 
-**HEAD:** `0accecd48a`
+**HEAD:** `2c1e678f3d`
 
 This plan was updated against the current tree, not the original backlog description. Several parts of the deferred foundation work are already implemented and should no longer be treated as untouched.
+
+This implemented plan is now the source of truth for the completed deferred-foundation track. The temporary repo-root `TODO.md` tracker has been retired.
+Follow-on prioritization now lives in `.claude/plans/new/esp32s3-tdeck-pro-fidelity/plan.md`. This file remains the historical record for the completed deferred-foundation stage.
 
 - Task 1 is **complete for this stage**. The RTC block now models sleep state, wake causes, CPU reset requests, CPU stall requests, and clock-update signaling, and the board wires those paths through the SoC with direct qtest coverage for wake, reset, and stall behavior.
 - Task 2 is **complete for this stage**. The cache/MMU model now exposes the guest-visible mapping and completion semantics the active workload depends on, with direct qtest coverage for remapping, `CTRL1`, deferred cache-op completion, MMU faults, and the first reject paths.
 - Task 3 is **now closed for the current workload**. The board still instantiates `open_eth`, but the minimum guest-visible EMAC contract is now explicit: link-state MII polling latches correctly, backend link toggles propagate into the modeled MAC/PHY surface, and descriptor TX can loop back into RX for direct board-path regression coverage.
-- Task 4 is **complete for the currently ranked blocker set**. The backend blockers are captured in `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md`, and the tree now has direct regressions for the `ATOMCTL` local-memory fix plus board-path cache-reject handling on both core0 and core1.
+- Task 4 is **complete for the currently ranked blocker set**. The backend blockers are captured in `.claude/plans/implemented/esp32s3-deferred-foundation/xtensa-blockers.md`, and the tree now has direct regressions for the `ATOMCTL` local-memory fix plus board-path cache-reject handling on both core0 and core1.
 
 ---
 
@@ -41,7 +44,7 @@ This plan was updated against the current tree, not the original backlog descrip
 - **Modify:** `hw/net/opencores_eth.c` - tighten the generic OpenCores path to the minimum guest-visible EMAC contract used by QEMU-targeted ESP-IDF guests
 - **Modify:** `target/xtensa/` - track guest-observed Xtensa backend gaps as they become firmware blockers
 - **Modify:** `tests/qtest/esp32s3-test.c` - keep direct ESP32-S3 regression coverage aligned with the guest-visible cache/MMU and board-control contract
-- **Add:** `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md` - repo-visible ranked queue for Xtensa/backend blockers tied to current firmware behavior
+- **Add:** `.claude/plans/implemented/esp32s3-deferred-foundation/xtensa-blockers.md` - repo-visible ranked queue for Xtensa/backend blockers tied to current firmware behavior
 - **Add:** `tests/tcg/xtensa/test_s32c1i_atomctl.S` - focused Xtensa softmmu regression for `ATOMCTL` local-memory exclusion on `esp32s3`
 - **Modify:** `tests/tcg/xtensa/linker.ld.S` - place the TCG reset stub at `RESET_VECTOR0` so `esp32`/`esp32s3` softmmu guests boot from the actual reset PC
 
@@ -130,7 +133,7 @@ The current Ethernet story is still anchored by generic IP. For the current work
 The backend still has guest-observed architectural gaps. These should stay tracked, explicit, and grounded in firmware requirements.
 
 - [x] Record which missing instructions or local-memory behaviors are actually blocking guest code.
-  Current queue: `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md` now captures the active ESP32-S3-specific blocker list, including the ATOMCTL/local-memory exclusion gap, missing cache-invalid trap plumbing, and the remaining unconfirmed opcode risk.
+  Current queue: `.claude/plans/implemented/esp32s3-deferred-foundation/xtensa-blockers.md` now captures the resolved blocker history plus the residual ESP32-S3-specific watch items, including the remaining reject-surface and unconfirmed opcode risk.
 - [x] Rank the blockers so the smallest guest-visible fixes land first.
   Current ranking: local-memory exclusion / ATOMCTL semantics first, then cache-invalid/local-memory trap plumbing, then any newly confirmed missing opcodes.
 - [x] Implement the first architectural slice with a focused regression.
@@ -161,4 +164,4 @@ The backend still has guest-observed architectural gaps. These should stay track
 - Task 1 and Task 2 have direct regressions for their guest-visible behavior, not just modeled code paths.
 - Task 3 has a direct regression for the current guest-visible EMAC contract, and any later replacement of `open_eth` is a separate future choice.
 - Task 4 has a repo-visible blocker queue that maps backend work to guest-observed failures.
-- The next implementation step can be assigned without re-litigating scope.
+- This plan is complete; any further work should start from a new plan tied to a concrete guest-visible blocker.

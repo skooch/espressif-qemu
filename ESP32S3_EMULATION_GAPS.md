@@ -4,6 +4,8 @@
 
 This document tracks the known fidelity gaps in the `esp32s3` machine model in this fork and the immediate implementation program for closing the highest-value ones first.
 
+The immediate peripheral and deferred-foundation programs described here are now historical records. Active follow-on prioritization for the T-Deck Pro target lives in `.claude/plans/new/esp32s3-tdeck-pro-fidelity/plan.md`.
+
 The current scope is intentionally limited to the previously identified high-impact fixes and easy wins:
 
 - SPI1 transfer correctness

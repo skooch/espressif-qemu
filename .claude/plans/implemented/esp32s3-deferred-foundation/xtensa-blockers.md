@@ -4,6 +4,9 @@ Updated: 2026-04-05
 
 This queue keeps the ESP32-S3 architectural/backend work separate from the peripheral backlog and ties each item to observed or likely guest behavior.
 
+Task 4 is complete for the currently confirmed blockers. This file now serves as a residual watch list and implementation record rather than an active sprint backlog.
+Its remaining items are now ranked against the broader hardware-target backlog in `.claude/plans/new/esp32s3-tdeck-pro-fidelity/plan.md`.
+
 ## Current scope choice
 
 - EMAC replacement is explicitly deferred until a guest actually touches the ESP32-S3 EMAC surface.
@@ -24,7 +27,7 @@ This queue keeps the ESP32-S3 architectural/backend work separate from the perip
 - `tests/functional/test_xtensa_esp32s3_cache_reject.py` now turns that manual proof into in-tree regressions: the functional suite embeds ROM ELF probes for both the single-core/core0 path and the SMP/core1 path, proving that `esp32s3` reaches recoverable cache-alias reject handlers on both guest-visible cores.
 - The current guest stress path already has translator support for `ee.movi.32.a`, `ee.zero.accx`, and `ee.vmulas.s16.accx`, so those SIMD/TIE instructions are not the first blocker.
 
-## Active ranked queue
+## Residual watch queue
 
 ### P0: Remaining ESP32-S3 reject surface beyond the current qtest and board-regression matrix
 
@@ -46,7 +49,7 @@ This queue keeps the ESP32-S3 architectural/backend work separate from the perip
 - The current firmware path does not appear to read or write the EMAC block, so EMAC fidelity is not part of the immediate dependency chain.
 - The board `-bios` loader/handoff issue is no longer blocking guest repros: `esp32s3` now resolves BIOS search paths, loads ROM ELFs into each CPU address space directly, and manual `-smp 1`/`-smp 2` probes now reach recoverable guest reject handlers.
 
-## Next recommended move
+## Re-entry condition
 
 - Task 4 is closed for the currently confirmed guest blockers: the tree now preserves both the core0 and core1 board proofs.
 - Only come back to the remaining reject surface if guest code starts reading the still-idle write-IC or access-mask bits.
