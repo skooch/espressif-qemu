@@ -107,6 +107,11 @@
 #define SHA_DMA_BUF_BASE        (ESP_GDMA_RAM_ADDR + 0x1400)
 #define SHA_DMA_DESC_BASE       (ESP_GDMA_RAM_ADDR + 0x1500)
 
+G_STATIC_ASSERT(A_EXTMEM_DCACHE_SYNC_ADDR == A_EXTMEM_DCACHE_SYNC_CTRL + 4);
+G_STATIC_ASSERT(A_EXTMEM_DCACHE_SYNC_SIZE == A_EXTMEM_DCACHE_SYNC_ADDR + 4);
+G_STATIC_ASSERT(A_EXTMEM_ICACHE_SYNC_ADDR == A_EXTMEM_ICACHE_SYNC_CTRL + 4);
+G_STATIC_ASSERT(A_EXTMEM_ICACHE_SYNC_SIZE == A_EXTMEM_ICACHE_SYNC_ADDR + 4);
+
 static QTestState *qts_start(void)
 {
     return qtest_init("-M esp32s3");
@@ -228,7 +233,18 @@ static void test_cache_deferred_completion_semantics(void)
         {
             .reg = A_EXTMEM_DCACHE_SYNC_CTRL,
             .trigger_bits = R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK,
-            .ena_mask = R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK,
+            .ena_mask = R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK |
+                        R_EXTMEM_DCACHE_SYNC_CTRL_WRITEBACK_ENA_MASK |
+                        R_EXTMEM_DCACHE_SYNC_CTRL_CLEAN_ENA_MASK,
+            .done_mask = R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK,
+            .idle_mask = 1u << R_EXTMEM_CACHE_STATE_DCACHE_STATE_SHIFT,
+        },
+        {
+            .reg = A_EXTMEM_DCACHE_SYNC_CTRL,
+            .trigger_bits = R_EXTMEM_DCACHE_SYNC_CTRL_WRITEBACK_ENA_MASK,
+            .ena_mask = R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK |
+                        R_EXTMEM_DCACHE_SYNC_CTRL_WRITEBACK_ENA_MASK |
+                        R_EXTMEM_DCACHE_SYNC_CTRL_CLEAN_ENA_MASK,
             .done_mask = R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK,
             .idle_mask = 1u << R_EXTMEM_CACHE_STATE_DCACHE_STATE_SHIFT,
         },

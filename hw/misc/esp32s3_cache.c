@@ -46,7 +46,9 @@ typedef struct ESP32S3CacheDeferredOp {
 static const ESP32S3CacheDeferredOp esp32s3_cache_deferred_ops[] = {
     {
         .addr = A_EXTMEM_DCACHE_SYNC_CTRL,
-        .ena_mask = R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK,
+        .ena_mask = R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK |
+                    R_EXTMEM_DCACHE_SYNC_CTRL_WRITEBACK_ENA_MASK |
+                    R_EXTMEM_DCACHE_SYNC_CTRL_CLEAN_ENA_MASK,
         .done_mask = R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK,
         .dcache = true,
     },
