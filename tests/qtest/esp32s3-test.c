@@ -49,8 +49,9 @@
 #define SYSTEM_BASE             DR_REG_SYSTEM_BASE
 #define RTC_CNTL_BASE           DR_REG_RTCCNTL_BASE
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
-#define CACHE_OP_DELAY_NS       1000
-#define ESP32S3_CACHE_IA_SOURCE 56
+#define CACHE_OP_DELAY_NS              1000
+#define ESP32S3_CACHE_IA_SOURCE        56
+#define ESP32S3_CACHE_CORE0_ACS_SOURCE 94
 
 #define GPSPI_CMD_UPDATE_BIT    BIT(23)
 #define GPSPI_CMD_USR_BIT       BIT(24)
@@ -70,6 +71,11 @@
 static QTestState *qts_start(void)
 {
     return qtest_init("-M esp32s3");
+}
+
+static QTestState *qts_start_smp1(void)
+{
+    return qtest_init("-M esp32s3 -smp 1");
 }
 
 #ifndef _WIN32
@@ -289,6 +295,85 @@ static void test_cache_invalid_mmu_fault_irq(void)
 
     qtest_quit(qts);
 }
+
+static void assert_cache_core0_reject_irq(QTestState *qts, uint32_t access_addr,
+                                          uint32_t enable_mask,
+                                          uint32_t status_mask,
+                                          uint32_t clear_mask,
+                                          uint32_t reject_st_addr,
+                                          uint32_t reject_vaddr_addr,
+                                          uint32_t expected_attr,
+                                          uint32_t expected_tag)
+{
+    uint32_t reject_desc;
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CORE0_ACS_CACHE_INT_ENA,
+                 enable_mask);
+    g_assert_false(qtest_get_irq(qts, ESP32S3_CACHE_CORE0_ACS_SOURCE));
+
+    qtest_writel(qts, access_addr, 0xa5a5a5a5);
+
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CORE0_ACS_CACHE_INT_ST) &
+                    status_mask, ==, status_mask);
+    reject_desc = qtest_readl(qts, DR_REG_EXTMEM_BASE + reject_st_addr);
+    g_assert_cmpuint(extract32(reject_desc, 6, 1), ==, 0);
+    g_assert_cmpuint(extract32(reject_desc, 3, 3), ==, expected_attr);
+    g_assert_cmpuint(extract32(reject_desc, 0, 3), ==, expected_tag);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + reject_vaddr_addr),
+                    ==, access_addr);
+    g_assert_true(qtest_get_irq(qts, ESP32S3_CACHE_CORE0_ACS_SOURCE));
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CORE0_ACS_CACHE_INT_CLR,
+                 clear_mask);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CORE0_ACS_CACHE_INT_ST) &
+                    status_mask, ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + reject_st_addr), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + reject_vaddr_addr),
+                    ==, UINT32_MAX);
+    g_assert_false(qtest_get_irq(qts, ESP32S3_CACHE_CORE0_ACS_SOURCE));
+}
+
+static void test_cache_core0_dbus_reject_irq(void)
+{
+    g_autofree gchar *flash_path = create_flash_image_with_patterns();
+    QTestState *qts = qts_start_with_flash(flash_path);
+    const uint32_t mmu_entry0 = DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET;
+
+    qtest_irq_intercept_in(qts, "/machine/soc/intmatrix");
+    qtest_writel(qts, mmu_entry0, 0);
+
+    assert_cache_core0_reject_irq(qts, ESP32S3_DCACHE_BASE,
+                                  R_EXTMEM_CORE0_ACS_CACHE_INT_ENA_CORE0_DBUS_REJECT_INT_ENA_MASK,
+                                  R_EXTMEM_CORE0_ACS_CACHE_INT_ST_CORE0_DBUS_REJECT_ST_MASK,
+                                  R_EXTMEM_CORE0_ACS_CACHE_INT_CLR_CORE0_DBUS_REJECT_INT_CLR_MASK,
+                                  A_EXTMEM_CORE0_DBUS_REJECT_ST,
+                                  A_EXTMEM_CORE0_DBUS_REJECT_VADDR,
+                                  4, 2);
+
+    qtest_quit(qts);
+    unlink(flash_path);
+}
+
+static void test_cache_core0_ibus_reject_irq(void)
+{
+    g_autofree gchar *flash_path = create_flash_image_with_patterns();
+    QTestState *qts = qts_start_with_flash(flash_path);
+    const uint32_t mmu_entry0 = DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET;
+
+    qtest_irq_intercept_in(qts, "/machine/soc/intmatrix");
+    qtest_writel(qts, mmu_entry0, 0);
+
+    assert_cache_core0_reject_irq(qts, ESP32S3_ICACHE_BASE,
+                                  R_EXTMEM_CORE0_ACS_CACHE_INT_ENA_CORE0_IBUS_REJECT_INT_ENA_MASK,
+                                  R_EXTMEM_CORE0_ACS_CACHE_INT_ST_CORE0_IBUS_REJECT_ST_MASK,
+                                  R_EXTMEM_CORE0_ACS_CACHE_INT_CLR_CORE0_IBUS_REJECT_INT_CLR_MASK,
+                                  A_EXTMEM_CORE0_IBUS_REJECT_ST,
+                                  A_EXTMEM_CORE0_IBUS_REJECT_VADDR,
+                                  4, 1);
+
+    qtest_quit(qts);
+    unlink(flash_path);
+}
 #endif
 
 static void test_ana_pll_done(void)
@@ -299,6 +384,15 @@ static void test_ana_pll_done(void)
 
     qtest_writel(qts, ANA_BASE + 0x44, 0x12345678);
     g_assert_cmphex(qtest_readl(qts, ANA_BASE + 0x44), ==, 0x12345678);
+
+    qtest_quit(qts);
+}
+
+static void test_single_cpu_boot(void)
+{
+    QTestState *qts = qts_start_smp1();
+
+    g_assert_cmphex(qtest_readl(qts, ANA_BASE + 0x40) & BIT(24), ==, BIT(24));
 
     qtest_quit(qts);
 }
@@ -1283,6 +1377,7 @@ int main(int argc, char **argv)
     g_test_init(&argc, &argv, NULL);
 
     qtest_add_func("/esp32s3/ana/pll-done", test_ana_pll_done);
+    qtest_add_func("/esp32s3/machine/single-cpu-boot", test_single_cpu_boot);
 #ifndef _WIN32
     qtest_add_func("/esp32s3/cache/flash-mmu-mapping-ctrl1",
                    test_cache_flash_mmu_mapping_and_ctrl1_state);
@@ -1290,6 +1385,10 @@ int main(int argc, char **argv)
                    test_cache_deferred_completion_semantics);
     qtest_add_func("/esp32s3/cache/invalid-mmu-fault-irq",
                    test_cache_invalid_mmu_fault_irq);
+    qtest_add_func("/esp32s3/cache/core0-dbus-reject-irq",
+                   test_cache_core0_dbus_reject_irq);
+    qtest_add_func("/esp32s3/cache/core0-ibus-reject-irq",
+                   test_cache_core0_ibus_reject_irq);
 #endif
     qtest_add_func("/esp32s3/gpio/iomux", test_gpio_and_iomux_state);
     qtest_add_func("/esp32s3/gpspi/completion-irq", test_gpspi_completion_irq);

@@ -50,6 +50,7 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 - Some blocks are substituted with generic IP rather than an S3-specific model, notably Ethernet through `open_eth`, though the current T-Deck Pro firmware path does not appear to exercise the EMAC block at all.
 - SPI1 had an outright correctness bug in the flash transfer loop: the byte loop compared the payload value instead of the loop index, making the transfer path data-dependent. (Now fixed; see Stage 2.)
 - The generic Xtensa backend still has known accuracy gaps such as incomplete cache/local-memory reject plumbing and unimplemented opcode paths.
+- Real `esp32s3` board guest probing is still incomplete on the cache-alias write path. The one-core board crash used for focused repros is now fixed, but the temporary custom-ROM harness still needs a reliable early boot handoff before it can conclusively measure the remaining guest-visible exception path for the modeled `CORE0/1_*` reject registers.
 
 ### Task 1 Shortcut Inventory (2026-04-04)
 
@@ -112,8 +113,10 @@ The active Xtensa/backend queue now lives in `.claude/plans/in-progress/esp32s3-
 
 Current ranking:
 
-- `P0` Remaining ESP32-S3 cache/local-memory reject plumbing. The shared illegal-cache interrupt path now exists, but the per-core `CORE0/1` reject status and vaddr registers are still not populated.
-- `P1` Remaining missing Xtensa opcodes beyond the current ESP32-S3 core/FPU/TIE coverage. The generic unimplemented-opcode fallback still exists, but the current guest stress instructions (`ee.movi.32.a`, `ee.zero.accx`, `ee.vmulas.s16.accx`) are already translated, so no active firmware blocker is confirmed there yet.
+- `P0` Remaining ESP32-S3 reject surface beyond the covered core0 paths. The shared illegal-cache path and the first `CORE0/1` reject path now exist, and both core0 DBUS/IBUS paths have direct qtest coverage, but core1-specific behavior and the rest of the reject/write-IC/access-mask matrix are still only partially modeled.
+- `P0` Real-board repro for cache-alias write faults on the `esp32s3` machine. The one-core reset crash is fixed, but a stable custom repro still needs to seize control early enough on the board path before we can conclusively measure the remaining guest-visible fault-delivery behavior for the per-core reject registers.
+- `P1` Remaining ESP32-S3 reject surface beyond the covered core0 paths. The shared illegal-cache path and the first `CORE0/1` reject path now exist, and both core0 DBUS/IBUS paths have direct qtest coverage, but core1-specific behavior and the rest of the reject/write-IC/access-mask matrix are still only partially modeled once the board-side exception path is fixed.
+- `P2` Remaining missing Xtensa opcodes beyond the current ESP32-S3 core/FPU/TIE coverage. The generic unimplemented-opcode fallback still exists, but the current guest stress instructions (`ee.movi.32.a`, `ee.zero.accx`, `ee.vmulas.s16.accx`) are already translated, so no active firmware blocker is confirmed there yet.
 
 Recently resolved in this track:
 
@@ -121,6 +124,8 @@ Recently resolved in this track:
 - Xtensa softmmu coverage now includes an `esp32s3`-specific `test_s32c1i_atomctl` regression that proves `ATOMCTL=0` still faults on backed sysram (`0x6000_0100`) while succeeding on local DataRAM.
 - The Xtensa TCG linker script now places the reset stub at `XCHAL_RESET_VECTOR0_VADDR`, which was required for `esp32`/`esp32s3` softmmu guests to boot on the generic `sim` machine at all.
 - The ESP32-S3 cache model now latches `EXTMEM_CACHE_ILG_INT_ST` and `EXTMEM_CACHE_MMU_FAULT_{CONTENT,VADDR}` on invalid MMU accesses, and the board routes the resulting illegal-cache IRQ to `ETS_CACHE_IA_INTR_SOURCE` with direct qtest coverage.
+- The ESP32-S3 cache model now also latches the first per-core reject metadata and IRQ path: flash-backed write rejects populate `CORE0/1_ACS_CACHE_INT_ST` plus the matching `CORE0/1_{DBUS,IBUS}_REJECT_{ST,VADDR}` registers, the board routes those lines to `ETS_CACHE_CORE0/1_ACS_INTR_SOURCE`, and the qtest suite covers both core0 DBUS and core0 IBUS reject assert/clear contracts.
+- The board path now also tolerates one-core softmmu runs. `esp32s3 -smp 1` no longer crashes in `esp32s3_soc_reset()` by touching unrealized CPU1 state, and the qtest suite has a direct single-CPU boot smoke test to hold that line.
 
 ### Current Risk Notes
 

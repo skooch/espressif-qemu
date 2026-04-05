@@ -1,3 +1,4 @@
 - 2026-04-03: User reminded me that ESP-IDF and the TRM are available in external-resources, so use those local sources before reaching outward.
 - 2026-04-03: User reminded me that the Xtensa ISA Manual is also available locally in external-resources and should be consulted when architectural behavior is in question.
 - 2026-04-04: User does not want untracked firmware or test artifacts included in commits unless they explicitly ask for them.
+- 2026-04-05: User wants every QEMU process explicitly killed when I am done with it so no monitor or emulator process is left dangling.

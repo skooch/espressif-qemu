@@ -31,6 +31,10 @@
 #define CACHE_OP_DELAY_NS 1000
 #define ESP32S3_CACHE_MMU_FAULT_CPU_MISS 1u
 #define ESP32S3_CACHE_MMU_FAULT_ICACHE   (1u << 3)
+#define ESP32S3_CACHE_CPU_COUNT          2u
+#define ESP32S3_CACHE_ACCESS_ATTR_EXEC   1u
+#define ESP32S3_CACHE_ACCESS_ATTR_READ   2u
+#define ESP32S3_CACHE_ACCESS_ATTR_WRITE  4u
 
 typedef struct ESP32S3CacheDeferredOp {
     hwaddr addr;
@@ -101,6 +105,151 @@ static bool esp32s3_cache_domain_busy(ESP32S3CacheState *s, bool dcache)
     }
 
     return false;
+}
+
+static const hwaddr esp32s3_cache_access_ena_addrs[ESP32S3_CACHE_CPU_COUNT] = {
+    A_EXTMEM_CORE0_ACS_CACHE_INT_ENA,
+    A_EXTMEM_CORE1_ACS_CACHE_INT_ENA,
+};
+
+static const hwaddr esp32s3_cache_access_st_addrs[ESP32S3_CACHE_CPU_COUNT] = {
+    A_EXTMEM_CORE0_ACS_CACHE_INT_ST,
+    A_EXTMEM_CORE1_ACS_CACHE_INT_ST,
+};
+
+static const hwaddr esp32s3_cache_dbus_reject_st_addrs[ESP32S3_CACHE_CPU_COUNT] = {
+    A_EXTMEM_CORE0_DBUS_REJECT_ST,
+    A_EXTMEM_CORE1_DBUS_REJECT_ST,
+};
+
+static const hwaddr esp32s3_cache_dbus_reject_vaddr_addrs[ESP32S3_CACHE_CPU_COUNT] = {
+    A_EXTMEM_CORE0_DBUS_REJECT_VADDR,
+    A_EXTMEM_CORE1_DBUS_REJECT_VADDR,
+};
+
+static const hwaddr esp32s3_cache_ibus_reject_st_addrs[ESP32S3_CACHE_CPU_COUNT] = {
+    A_EXTMEM_CORE0_IBUS_REJECT_ST,
+    A_EXTMEM_CORE1_IBUS_REJECT_ST,
+};
+
+static const hwaddr esp32s3_cache_ibus_reject_vaddr_addrs[ESP32S3_CACHE_CPU_COUNT] = {
+    A_EXTMEM_CORE0_IBUS_REJECT_VADDR,
+    A_EXTMEM_CORE1_IBUS_REJECT_VADDR,
+};
+
+static const uint32_t esp32s3_cache_dbus_reject_int_masks[ESP32S3_CACHE_CPU_COUNT] = {
+    R_EXTMEM_CORE0_ACS_CACHE_INT_ST_CORE0_DBUS_REJECT_ST_MASK,
+    R_EXTMEM_CORE1_ACS_CACHE_INT_ST_CORE1_DBUS_REJECT_ST_MASK,
+};
+
+static const uint32_t esp32s3_cache_ibus_reject_int_masks[ESP32S3_CACHE_CPU_COUNT] = {
+    R_EXTMEM_CORE0_ACS_CACHE_INT_ST_CORE0_IBUS_REJECT_ST_MASK,
+    R_EXTMEM_CORE1_ACS_CACHE_INT_ST_CORE1_IBUS_REJECT_ST_MASK,
+};
+
+static const uint32_t esp32s3_cache_dbus_reject_clr_masks[ESP32S3_CACHE_CPU_COUNT] = {
+    R_EXTMEM_CORE0_ACS_CACHE_INT_CLR_CORE0_DBUS_REJECT_INT_CLR_MASK,
+    R_EXTMEM_CORE1_ACS_CACHE_INT_CLR_CORE1_DBUS_REJECT_INT_CLR_MASK,
+};
+
+static const uint32_t esp32s3_cache_ibus_reject_clr_masks[ESP32S3_CACHE_CPU_COUNT] = {
+    R_EXTMEM_CORE0_ACS_CACHE_INT_CLR_CORE0_IBUS_REJECT_INT_CLR_MASK,
+    R_EXTMEM_CORE1_ACS_CACHE_INT_CLR_CORE1_IBUS_REJECT_INT_CLR_MASK,
+};
+
+static uint32_t esp32s3_cache_access_core(void)
+{
+    if (current_cpu != NULL && current_cpu->cpu_index == 1) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static void esp32s3_cache_update_access_irq(ESP32S3CacheState *s, uint32_t core)
+{
+    const uint32_t ena =
+        s->regs[ESP32S3_CACHE_REG_IDX(esp32s3_cache_access_ena_addrs[core])];
+    const uint32_t status =
+        s->regs[ESP32S3_CACHE_REG_IDX(esp32s3_cache_access_st_addrs[core])];
+
+    qemu_set_irq(s->access_irq[core], (ena & status) != 0);
+}
+
+static void esp32s3_cache_raise_access_reject(ESP32S3CacheState *s,
+                                              uint32_t core, bool dcache,
+                                              uint32_t vaddr,
+                                              uint32_t access_attr,
+                                              uint32_t tag_attr)
+{
+    const hwaddr status_addr = esp32s3_cache_access_st_addrs[core];
+    uint32_t reject_desc = 0;
+
+    if (dcache) {
+        s->regs[ESP32S3_CACHE_REG_IDX(status_addr)] |=
+            esp32s3_cache_dbus_reject_int_masks[core];
+        s->regs[ESP32S3_CACHE_REG_IDX(
+            esp32s3_cache_dbus_reject_vaddr_addrs[core])] = vaddr;
+        if (core == 0) {
+            reject_desc = FIELD_DP32(reject_desc, EXTMEM_CORE0_DBUS_REJECT_ST,
+                                     CORE0_DBUS_ATTR, access_attr);
+            reject_desc = FIELD_DP32(reject_desc, EXTMEM_CORE0_DBUS_REJECT_ST,
+                                     CORE0_DBUS_TAG_ATTR, tag_attr);
+        } else {
+            reject_desc = FIELD_DP32(reject_desc, EXTMEM_CORE1_DBUS_REJECT_ST,
+                                     CORE1_DBUS_ATTR, access_attr);
+            reject_desc = FIELD_DP32(reject_desc, EXTMEM_CORE1_DBUS_REJECT_ST,
+                                     CORE1_DBUS_TAG_ATTR, tag_attr);
+        }
+        s->regs[ESP32S3_CACHE_REG_IDX(
+            esp32s3_cache_dbus_reject_st_addrs[core])] = reject_desc;
+    } else {
+        s->regs[ESP32S3_CACHE_REG_IDX(status_addr)] |=
+            esp32s3_cache_ibus_reject_int_masks[core];
+        s->regs[ESP32S3_CACHE_REG_IDX(
+            esp32s3_cache_ibus_reject_vaddr_addrs[core])] = vaddr;
+        if (core == 0) {
+            reject_desc = FIELD_DP32(reject_desc, EXTMEM_CORE0_IBUS_REJECT_ST,
+                                     CORE0_IBUS_ATTR, access_attr);
+            reject_desc = FIELD_DP32(reject_desc, EXTMEM_CORE0_IBUS_REJECT_ST,
+                                     CORE0_IBUS_TAG_ATTR, tag_attr);
+        } else {
+            reject_desc = FIELD_DP32(reject_desc, EXTMEM_CORE1_IBUS_REJECT_ST,
+                                     CORE1_IBUS_ATTR, access_attr);
+            reject_desc = FIELD_DP32(reject_desc, EXTMEM_CORE1_IBUS_REJECT_ST,
+                                     CORE1_IBUS_TAG_ATTR, tag_attr);
+        }
+        s->regs[ESP32S3_CACHE_REG_IDX(
+            esp32s3_cache_ibus_reject_st_addrs[core])] = reject_desc;
+    }
+
+    esp32s3_cache_update_access_irq(s, core);
+}
+
+static void esp32s3_cache_clear_access_status(ESP32S3CacheState *s,
+                                              uint32_t core,
+                                              uint32_t clear_mask)
+{
+    const hwaddr status_idx =
+        ESP32S3_CACHE_REG_IDX(esp32s3_cache_access_st_addrs[core]);
+
+    s->regs[status_idx] &= ~clear_mask;
+
+    if (clear_mask & esp32s3_cache_dbus_reject_clr_masks[core]) {
+        s->regs[ESP32S3_CACHE_REG_IDX(
+            esp32s3_cache_dbus_reject_st_addrs[core])] = 0;
+        s->regs[ESP32S3_CACHE_REG_IDX(
+            esp32s3_cache_dbus_reject_vaddr_addrs[core])] = UINT32_MAX;
+    }
+
+    if (clear_mask & esp32s3_cache_ibus_reject_clr_masks[core]) {
+        s->regs[ESP32S3_CACHE_REG_IDX(
+            esp32s3_cache_ibus_reject_st_addrs[core])] = 0;
+        s->regs[ESP32S3_CACHE_REG_IDX(
+            esp32s3_cache_ibus_reject_vaddr_addrs[core])] = UINT32_MAX;
+    }
+
+    esp32s3_cache_update_access_irq(s, core);
 }
 
 static void esp32s3_cache_update_irq(ESP32S3CacheState *s)
@@ -311,6 +460,20 @@ static uint64_t esp32s3_cache_read(void *opaque, hwaddr addr, unsigned int size)
         case A_EXTMEM_CACHE_ILG_INT_ST:
             r = s->regs[index];
             break;
+        case A_EXTMEM_CORE0_ACS_CACHE_INT_ENA:
+        case A_EXTMEM_CORE0_ACS_CACHE_INT_ST:
+        case A_EXTMEM_CORE1_ACS_CACHE_INT_ENA:
+        case A_EXTMEM_CORE1_ACS_CACHE_INT_ST:
+        case A_EXTMEM_CORE0_DBUS_REJECT_ST:
+        case A_EXTMEM_CORE0_DBUS_REJECT_VADDR:
+        case A_EXTMEM_CORE0_IBUS_REJECT_ST:
+        case A_EXTMEM_CORE0_IBUS_REJECT_VADDR:
+        case A_EXTMEM_CORE1_DBUS_REJECT_ST:
+        case A_EXTMEM_CORE1_DBUS_REJECT_VADDR:
+        case A_EXTMEM_CORE1_IBUS_REJECT_ST:
+        case A_EXTMEM_CORE1_IBUS_REJECT_VADDR:
+            r = s->regs[index];
+            break;
         case A_EXTMEM_CACHE_MMU_FAULT_CONTENT:
             r = s->regs[index];
             break;
@@ -379,6 +542,20 @@ static void esp32s3_cache_write(void *opaque, hwaddr addr, uint64_t value,
             case A_EXTMEM_CACHE_ILG_INT_CLR:
                 esp32s3_cache_clear_illegal_status(s, value);
                 break;
+            case A_EXTMEM_CORE0_ACS_CACHE_INT_ENA:
+                s->regs[index] = value;
+                esp32s3_cache_update_access_irq(s, 0);
+                break;
+            case A_EXTMEM_CORE1_ACS_CACHE_INT_ENA:
+                s->regs[index] = value;
+                esp32s3_cache_update_access_irq(s, 1);
+                break;
+            case A_EXTMEM_CORE0_ACS_CACHE_INT_CLR:
+                esp32s3_cache_clear_access_status(s, 0, value);
+                break;
+            case A_EXTMEM_CORE1_ACS_CACHE_INT_CLR:
+                esp32s3_cache_clear_access_status(s, 1, value);
+                break;
             case A_EXTMEM_ICACHE_FREEZE:
                 if (value & R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_ENA_MASK) {
                     /* Enable freeze, set DONE bit */
@@ -433,6 +610,8 @@ static void esp32s3_cache_reset_hold(Object *obj, ResetType type)
     memset(s->regs, 0, ESP32S3_CACHE_REG_COUNT * sizeof(*s->regs));
     timer_del(&s->completion_timer);
     qemu_set_irq(s->illegal_irq, 0);
+    qemu_set_irq(s->access_irq[0], 0);
+    qemu_set_irq(s->access_irq[1], 0);
 
     /* Initialize the MMU with invalid entries */
     for (int i = 0; i < ESP32S3_MMU_TABLE_ENTRY_COUNT; i++) {
@@ -451,6 +630,10 @@ static void esp32s3_cache_reset_hold(Object *obj, ResetType type)
     s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CACHE_CONF_MISC)] =
         R_EXTMEM_CACHE_CONF_MISC_CACHE_IGNORE_SYNC_MMU_ENTRY_FAULT_MASK |
         R_EXTMEM_CACHE_CONF_MISC_CACHE_IGNORE_PRELOAD_MMU_ENTRY_FAULT_MASK;
+    s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CORE0_DBUS_REJECT_VADDR)] = UINT32_MAX;
+    s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CORE0_IBUS_REJECT_VADDR)] = UINT32_MAX;
+    s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CORE1_DBUS_REJECT_VADDR)] = UINT32_MAX;
+    s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CORE1_IBUS_REJECT_VADDR)] = UINT32_MAX;
 }
 
 static void esp32s3_cache_realize(DeviceState *dev, Error **errp)
@@ -527,6 +710,8 @@ static void esp32s3_cache_init(Object *obj)
 
     sysbus_init_mmio(sbd, &s->iomem);
     sysbus_init_irq(sbd, &s->illegal_irq);
+    sysbus_init_irq(sbd, &s->access_irq[0]);
+    sysbus_init_irq(sbd, &s->access_irq[1]);
 }
 
 static Property esp32s3_cache_properties[] = {
@@ -589,6 +774,18 @@ static IOMMUTLBEntry esp32s3_mmu_region_translate(IOMMUMemoryRegion *iommu, hwad
             (region->dcache ? 0 : ESP32S3_CACHE_MMU_FAULT_ICACHE);
 
         esp32s3_cache_raise_mmu_fault(s, vaddr, entry, fault_code);
+        ret.perm = IOMMU_NONE;
+        return ret;
+    }
+
+    if ((flag & IOMMU_WO) && entry.type == ESP32S3_MMU_TYPE_FLASH) {
+        const uint32_t core = esp32s3_cache_access_core();
+
+        esp32s3_cache_raise_access_reject(s, core, region->dcache, vaddr,
+                                          ESP32S3_CACHE_ACCESS_ATTR_WRITE,
+                                          region->dcache
+                                              ? ESP32S3_CACHE_ACCESS_ATTR_READ
+                                              : ESP32S3_CACHE_ACCESS_ATTR_EXEC);
         ret.perm = IOMMU_NONE;
         return ret;
     }

@@ -236,6 +236,8 @@ static void esp32s3_cpu_reset(void* opaque, int n, int level)
 static void esp32s3_soc_reset(DeviceState *dev)
 {
     Esp32s3SocState *s = ESP32S3_SOC(dev);
+    MachineState *ms = MACHINE(qdev_get_machine());
+
     if (s->requested_reset == 0) {
         s->requested_reset = ESP32S3_SOC_RESET_ALL;
     }
@@ -254,7 +256,7 @@ static void esp32s3_soc_reset(DeviceState *dev)
         cpu_reset(CPU(&s->cpu[0]));
         s->cpu[0].env.sregs[CPENABLE] = 0xff;
     }
-    if (s->requested_reset & ESP32S3_SOC_RESET_APPCPU && (ESP32S3_CPU_COUNT > 1)) {
+    if (s->requested_reset & ESP32S3_SOC_RESET_APPCPU && ms->smp.cpus > 1) {
         xtensa_select_static_vectors(&s->cpu[1].env, s->rtc_cntl.stat_vector_sel[1]);
         remove_cpu_watchpoints(&s->cpu[1]);
         cpu_reset(CPU(&s->cpu[1]));
@@ -445,7 +447,7 @@ static void esp32s3_soc_realize(DeviceState *dev, Error **errp)
     }
 
 
-    for (int i = 0; i < ESP32S3_CPU_COUNT; ++i) {
+    for (int i = 0; i < ms->smp.cpus; ++i) {
         char name[16];
         snprintf(name, sizeof(name), "cpu%d", i);
         object_property_set_link(OBJECT(&s->intmatrix), name, OBJECT(qemu_get_cpu(i)), &error_abort);
@@ -861,6 +863,12 @@ static void esp32s3_machine_init(MachineState *machine)
         sysbus_connect_irq(SYS_BUS_DEVICE(&ss->cache), 0,
                            qdev_get_gpio_in(intmatrix_dev,
                                             ETS_CACHE_IA_INTR_SOURCE));
+        sysbus_connect_irq(SYS_BUS_DEVICE(&ss->cache), 1,
+                           qdev_get_gpio_in(intmatrix_dev,
+                                            ETS_CACHE_CORE0_ACS_INTR_SOURCE));
+        sysbus_connect_irq(SYS_BUS_DEVICE(&ss->cache), 2,
+                           qdev_get_gpio_in(intmatrix_dev,
+                                            ETS_CACHE_CORE1_ACS_INTR_SOURCE));
     }
 
     /* eFuses realization */
@@ -884,7 +892,7 @@ static void esp32s3_machine_init(MachineState *machine)
         }
         /* Pass CPU references for RUNSTALL support */
         ss->clock.cpu[0] = CPU(&ss->cpu[0]);
-        ss->clock.cpu[1] = CPU(&ss->cpu[1]);
+        ss->clock.cpu[1] = machine->smp.cpus > 1 ? CPU(&ss->cpu[1]) : NULL;
         ss->rtc_cntl.clock = &ss->clock;
         for (int i = 0; i < ESP32S3_UART_COUNT; i++) {
             ss->uart[i].parent.clock = &ss->clock;
@@ -1237,7 +1245,7 @@ static void esp32s3_machine_init(MachineState *machine)
         }
         g_free(rom_binary);
 
-        if (ESP32S3_CPU_COUNT > 1)
+        if (machine->smp.cpus > 1)
         {
             rom_binary = qemu_find_file(QEMU_FILE_TYPE_BIOS, "esp32s3_rev0_rom.bin");
             if (rom_binary == NULL) {

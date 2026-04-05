@@ -12,7 +12,7 @@
 
 ## Status Snapshot
 
-**Last reviewed:** 2026-04-04
+**Last reviewed:** 2026-04-05
 
 **Branch:** `tdeck-peripherals`
 
@@ -24,6 +24,7 @@ This plan was updated against the current tree, not the original backlog descrip
 - Task 2 is **partially complete**. The cache/MMU model already implements MMU entry storage, invalidation, flash/PSRAM mapping, and IOMMU-backed translation.
 - Task 3 is **explicitly deferred**. The board still instantiates `open_eth`, but the current T-Deck Pro firmware path is Wi-Fi-only, so EMAC replacement work is postponed until a guest actually touches that block.
 - Task 4 is **now a tracked queue**. The backend blockers are captured in `.claude/plans/in-progress/esp32s3-deferred-foundation/xtensa-blockers.md` and ranked against the current firmware path.
+- Task 4 now has a narrower real-board prerequisite for guest-visible reject regressions on the `esp32s3` machine: the first investigation exposed both a one-core board reset crash and a still-unfinished custom repro handoff, so the next slice needs a reliable `esp32s3` softmmu fault harness before we can definitively measure the remaining cache-alias exception-delivery behavior.
 
 ---
 
@@ -137,6 +138,13 @@ The backend still has guest-observed architectural gaps. These should stay track
   Current tree: `HELPER(check_atomctl)` now bypasses `ATOMCTL` gating for accesses that resolve to local DataRAM, and Xtensa softmmu coverage now includes an `esp32s3` `s32c1i` regression that distinguishes sysram faults from local-memory success under `ATOMCTL=0`. The Xtensa softmmu linker script also now uses `RESET_VECTOR0`, which was required for `esp32`/`esp32s3` guests to boot from the actual reset PC on the generic `sim` machine.
 - [x] Land the first ESP32-S3 cache-invalid/MMU-fault slice with direct board-visible coverage.
   Current tree: the ESP32-S3 cache model now latches `EXTMEM_CACHE_ILG_INT_ST` and `EXTMEM_CACHE_MMU_FAULT_{CONTENT,VADDR}` on invalid MMU accesses, the SoC routes the cache illegal-access IRQ to `ETS_CACHE_IA_INTR_SOURCE`, and the direct ESP32-S3 qtest suite now covers the resulting status, fault metadata, IRQ assertion, and clear semantics.
+- [x] Land the first per-core cache access-reject slice with direct board-visible coverage.
+  Current tree: flash-backed write rejects now latch `CORE0/1_ACS_CACHE_INT_ST` plus the matching `CORE0/1_{DBUS,IBUS}_REJECT_{ST,VADDR}` registers, the SoC routes those lines to `ETS_CACHE_CORE0/1_ACS_INTR_SOURCE`, and the direct ESP32-S3 qtest suite now covers both core0 DBUS and core0 IBUS reject assert/clear contracts.
+- [x] Remove the one-core board reset crash that was blocking `esp32s3 -smp 1` softmmu repros.
+  Current tree: `hw/xtensa/esp32s3.c` now respects `machine->smp.cpus` in reset and ROM/clock CPU wiring, and the ESP32-S3 qtest suite includes a direct `-smp 1` boot smoke test.
+- [ ] Finish a reliable real-board cache-alias fault repro before relying on `esp32s3` softmmu regressions for the per-core reject state.
+  Current blocker: the one-core board path no longer crashes, but the temporary custom-ROM probe still needs a stable boot/repro handoff before it can prove whether the remaining real-board problem is exception delivery, ROM takeover, or both.
+  Current blocker: temporary ROM probes that set MMU entry 0 and then store to `0x3c000000` currently land in the double-exception path with `EXCCAUSE=15` on both CPU0 and CPU1, so a guest kernel handler never gets a clean chance to observe the already-modeled `CORE0/1_{DBUS,IBUS}_REJECT_*` registers.
 - [x] Keep this track separate from peripheral work so the dependency chain stays visible.
   Current structure: the blocker queue lives beside this plan rather than being folded into the peripheral backlog.
 
