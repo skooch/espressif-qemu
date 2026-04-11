@@ -51,6 +51,9 @@
 #define SYSTEM_BASE             DR_REG_SYSTEM_BASE
 #define RTC_CNTL_BASE           DR_REG_RTCCNTL_BASE
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
+#define RTC_EXT_WAKEUP_CONF_REG (RTC_CNTL_BASE + 0x64)
+#define RTC_EXT_WAKEUP1_REG     (RTC_CNTL_BASE + 0xe0)
+#define RTC_WAKEUP_ENA_EXT1_BIT BIT(16)
 #define CACHE_OP_DELAY_NS              1000
 #define ESP32S3_CACHE_IA_SOURCE        56
 #define ESP32S3_CACHE_CORE0_ACS_SOURCE 94
@@ -125,6 +128,12 @@ static QTestState *qts_start_smp1(void)
 static QTestState *qts_start_with_openeth(void)
 {
     return qtest_init("-M esp32s3 -nic user,id=emac0,model=open_eth");
+}
+
+static void set_gpio_input_level(QTestState *qts, int gpio_num, bool level)
+{
+    qtest_set_irq_in(qts, "/machine/soc/gpio", ESP32S3_GPIO_INPUT_GPIO,
+                     gpio_num, level);
 }
 
 #ifndef _WIN32
@@ -1174,6 +1183,102 @@ static void test_rtc_timer_wakeup_transition(void)
     qtest_quit(qts);
 }
 
+static void test_rtc_gpio_low_wakeup_transition(void)
+{
+    QTestState *qts = qts_start();
+    uint32_t pin_cfg = BIT(10) | (GPIO_INT_LOW << GPIO_PIN_INT_TYPE_SHIFT);
+    uint32_t wakeup_state = 0;
+    uint32_t state0 = 0;
+
+    set_gpio_input_level(qts, 15, true);
+    qtest_writel(qts, GPIO_BASE + GPIO_PIN_REG(15), pin_cfg);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_CLR, UINT32_MAX);
+
+    wakeup_state = FIELD_DP32(wakeup_state, RTC_CNTL_WAKEUP_STATE,
+                              GPIO_WAKEUP_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WAKEUP_STATE, wakeup_state);
+
+    state0 = FIELD_DP32(state0, RTC_CNTL_STATE0, SLEEP_EN, 1);
+    state0 = FIELD_DP32(state0, RTC_CNTL_STATE0, SLP_WAKEUP, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0, state0);
+
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
+                    R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK, ==, 0);
+
+    set_gpio_input_level(qts, 15, false);
+
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
+                    R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK,
+                    ==, R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_WAKEUP_CAUSE),
+                    ==, R_RTC_CNTL_SLP_WAKEUP_CAUSE_GPIO_MASK);
+
+    qtest_quit(qts);
+}
+
+static void test_rtc_gpio_low_reject_transition(void)
+{
+    QTestState *qts = qts_start();
+    uint32_t pin_cfg = BIT(10) | (GPIO_INT_LOW << GPIO_PIN_INT_TYPE_SHIFT);
+    uint32_t wakeup_state = 0;
+    uint32_t reject_conf = 0;
+    uint32_t state0 = 0;
+
+    set_gpio_input_level(qts, 15, false);
+    qtest_writel(qts, GPIO_BASE + GPIO_PIN_REG(15), pin_cfg);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_CLR, UINT32_MAX);
+
+    wakeup_state = FIELD_DP32(wakeup_state, RTC_CNTL_WAKEUP_STATE,
+                              GPIO_WAKEUP_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WAKEUP_STATE, wakeup_state);
+
+    reject_conf = FIELD_DP32(reject_conf, RTC_CNTL_SLP_REJECT_CONF,
+                             LIGHT_SLP_REJECT_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_REJECT_CONF, reject_conf);
+
+    state0 = FIELD_DP32(state0, RTC_CNTL_STATE0, SLEEP_EN, 1);
+    state0 = FIELD_DP32(state0, RTC_CNTL_STATE0, SLP_WAKEUP, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0, state0);
+
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
+                    R_RTC_CNTL_INT_RAW_SLP_REJECT_MASK,
+                    ==, R_RTC_CNTL_INT_RAW_SLP_REJECT_MASK);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
+                    R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK, ==, 0);
+
+    qtest_quit(qts);
+}
+
+static void test_rtc_ext1_low_wakeup_transition(void)
+{
+    QTestState *qts = qts_start();
+    uint32_t state0 = 0;
+    uint32_t wakeup_state = RTC_WAKEUP_ENA_EXT1_BIT;
+
+    set_gpio_input_level(qts, 15, true);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_CLR, UINT32_MAX);
+    qtest_writel(qts, RTC_EXT_WAKEUP1_REG, BIT(15));
+    qtest_writel(qts, RTC_EXT_WAKEUP_CONF_REG, 0);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WAKEUP_STATE, wakeup_state);
+
+    state0 = FIELD_DP32(state0, RTC_CNTL_STATE0, SLEEP_EN, 1);
+    state0 = FIELD_DP32(state0, RTC_CNTL_STATE0, SLP_WAKEUP, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0, state0);
+
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
+                    R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK, ==, 0);
+
+    set_gpio_input_level(qts, 15, false);
+
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
+                    R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK,
+                    ==, R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_WAKEUP_CAUSE),
+                    ==, R_RTC_CNTL_SLP_WAKEUP_CAUSE_GPIO_MASK);
+
+    qtest_quit(qts);
+}
+
 static void test_rtc_reset_transitions(void)
 {
     QTestState *qts = qts_start();
@@ -1614,6 +1719,9 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/i2c/unsupported-modes", test_i2c_unsupported_modes);
     qtest_add_func("/esp32s3/rtc/clk-update", test_rtc_clk_update_propagates_to_system_and_uart);
     qtest_add_func("/esp32s3/rtc/timer-wakeup", test_rtc_timer_wakeup_transition);
+    qtest_add_func("/esp32s3/rtc/gpio-wakeup", test_rtc_gpio_low_wakeup_transition);
+    qtest_add_func("/esp32s3/rtc/gpio-reject", test_rtc_gpio_low_reject_transition);
+    qtest_add_func("/esp32s3/rtc/ext1-wakeup", test_rtc_ext1_low_wakeup_transition);
     qtest_add_func("/esp32s3/rtc/reset-transitions", test_rtc_reset_transitions);
     qtest_add_func("/esp32s3/rtc/cpu-stall", test_rtc_cpu_stall_transition);
     qtest_add_func("/esp32s3/uart/clock-timing", test_uart_clock_dependent_timing);

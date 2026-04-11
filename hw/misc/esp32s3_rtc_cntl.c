@@ -54,24 +54,39 @@ void esp32s3_rtc_gpio_wakeup_notify(Esp32s3RtcCntlState *s, int gpio_num)
     bool ext1_en = wakeup_state & WAKEUP_ENA_EXT1_BIT;
 
     /* Check digital GPIO wakeup */
-    if (gpio_en) {
-        s->sleeping = false;
-        s->slp_wakeup_cause = R_RTC_CNTL_SLP_WAKEUP_CAUSE_GPIO_MASK;
-        s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK;
-        timer_del(&s->slp_timer);
-        return;
-    }
+    if (gpio_en && s->gpio &&
+        gpio_num >= 0 && gpio_num < ESP32S3_GPIO_COUNT) {
+        uint32_t pin_cfg = s->gpio->pin_reg[gpio_num];
+        bool wakeup_enable = (pin_cfg >> 10) & 1;
+        int int_type = (pin_cfg >> GPIO_PIN_INT_TYPE_SHIFT) & 0x7;
 
-    /* Check EXT1 wakeup: is the notified pin in the EXT1 selection bitmap? */
-    if (ext1_en) {
-        uint32_t ext1_sel = s->reg_store[A_RTC_EXT_WAKEUP1 / 4] & 0x3FFFFF;
-        int rtc_pin = gpio_num;  /* RTC GPIO N = GPIO N on ESP32-S3 */
-        if (rtc_pin < 22 && (ext1_sel & (1 << rtc_pin))) {
+        if (wakeup_enable && int_type == GPIO_INT_LOW) {
             s->sleeping = false;
             s->slp_wakeup_cause = R_RTC_CNTL_SLP_WAKEUP_CAUSE_GPIO_MASK;
             s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK;
             timer_del(&s->slp_timer);
             return;
+        }
+    }
+
+    /* Check EXT1 wakeup: is the notified pin in the EXT1 selection bitmap? */
+    if (ext1_en && s->gpio) {
+        uint32_t ext1_sel = s->reg_store[A_RTC_EXT_WAKEUP1 / 4] & 0x3FFFFF;
+        uint32_t ext1_conf = s->reg_store[A_RTC_EXT_WAKEUP_CONF / 4];
+        bool wake_on_low = !(ext1_conf & 1);
+        int rtc_pin = gpio_num;  /* RTC GPIO N = GPIO N on ESP32-S3 */
+        if (rtc_pin < 22 && (ext1_sel & (1 << rtc_pin))) {
+            int bank = gpio_num / 32;
+            int bit = gpio_num % 32;
+            bool pin_level = (s->gpio->in_levels[bank] >> bit) & 1;
+
+            if (wake_on_low ? !pin_level : pin_level) {
+                s->sleeping = false;
+                s->slp_wakeup_cause = R_RTC_CNTL_SLP_WAKEUP_CAUSE_GPIO_MASK;
+                s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK;
+                timer_del(&s->slp_timer);
+                return;
+            }
         }
     }
 }

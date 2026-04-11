@@ -104,6 +104,11 @@ static void esp32s3_gpio_check_int(ESP32S3GPIOState *s, int gpio_num,
     }
 }
 
+static void esp32s3_gpio_qdev_set_input(void *opaque, int gpio_num, int level)
+{
+    esp32s3_gpio_set_input(ESP32S3_GPIO(opaque), gpio_num, level);
+}
+
 /*
  * Public API: set a GPIO input level from an external device model.
  * This updates the IN register and checks for interrupt conditions.
@@ -127,14 +132,10 @@ void esp32s3_gpio_set_input(ESP32S3GPIOState *s, int gpio_num, bool level)
 
     esp32s3_gpio_check_int(s, gpio_num, old_level, level);
 
-    /* Notify RTC_CNTL if this pin has wakeup_enable set and we are sleeping */
+    /* Let RTC_CNTL evaluate whether this transition matches an active
+     * digital GPIO or EXT1 wake source. */
     if (s->rtc_cntl) {
-        uint32_t pin_cfg = s->pin_reg[gpio_num];
-        bool wakeup_enable = (pin_cfg >> 10) & 1;
-        int int_type = (pin_cfg >> GPIO_PIN_INT_TYPE_SHIFT) & 0x7;
-        if (wakeup_enable && int_type == GPIO_INT_LOW && !level) {
-            esp32s3_rtc_gpio_wakeup_notify(s->rtc_cntl, gpio_num);
-        }
+        esp32s3_rtc_gpio_wakeup_notify(s->rtc_cntl, gpio_num);
     }
 }
 
@@ -482,6 +483,9 @@ static void esp32s3_gpio_init(Object *obj)
      * slot is already registered, just reinit the MemoryRegion in place. */
     memory_region_init_io(&s->parent.iomem, obj, &esp32s3_gpio_ops, s,
                           TYPE_ESP32S3_GPIO, ESP32S3_GPIO_IO_SIZE);
+
+    qdev_init_gpio_in_named(DEVICE(obj), esp32s3_gpio_qdev_set_input,
+                            ESP32S3_GPIO_INPUT_GPIO, ESP32S3_GPIO_COUNT);
 
     /* IRQ output: reuse parent's irq (sysbus IRQ 0), already initialized
      * by parent esp32_gpio_init. Connected to ETS_GPIO_INTR_SOURCE. */
