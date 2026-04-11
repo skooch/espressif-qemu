@@ -48,6 +48,7 @@
 #include "hw/ssi/esp32s3_spi.h"
 #include "hw/misc/esp32s3_cache.h"
 #include "hw/char/esp32s3_uart.h"
+#include "hw/char/tdeck_gps.h"
 #include "hw/char/tdeck_modem.h"
 #include "hw/misc/esp32s3_rng.h"
 
@@ -190,6 +191,9 @@ typedef struct Esp32s3SocState {
 
     /* AT modem chardev for UART1 */
     TdeckModemChardev *modem;
+
+    /* GPS chardev for UART2 */
+    TdeckGpsChardev *gps;
 } Esp32s3SocState;
 
 
@@ -648,7 +652,13 @@ static void esp32s3_soc_init(Object *obj)
         s->modem = CHARDEV_TDECK_MODEM(modem_chr);
         qdev_prop_set_chr(DEVICE(&s->uart[1]), "chardev", modem_chr);
     }
-    // qdev_prop_set_chr(DEVICE(&s->uart[2]), "chardev", serial_hd(2));
+    {
+        Chardev *gps_chr = qemu_chardev_new("tdeck-gps",
+                                            TYPE_CHARDEV_TDECK_GPS,
+                                            NULL, NULL, &error_fatal);
+        s->gps = CHARDEV_TDECK_GPS(gps_chr);
+        qdev_prop_set_chr(DEVICE(&s->uart[2]), "chardev", gps_chr);
+    }
 
     for (int i = 0; i < ESP32S3_I2C_COUNT; i++) {
         snprintf(name, sizeof(name), "i2c%d", i);
@@ -822,6 +832,15 @@ static void esp32s3_modem_gpio_cb(void *opaque, int pin, int level)
         tdeck_modem_gpio_en(modem, level);
     } else if (pin == 40) {
         tdeck_modem_gpio_pwrkey(modem, level);
+    }
+}
+
+static void esp32s3_gps_gpio_cb(void *opaque, int pin, int level)
+{
+    TdeckGpsChardev *gps = opaque;
+
+    if (pin == 39) {
+        tdeck_gps_gpio_en(gps, level);
     }
 }
 
@@ -1087,6 +1106,7 @@ static void esp32s3_machine_init(MachineState *machine)
             /* Wire GPIO output callbacks for modem power control */
             esp32s3_gpio_register_output_cb(&ss->gpio, 41, esp32s3_modem_gpio_cb, ss->modem);
             esp32s3_gpio_register_output_cb(&ss->gpio, 40, esp32s3_modem_gpio_cb, ss->modem);
+            esp32s3_gpio_register_output_cb(&ss->gpio, 39, esp32s3_gps_gpio_cb, ss->gps);
 
             /* Give RTC_CNTL a reference to GPIO for wakeup pin checking */
             ss->rtc_cntl.gpio = &ss->gpio;

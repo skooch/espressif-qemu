@@ -148,10 +148,12 @@ if have_system
   # Some tests: test-char, test-qdev-global-props, and test-qga,
   # are not runnable under TSan due to a known issue.
   # https://github.com/google/sanitizers/issues/1116
-  if not get_option('tsan')
+    if not get_option('tsan')
     if host_os != 'windows'
         tests += {
-          'test-char': ['socket-helpers.c', qom, io, chardev]
+          'test-char': ['socket-helpers.c', qom, io, chardev],
+          'test-tdeck-gps': [qom, io, chardev,
+                             meson.project_source_root() / 'hw/char/tdeck_gps.c']
         }
     endif
 
