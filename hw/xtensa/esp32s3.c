@@ -387,6 +387,10 @@ static void esp32s3_init_openeth(Esp32s3SocState *ms)
     /* Create a new OpenCores Ethernet component */
     DeviceState* open_eth_dev = qemu_create_nic_device("open_eth", true, NULL);
     if (!open_eth_dev) {
+        warn_report("esp32s3: no matching NIC configuration supplied for "
+                    "open_eth; networking disabled. Launch with "
+                    "'-nic user,id=emac0,model=open_eth' to enable the "
+                    "board EMAC path");
         return;
     }
     ms->eth = open_eth_dev;

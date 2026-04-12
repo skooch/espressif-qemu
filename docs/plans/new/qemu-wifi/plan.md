@@ -1,5 +1,7 @@
 # QEMU WiFi Emulation Implementation Plan
 
+> Status note (2026-04-13): This plan is stale for the active QEMU-side networking slice. The current repo direction is to keep the existing `esp32s3` `open_eth` path, make its launch contract explicit, and leave firmware transport selection plus external simulator wrapper changes outside this repo. Do not execute the UART2/chardev implementation steps below without a new design decision.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Enable WiFi in QEMU with real host internet connectivity via a chardev-based Ethernet frame bridge over UART2.

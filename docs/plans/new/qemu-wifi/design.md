@@ -1,5 +1,7 @@
 # QEMU WiFi Emulation Design
 
+> Status note (2026-04-13): This design is superseded for the current networking direction in this repo. The live QEMU-side contract is the existing `open_eth` Ethernet path on the `esp32s3` machine, launched with `-nic user,id=emac0,model=open_eth`. Do not revive the UART2/chardev transport from this document without a fresh architecture decision; UART2 is already occupied by the QEMU GPS emulator, and firmware-side transport selection is being handled outside this repo.
+
 ## Overview
 
 Add WiFi emulation to the QEMU ESP32-S3 fork so that firmware WiFi features (scan, connect, disconnect, NTP, HTTP, MQTT) work in the emulator with real host internet connectivity. Uses a chardev-based architecture: the firmware communicates WiFi control messages and Ethernet frames over UART2, and QEMU bridges frames to the host network via SLIRP (user-mode networking).

@@ -109,8 +109,10 @@ Current firmware and board-path findings:
 - The exact EMAC behavior the current firmware touches is therefore effectively none. `open_eth` is a latent fidelity risk for future Ethernet-aware guests, not an actively exercised dependency of the current Wi-Fi-based T-Deck Pro workload.
 - Local ESP-IDF context matters here: the bundled `components/esp_eth/src/openeth/esp_eth_mac_openeth.c` driver is already a QEMU-only OpenCores path, so the smallest correct slice is not replacing `open_eth` but making that path explicit and testable.
 - Current scope decision: keep `open_eth` for the present board path, but tighten its visible contract instead of leaving it as an untested dormant placeholder.
+- Current launch contract: the supported host-backed backend for the `esp32s3` board EMAC path is `-nic user,id=emac0,model=open_eth`. QEMU defaults may still provide a matching NIC automatically, but explicit no-NIC launches such as `-nic none` now stay bootable while warning that `open_eth` was not instantiated and networking is disabled.
 - Current tree: `open_eth` now latches `MIICOMMAND`, preserves `SCANSTAT`-driven link polling behavior across host reads, updates `MIISTATUS.LINKFAIL` when the backend link changes, and supports descriptor TX-to-RX loopback when `MODER.LOOPBCK` is enabled.
 - Current coverage: the ESP32-S3 qtest suite now boots the board with `-nic user,id=emac0,model=open_eth`, uses QMP `set_link` to verify MII-visible link up/down transitions, and proves TX/RX descriptor plus IRQ behavior through loopback.
+- This remains an Ethernet-only QEMU surface. There is still no ESP32-S3 radio or UART-backed Wi-Fi device model in this fork, and the firmware-side transport selection stays outside this repo.
 - Remaining future risk: the board still does not model an ESP32-S3-specific EMAC block or a realistic external PHY beyond the OpenCores/QEMU path. That replacement stays deferred until a guest actually needs more than the current QEMU-targeted contract.
 
 ### Task 4 Xtensa Backend Queue (2026-04-04)

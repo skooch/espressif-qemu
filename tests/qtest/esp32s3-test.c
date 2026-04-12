@@ -130,6 +130,19 @@ static QTestState *qts_start_with_openeth(void)
     return qtest_init("-M esp32s3 -nic user,id=emac0,model=open_eth");
 }
 
+static QTestState *qts_start_without_openeth(void)
+{
+    return qtest_init("-M esp32s3 -nic none");
+}
+
+static void assert_openeth_instantiated(QTestState *qts, bool expected)
+{
+    g_autofree char *qtree = qtest_hmp(qts, "info qtree");
+    bool present = g_strstr_len(qtree, -1, "open_eth") != NULL;
+
+    g_assert_cmpint(present, ==, expected);
+}
+
 static void set_gpio_input_level(QTestState *qts, int gpio_num, bool level)
 {
     qtest_set_irq_in(qts, "/machine/soc/gpio", ESP32S3_GPIO_INPUT_GPIO,
@@ -1747,6 +1760,24 @@ static void test_emac_link_and_loopback_surface(void)
     qtest_quit(qts);
 }
 
+static void test_emac_not_instantiated_without_nic(void)
+{
+    QTestState *qts = qts_start_without_openeth();
+
+    assert_openeth_instantiated(qts, false);
+
+    qtest_quit(qts);
+}
+
+static void test_emac_instantiated_with_openeth_nic(void)
+{
+    QTestState *qts = qts_start_with_openeth();
+
+    assert_openeth_instantiated(qts, true);
+
+    qtest_quit(qts);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -1792,6 +1823,10 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/sha/irq", test_sha_irq);
     qtest_add_func("/esp32s3/sha/dma-start-continue", test_sha_dma_start_and_continue_irq_paths);
     qtest_add_func("/esp32s3/gpspi/dma-tx-rx-handoff", test_gpspi_dma_txrx_handoff);
+    qtest_add_func("/esp32s3/emac/not-instantiated-without-nic",
+                   test_emac_not_instantiated_without_nic);
+    qtest_add_func("/esp32s3/emac/instantiated-with-openeth-nic",
+                   test_emac_instantiated_with_openeth_nic);
     qtest_add_func("/esp32s3/emac/link-loopback", test_emac_link_and_loopback_surface);
     qtest_add_func("/esp32s3/pms/modeled-surface", test_pms_modeled_surface);
     qtest_add_func("/esp32s3/rng/modeled-surface", test_rng_modeled_surface);
