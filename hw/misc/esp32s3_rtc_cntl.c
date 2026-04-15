@@ -32,22 +32,22 @@ static void esp32s3_rtc_update_clk(Esp32s3RtcCntlState* s);
 static void esp32s3_rtc_slp_timer_cb(void *opaque)
 {
     Esp32s3RtcCntlState *s = ESP32S3_RTC_CNTL(opaque);
-    if (!s->sleeping) {
+    if (s->sleep_state != ESP32S3_RTC_SLEEP_SLEEPING) {
         return;
     }
-    s->sleeping = false;
+    s->sleep_state = ESP32S3_RTC_SLEEP_WOKE;
     s->slp_wakeup_cause = R_RTC_CNTL_SLP_WAKEUP_CAUSE_TIMER_MASK;
     s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK;
 }
 
 void esp32s3_rtc_gpio_wakeup_notify(Esp32s3RtcCntlState *s, int gpio_num)
 {
-    if (!s->sleeping) {
+    if (s->sleep_state != ESP32S3_RTC_SLEEP_SLEEPING) {
         return;
     }
-    uint32_t wakeup_state = s->reg_store[A_RTC_CNTL_WAKEUP_STATE / 4];
-    bool gpio_en = FIELD_EX32(wakeup_state, RTC_CNTL_WAKEUP_STATE, GPIO_WAKEUP_EN);
-    bool ext1_en = wakeup_state & WAKEUP_ENA_EXT1_BIT;
+    bool gpio_en = FIELD_EX32(s->wakeup_state, RTC_CNTL_WAKEUP_STATE,
+                              GPIO_WAKEUP_EN);
+    bool ext1_en = s->wakeup_state & WAKEUP_ENA_EXT1_BIT;
 
     /* Check digital GPIO wakeup */
     if (gpio_en && s->gpio &&
@@ -57,7 +57,7 @@ void esp32s3_rtc_gpio_wakeup_notify(Esp32s3RtcCntlState *s, int gpio_num)
         int int_type = (pin_cfg >> GPIO_PIN_INT_TYPE_SHIFT) & 0x7;
 
         if (wakeup_enable && int_type == GPIO_INT_LOW) {
-            s->sleeping = false;
+            s->sleep_state = ESP32S3_RTC_SLEEP_WOKE;
             s->slp_wakeup_cause = R_RTC_CNTL_SLP_WAKEUP_CAUSE_GPIO_MASK;
             s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK;
             timer_del(&s->slp_timer);
@@ -67,10 +67,11 @@ void esp32s3_rtc_gpio_wakeup_notify(Esp32s3RtcCntlState *s, int gpio_num)
 
     /* Check EXT1 wakeup: is the notified pin in the EXT1 selection bitmap? */
     if (ext1_en && s->gpio) {
-        uint32_t ext1_sel = FIELD_EX32(s->reg_store[A_RTC_CNTL_EXT_WAKEUP1 / 4],
-                                       RTC_CNTL_EXT_WAKEUP1, EXT_WAKEUP1_SEL);
-        bool wake_on_high = FIELD_EX32(s->reg_store[A_RTC_CNTL_EXT_WAKEUP_CONF / 4],
-                                       RTC_CNTL_EXT_WAKEUP_CONF, EXT_WAKEUP1_LV);
+        uint32_t ext1_sel = FIELD_EX32(s->ext_wakeup1, RTC_CNTL_EXT_WAKEUP1,
+                                       EXT_WAKEUP1_SEL);
+        bool wake_on_high = FIELD_EX32(s->ext_wakeup_conf,
+                                       RTC_CNTL_EXT_WAKEUP_CONF,
+                                       EXT_WAKEUP1_LV);
         bool wake_on_low = !wake_on_high;
         int rtc_pin = gpio_num;  /* RTC GPIO N = GPIO N on ESP32-S3 */
         if (rtc_pin < 22 && (ext1_sel & (1 << rtc_pin))) {
@@ -79,7 +80,7 @@ void esp32s3_rtc_gpio_wakeup_notify(Esp32s3RtcCntlState *s, int gpio_num)
             bool pin_level = (s->gpio->in_levels[bank] >> bit) & 1;
 
             if (wake_on_low ? !pin_level : pin_level) {
-                s->sleeping = false;
+                s->sleep_state = ESP32S3_RTC_SLEEP_WOKE;
                 s->slp_wakeup_cause = R_RTC_CNTL_SLP_WAKEUP_CAUSE_EXT1_MASK;
                 s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK;
                 timer_del(&s->slp_timer);
@@ -91,15 +92,18 @@ void esp32s3_rtc_gpio_wakeup_notify(Esp32s3RtcCntlState *s, int gpio_num)
 
 static void esp32s3_rtc_enter_sleep(Esp32s3RtcCntlState *s)
 {
-    uint32_t wakeup_state = s->reg_store[A_RTC_CNTL_WAKEUP_STATE / 4];
-    bool timer_en = FIELD_EX32(wakeup_state, RTC_CNTL_WAKEUP_STATE, TIMER_WAKEUP_EN);
-    bool gpio_en = FIELD_EX32(wakeup_state, RTC_CNTL_WAKEUP_STATE, GPIO_WAKEUP_EN);
-    bool ext1_en = wakeup_state & WAKEUP_ENA_EXT1_BIT;
+    bool timer_en = FIELD_EX32(s->wakeup_state, RTC_CNTL_WAKEUP_STATE,
+                               TIMER_WAKEUP_EN);
+    bool gpio_en = FIELD_EX32(s->wakeup_state, RTC_CNTL_WAKEUP_STATE,
+                              GPIO_WAKEUP_EN);
+    bool ext1_en = s->wakeup_state & WAKEUP_ENA_EXT1_BIT;
+
+    s->sleep_state = ESP32S3_RTC_SLEEP_REQUESTED;
 
     /* Check for immediate reject: GPIO wakeup pin already at trigger level */
     if (gpio_en && s->gpio) {
-        uint32_t reject_conf = s->reg_store[A_RTC_CNTL_SLP_REJECT_CONF / 4];
-        bool reject_en = FIELD_EX32(reject_conf, RTC_CNTL_SLP_REJECT_CONF,
+        bool reject_en = FIELD_EX32(s->slp_reject_conf,
+                                     RTC_CNTL_SLP_REJECT_CONF,
                                      LIGHT_SLP_REJECT_EN);
         if (reject_en) {
             int bank = 15 / 32;
@@ -110,6 +114,7 @@ static void esp32s3_rtc_enter_sleep(Esp32s3RtcCntlState *s)
             if (wakeup_enable && int_type == GPIO_INT_LOW) {
                 bool pin_level = (s->gpio->in_levels[bank] >> bit) & 1;
                 if (!pin_level) {
+                    s->sleep_state = ESP32S3_RTC_SLEEP_REJECTED;
                     s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_REJECT_MASK;
                     return;
                 }
@@ -121,10 +126,11 @@ static void esp32s3_rtc_enter_sleep(Esp32s3RtcCntlState *s)
      * The firmware configures GPIO15 (RTC_GPIO15) for EXT1 LOW-level wake.
      * EXT1 operates in the RTC always-on domain, independent of digital GPIO. */
     if (ext1_en && s->gpio) {
-        uint32_t ext1_sel = FIELD_EX32(s->reg_store[A_RTC_CNTL_EXT_WAKEUP1 / 4],
-                                       RTC_CNTL_EXT_WAKEUP1, EXT_WAKEUP1_SEL);
-        bool wake_on_high = FIELD_EX32(s->reg_store[A_RTC_CNTL_EXT_WAKEUP_CONF / 4],
-                                       RTC_CNTL_EXT_WAKEUP_CONF, EXT_WAKEUP1_LV);
+        uint32_t ext1_sel = FIELD_EX32(s->ext_wakeup1, RTC_CNTL_EXT_WAKEUP1,
+                                       EXT_WAKEUP1_SEL);
+        bool wake_on_high = FIELD_EX32(s->ext_wakeup_conf,
+                                       RTC_CNTL_EXT_WAKEUP_CONF,
+                                       EXT_WAKEUP1_LV);
         bool wake_on_low = !wake_on_high;
 
         /* Check each selected RTC GPIO pin.
@@ -142,6 +148,7 @@ static void esp32s3_rtc_enter_sleep(Esp32s3RtcCntlState *s)
                  * This is the normal case: TCA8418 holds INT low when events
                  * are pending, and the firmware disables GPIO interrupt before
                  * configuring EXT1 so no race. */
+                s->sleep_state = ESP32S3_RTC_SLEEP_WOKE;
                 s->slp_wakeup_cause = R_RTC_CNTL_SLP_WAKEUP_CAUSE_EXT1_MASK;
                 s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK;
                 return;
@@ -149,11 +156,11 @@ static void esp32s3_rtc_enter_sleep(Esp32s3RtcCntlState *s)
         }
     }
 
-    s->sleeping = true;
+    s->sleep_state = ESP32S3_RTC_SLEEP_SLEEPING;
 
     if (timer_en) {
-        uint32_t alarm_lo = s->reg_store[A_RTC_CNTL_SLP_TIMER0 / 4];
-        uint32_t alarm_hi = s->reg_store[A_RTC_CNTL_SLP_TIMER1 / 4];
+        uint32_t alarm_lo = s->slp_timer0;
+        uint32_t alarm_hi = s->slp_timer1;
         bool alarm_en = FIELD_EX32(alarm_hi, RTC_CNTL_SLP_TIMER1, MAIN_TIMER_ALARM_EN);
         if (alarm_en) {
             uint64_t alarm_ticks = ((uint64_t)(alarm_hi & 0xFFFF) << 32) | alarm_lo;
@@ -163,6 +170,29 @@ static void esp32s3_rtc_enter_sleep(Esp32s3RtcCntlState *s)
             timer_mod(&s->slp_timer, now + alarm_ns);
         }
     }
+}
+
+static uint32_t esp32s3_rtc_state0_read(Esp32s3RtcCntlState *s)
+{
+    uint32_t r = 0;
+
+    switch (s->sleep_state) {
+    case ESP32S3_RTC_SLEEP_REQUESTED:
+    case ESP32S3_RTC_SLEEP_SLEEPING:
+        r = FIELD_DP32(r, RTC_CNTL_STATE0, SLEEP_EN, 1);
+        break;
+    case ESP32S3_RTC_SLEEP_REJECTED:
+        r = FIELD_DP32(r, RTC_CNTL_STATE0, SLP_REJECT, 1);
+        break;
+    case ESP32S3_RTC_SLEEP_WOKE:
+        r = FIELD_DP32(r, RTC_CNTL_STATE0, SLP_WAKEUP, 1);
+        break;
+    case ESP32S3_RTC_SLEEP_AWAKE:
+    default:
+        break;
+    }
+
+    return r;
 }
 
 static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int size)
@@ -183,6 +213,18 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
         r = s->time_reg >> 32;
         break;
 
+    case A_RTC_CNTL_SLP_TIMER0:
+        r = s->slp_timer0;
+        break;
+
+    case A_RTC_CNTL_SLP_TIMER1:
+        r = s->slp_timer1 & 0xffff;
+        break;
+
+    case A_RTC_CNTL_STATE0:
+        r = esp32s3_rtc_state0_read(s);
+        break;
+
     case A_RTC_CNTL_RESET_STATE:
         r = FIELD_DP32(r, RTC_CNTL_RESET_STATE, RESET_CAUSE_PROCPU, s->reset_cause[0]);
         r = FIELD_DP32(r, RTC_CNTL_RESET_STATE, RESET_CAUSE_APPCPU, s->reset_cause[1]);
@@ -197,6 +239,18 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
         r = s->scratch_reg[(addr - A_RTC_CNTL_STORE0) / 4];
         break;
 
+    case A_RTC_CNTL_WAKEUP_STATE:
+        r = s->wakeup_state;
+        break;
+
+    case A_RTC_CNTL_EXT_WAKEUP_CONF:
+        r = s->ext_wakeup_conf;
+        break;
+
+    case A_RTC_CNTL_SLP_REJECT_CONF:
+        r = s->slp_reject_conf;
+        break;
+
     case A_RTC_CNTL_CLK_CONF:
         r = FIELD_DP32(r, RTC_CNTL_CLK_CONF, SOC_CLK_SEL, s->soc_clk);
         r = FIELD_DP32(r, RTC_CNTL_CLK_CONF, FAST_CLK_RTC_SEL, s->rtc_fastclk);
@@ -205,6 +259,18 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
 
     case A_RTC_CNTL_SW_CPU_STALL:
         r = s->sw_cpu_stall_reg;
+        break;
+
+    case A_RTC_CNTL_WDTWPROTECT:
+        r = s->wdt_wprotect;
+        break;
+
+    case A_RTC_CNTL_SWD_CONF:
+        r = s->swd_conf;
+        break;
+
+    case A_RTC_CNTL_SWD_WPROTECT:
+        r = s->swd_wprotect;
         break;
 
     case A_RTC_CNTL_STORE4:
@@ -222,11 +288,24 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
         r = s->slp_wakeup_cause;
         break;
 
+    case A_RTC_CNTL_PAD_HOLD:
+        r = s->pad_hold;
+        break;
+
+    case A_RTC_CNTL_DIG_PAD_HOLD:
+        r = s->dig_pad_hold;
+        break;
+
+    case A_RTC_CNTL_EXT_WAKEUP1:
+        r = s->ext_wakeup1;
+        break;
+
+    case A_RTC_CNTL_DATE:
+        r = s->date_reg;
+        break;
+
     default:
-        /* Fallback: return stored value for unhandled registers */
-        if (addr < sizeof(s->reg_store)) {
-            r = s->reg_store[addr / 4];
-        }
+        /* Deterministic unsupported behavior for unmodeled RTC_CNTL offsets. */
         break;
     }
     return r;
@@ -266,6 +345,16 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
         }
         break;
 
+    case A_RTC_CNTL_SLP_TIMER0:
+        s->slp_timer0 = (uint32_t)value;
+        break;
+
+    case A_RTC_CNTL_SLP_TIMER1:
+        s->slp_timer1 = (uint32_t)value &
+                        (R_RTC_CNTL_SLP_TIMER1_MAIN_TIMER_ALARM_EN_MASK |
+                         R_RTC_CNTL_SLP_TIMER1_SLP_VAL_HI_MASK);
+        break;
+
     case A_RTC_CNTL_RESET_STATE:
         s->stat_vector_sel[0] = FIELD_EX32(value, RTC_CNTL_RESET_STATE,
                                            PROCPU_STAT_VECTOR_SEL);
@@ -278,6 +367,25 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
     case A_RTC_CNTL_STORE2:
     case A_RTC_CNTL_STORE3:
         s->scratch_reg[(addr - A_RTC_CNTL_STORE0) / 4] = value;
+        break;
+
+    case A_RTC_CNTL_WAKEUP_STATE:
+        s->wakeup_state = (uint32_t)value &
+                          R_RTC_CNTL_WAKEUP_STATE_WAKEUP_ENA_MASK;
+        break;
+
+    case A_RTC_CNTL_EXT_WAKEUP_CONF:
+        s->ext_wakeup_conf = (uint32_t)value &
+                             (R_RTC_CNTL_EXT_WAKEUP_CONF_EXT_WAKEUP1_LV_MASK |
+                              R_RTC_CNTL_EXT_WAKEUP_CONF_EXT_WAKEUP0_LV_MASK |
+                              R_RTC_CNTL_EXT_WAKEUP_CONF_GPIO_WAKEUP_FILTER_MASK);
+        break;
+
+    case A_RTC_CNTL_SLP_REJECT_CONF:
+        s->slp_reject_conf = (uint32_t)value &
+                             (R_RTC_CNTL_SLP_REJECT_CONF_DEEP_SLP_REJECT_EN_MASK |
+                              R_RTC_CNTL_SLP_REJECT_CONF_LIGHT_SLP_REJECT_EN_MASK |
+                              R_RTC_CNTL_SLP_REJECT_CONF_SLEEP_REJECT_ENA_MASK);
         break;
 
     case A_RTC_CNTL_CLK_CONF:
@@ -300,8 +408,12 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
         break;
 
     case A_RTC_CNTL_STATE0: {
-        s->reg_store[addr / 4] = value;
         bool sleep_en = FIELD_EX32(value, RTC_CNTL_STATE0, SLEEP_EN);
+        bool reject_clr = FIELD_EX32(value, RTC_CNTL_STATE0,
+                                     SLP_REJECT_CAUSE_CLR);
+        if (reject_clr && s->sleep_state == ESP32S3_RTC_SLEEP_REJECTED) {
+            s->sleep_state = ESP32S3_RTC_SLEEP_AWAKE;
+        }
         if (sleep_en) {
             esp32s3_rtc_enter_sleep(s);
         }
@@ -313,15 +425,38 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
         break;
 
     case A_RTC_CNTL_WDTWPROTECT:
+        s->wdt_wprotect = (uint32_t)value;
+        break;
+
+    case A_RTC_CNTL_SWD_CONF:
+        s->swd_conf = (uint32_t)value &
+                      (R_RTC_CNTL_SWD_CONF_SWD_AUTO_FEED_EN_MASK |
+                       R_RTC_CNTL_SWD_CONF_SWD_DISABLE_MASK);
+        break;
+
     case A_RTC_CNTL_SWD_WPROTECT:
-        s->reg_store[addr / 4] = value;
+        s->swd_wprotect = (uint32_t)value;
+        break;
+
+    case A_RTC_CNTL_PAD_HOLD:
+        s->pad_hold = (uint32_t)value & R_RTC_CNTL_PAD_HOLD_PAD_HOLD_MASK;
+        break;
+
+    case A_RTC_CNTL_DIG_PAD_HOLD:
+        s->dig_pad_hold = (uint32_t)value;
+        break;
+
+    case A_RTC_CNTL_EXT_WAKEUP1:
+        s->ext_wakeup1 = (uint32_t)value &
+                         R_RTC_CNTL_EXT_WAKEUP1_EXT_WAKEUP1_SEL_MASK;
+        break;
+
+    case A_RTC_CNTL_DATE:
+        s->date_reg = (uint32_t)value & R_RTC_CNTL_DATE_DATE_MASK;
         break;
 
     default:
-        /* Fallback: store value for unhandled registers (enables read-back) */
-        if (addr < sizeof(s->reg_store)) {
-            s->reg_store[addr / 4] = value;
-        }
+        /* Deterministic unsupported behavior for unmodeled RTC_CNTL offsets. */
         break;
     }
 }
@@ -397,6 +532,8 @@ static void esp32s3_rtc_cntl_init(Object *obj)
     s->rtc_slowclk = ESP32_SLOW_CLK_RC;
     s->rtc_fastclk = ESP32_FAST_CLK_8M;
     s->soc_clk = ESP32_SOC_CLK_XTAL;
+    s->sleep_state = ESP32S3_RTC_SLEEP_AWAKE;
+    s->date_reg = ESP32S3_RTC_CNTL_DATE_RESET;
     s->xtal_apb_freq = 40000000;
     s->pll_apb_freq = 80000000;
     esp32s3_rtc_update_clk(s);

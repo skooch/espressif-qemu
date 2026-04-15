@@ -105,6 +105,17 @@ Writes to the modeled APB_CTRL words are ignored and unsupported APB_CTRL offset
 
 The ANA PLL-ready bit remains a compatibility shim. QEMU returns the firmware-visible ready bit at ANA offset `0x40`, but analog PLL calibration, lock timing, jitter, and failure modes are blocked for accuracy without a hardware probe or exact vendor analog reference.
 
+### Phase 3 RTC Sleep/Wake Register Status
+
+The RTC_CNTL fallback store was removed for the sleep/wake register surface. QEMU now exposes explicit fields for the ESP-IDF and local sleep-document contract used by timer, GPIO, EXT1, watchdog-write-protect, pad-hold, and date/version flows:
+
+- Supported RTC_CNTL offsets: `0x000`, `0x004`, `0x008`, `0x00c`, `0x010`, `0x014`, `0x018`, `0x038`, `0x03c`, `0x044`, `0x04c`, `0x050`-`0x05c`, `0x064`, `0x068`, `0x074`, `0x0b0`, `0x0b4`, `0x0b8`, `0x0bc`, `0x0c0`-`0x0cc`, `0x0d8`, `0x0dc`, `0x0e0`, `0x130`, and `0x1fc`.
+- Source-backed write masks are enforced for `SLP_TIMER1`, `WAKEUP_STATE`, `EXT_WAKEUP_CONF`, `SLP_REJECT_CONF`, `SWD_CONF`, `PAD_HOLD`, `EXT_WAKEUP1`, and `DATE`. Write-only bits such as `MAIN_TIMER_ALARM_EN`, `SWD_FEED`, and `EXT_WAKEUP1_STATUS_CLR` no longer appear as generic readback.
+- `RTC_CNTL_STATE0` now reports explicit QEMU sleep states: awake, sleep-requested, sleeping, rejected, and woke. The qtest suite covers timer wake, GPIO low wake, GPIO reject, EXT1 low wake, EXT1 high wake, immediate EXT1 wake, stale hardware-bit writes, and reject-cause clear.
+- Source-known but unmodeled RTC_CNTL offsets are deterministic unsupported behavior: reads return zero and writes are ignored. This includes `0x01c`-`0x034`, `0x040`, `0x048`, `0x060`, `0x06c`-`0x070`, `0x078`-`0x0ac`, `0x0d0`-`0x0d4`, `0x0e4`-`0x12c`, `0x134`-`0x154`, and any undefined gap up to `0x1f8`. The qtest suite pins `RETENTION_CTRL` at `0x140` as the unsupported-register sentinel for this RTC pass.
+
+This is SDK-contract and board-path accurate for the modeled light-sleep wake/reject flows. It is not a full ESP32-S3 power manager. Full internal power-domain sequencing, CPU-retention DMA timing, retention-memory save/restore, brownout interactions, analog reset behavior, RTC watchdog escalation timing, ULP/touch/USB wake behavior, EXT1 status latching, and oscillator/settling delays remain blocked for accuracy without more detailed source evidence or hardware probes.
+
 ### Current Fidelity / Risk Table
 
 | Subsystem | Current state | Gap vs real hardware | Likely real-usage risk |

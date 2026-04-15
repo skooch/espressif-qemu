@@ -84,13 +84,13 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 - **Status:** complete
 
 ### Phase 3: RTC, Reset, Sleep, And Wake State Model
-- [ ] Replace each RTC register fallback in `hw/misc/esp32s3_rtc_cntl.c` that is touched by ESP-IDF, ESP HAL, the Rust SDK, or active firmware with explicit register behavior and a qtest covering reset value, write mask, read value, and side effect.
-- [ ] Keep untouched RTC registers as deterministic unsupported behavior and list those offsets in `ESP32S3_EMULATION_GAPS.md` as outside the supported RTC contract.
-- [ ] Refactor RTC sleep state in `hw/misc/esp32s3_rtc_cntl.c` into explicit states for awake, sleep-requested, sleeping, rejected, and woke, with tests for timer wake, GPIO wake, EXT1 low wake, EXT1 high wake, immediate wake, and reject.
+- [x] Replace each RTC register fallback in `hw/misc/esp32s3_rtc_cntl.c` that is touched by ESP-IDF, ESP HAL, the Rust SDK, or active firmware with explicit register behavior and a qtest covering reset value, write mask, read value, and side effect.
+- [x] Keep untouched RTC registers as deterministic unsupported behavior and list those offsets in `ESP32S3_EMULATION_GAPS.md` as outside the supported RTC contract.
+- [x] Refactor RTC sleep state in `hw/misc/esp32s3_rtc_cntl.c` into explicit states for awake, sleep-requested, sleeping, rejected, and woke, with tests for timer wake, GPIO wake, EXT1 low wake, EXT1 high wake, immediate wake, and reject.
 - [ ] Replace reset glue in `hw/xtensa/esp32s3.c` with helper functions for PROCPU reset, APPCPU reset, digital reset, peripheral reset, and full-chip reset; each helper must state which QEMU process-level behavior remains a compatibility bridge.
 - [ ] Add qtests in `tests/qtest/esp32s3-test.c` for guest-visible reset cause, CPU reset side effects, peripheral reset side effects covered by the current model, and preservation or clearing of RTC scratch state.
-- [ ] Mark full internal power-domain sequencing, retention timing, brownout interactions, and analog reset behavior as `blocked for accuracy` in `ESP32S3_EMULATION_GAPS.md` unless a hardware probe is added.
-- **Status:** pending
+- [x] Mark full internal power-domain sequencing, retention timing, brownout interactions, and analog reset behavior as `blocked for accuracy` in `ESP32S3_EMULATION_GAPS.md` unless a hardware probe is added.
+- **Status:** in_progress
 
 ### Phase 4: Cache, MMU, Flash, And PSRAM Contract
 - [ ] Define the supported cache/MMU contract in `ESP32S3_EMULATION_GAPS.md`: MMU entry programming, invalid-entry faults, per-core access rejects, sync/preload/autoload busy/done state, freeze state, flash-backed mapping, and PSRAM-backed mapping.

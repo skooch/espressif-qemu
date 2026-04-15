@@ -37,3 +37,15 @@
 - 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` passes 41/41.
 - 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2.
 - 2026-04-16: Verified `git diff --check` succeeds.
+- 2026-04-16: Fast-forwarded the main checkout branch `tdeck-peripherals` from `c7e44cfd34` to `5e49d51df1`, merging completed Phases 0-2 from `codex/esp32s3-core-soc-fidelity-phase0` while leaving the main checkout's pre-existing unrelated dirty files untouched.
+- 2026-04-16: Started Phase 3 in the peer worktree. Confirmed ESP-IDF `rtc_cntl_reg.h` provides offsets, reset values, access classes, and masks for the RTC sleep timer, wakeup-state, EXT1, sleep-reject, watchdog write-protect, SWD, pad-hold, and date registers; confirmed the local ESP32-S3 sleep document covers the timer/GPIO/EXT1/reject flow and power-domain limits.
+- 2026-04-16: Removed RTC_CNTL generic register readback for the modeled sleep/wake surface and replaced it with explicit state fields plus deterministic read-as-zero/write-ignore behavior for unsupported RTC_CNTL offsets.
+- 2026-04-16: Refactored RTC light-sleep bookkeeping from a boolean into explicit states for awake, sleep-requested, sleeping, rejected, and woke, with `RTC_CNTL_STATE0` reporting state-derived hardware bits rather than accepting guest-written stale hardware bits.
+- 2026-04-16: Added `/xtensa/esp32s3/rtc/explicit-register-surface` and `/xtensa/esp32s3/rtc/ext1-immediate-wakeup` qtests, and extended existing RTC timer, GPIO, EXT1, reject, and stale-state tests to assert `RTC_CNTL_STATE0` behavior.
+- 2026-04-16: Documented the Phase 3 RTC sleep/wake contract in `ESP32S3_EMULATION_GAPS.md`, including supported RTC_CNTL offsets, unsupported offset ranges, and blocked power-domain/retention/brownout/analog reset behavior.
+- 2026-04-16: Verified `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` succeeds after the Phase 3 RTC changes.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test -p /xtensa/esp32s3/rtc` passes 11/11.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` passes 43/43 after the Phase 3 RTC changes.
+- 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2 after the Phase 3 RTC changes.
+- 2026-04-16: Verified a 15-second copied-flash firmware smoke exits only by timeout after the Phase 3 RTC changes.
+- 2026-04-16: Verified `git diff --check` succeeds after the Phase 3 RTC changes.
