@@ -39,6 +39,7 @@
 
 #define ANA_BASE                0x6000e000
 #define SPI2_BASE               DR_REG_SPI2_BASE
+#define SPI0_BASE               DR_REG_SPI0_BASE
 #define SPI1_BASE               DR_REG_SPI1_BASE
 #define GDMA_BASE               DR_REG_GDMA_BASE
 #define GPIO_BASE               DR_REG_GPIO_BASE
@@ -51,6 +52,7 @@
 #define SYSTEM_BASE             DR_REG_SYSTEM_BASE
 #define RTC_CNTL_BASE           DR_REG_RTCCNTL_BASE
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
+#define ASSIST_DEBUG_BASE       DR_REG_ASSIST_DEBUG_BASE
 #define GENERIC_MMIO_TEST_REG   (DR_REG_WCL_BASE + 0xf00)
 #define GENERIC_MMIO_TEST_REG2  (GENERIC_MMIO_TEST_REG + 4)
 #define RTC_EXT_WAKEUP_CONF_REG (RTC_CNTL_BASE + 0x64)
@@ -159,6 +161,67 @@ static void test_generic_mmio_compatibility_storage(void)
     qtest_writel(qts, GENERIC_MMIO_TEST_REG2, 0xa5a55a5a);
     g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_TEST_REG), ==, 0x11223344);
     g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_TEST_REG2), ==, 0xa5a55a5a);
+
+    qtest_quit(qts);
+}
+
+static void test_spi0_mem_register_surface(void)
+{
+    QTestState *qts = qts_start();
+    const uint32_t stored_regs[] = {
+        A_SPI_MEM_CTRL,
+        A_SPI_MEM_CTRL2,
+        A_SPI_MEM_CLOCK,
+        A_SPI_MEM_USER,
+        A_SPI_MEM_USER1,
+        A_SPI_MEM_USER2,
+        A_SPI_MEM_MOSI_DLEN,
+        A_SPI_MEM_MISO_DLEN,
+        A_SPI_MEM_MISC,
+        A_SPI_MEM_CACHE_FCTRL,
+        A_SPI_MEM_CACHE_SCTRL,
+        A_SPI_MEM_SRAM_DRD_CMD,
+        A_SPI_MEM_SRAM_DWR_CMD,
+        A_SPI_MEM_SRAM_CLK,
+        A_SPI_MEM_SPI_SMEM_AC,
+        A_SPI_MEM_DDR_CTRL,
+        A_SPI_MEM_CLOCK_GATE,
+        A_SPI_MEM_CORE_CLK_SEL,
+    };
+
+    g_assert_cmphex(qtest_readl(qts, SPI0_BASE + A_SPI_MEM_FSM), ==, 0);
+
+    for (int i = 0; i < G_N_ELEMENTS(stored_regs); i++) {
+        uint32_t value = 0x5a000000u | (stored_regs[i] << 8) | i;
+
+        qtest_writel(qts, SPI0_BASE + stored_regs[i], value);
+        g_assert_cmphex(qtest_readl(qts, SPI0_BASE + stored_regs[i]), ==,
+                        value);
+    }
+
+    g_assert_cmphex(qtest_readl(qts, SPI0_BASE + A_SPI_MEM_FSM), ==, 0);
+
+    qtest_quit(qts);
+}
+
+static void test_assist_debug_register_surface(void)
+{
+    QTestState *qts = qts_start();
+    const uint32_t pdebugenable = ASSIST_DEBUG_BASE + 0x48;
+    const uint32_t recording = ASSIST_DEBUG_BASE + 0x4c;
+    const uint32_t pdebugpc = ASSIST_DEBUG_BASE + 0x5c;
+
+    g_assert_cmphex(qtest_readl(qts, pdebugenable), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, recording), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, pdebugpc), ==, 0);
+
+    qtest_writel(qts, pdebugenable, 0x1);
+    qtest_writel(qts, recording, 0x2);
+    qtest_writel(qts, pdebugpc, 0xffffffff);
+
+    g_assert_cmphex(qtest_readl(qts, pdebugenable), ==, 0x1);
+    g_assert_cmphex(qtest_readl(qts, recording), ==, 0x2);
+    g_assert_cmphex(qtest_readl(qts, pdebugpc), ==, 0);
 
     qtest_quit(qts);
 }
@@ -1806,6 +1869,10 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/machine/single-cpu-boot", test_single_cpu_boot);
     qtest_add_func("/esp32s3/generic-mmio/compatibility-storage",
                    test_generic_mmio_compatibility_storage);
+    qtest_add_func("/esp32s3/spi0/mem-register-surface",
+                   test_spi0_mem_register_surface);
+    qtest_add_func("/esp32s3/assist-debug/register-surface",
+                   test_assist_debug_register_surface);
 #ifndef _WIN32
     qtest_add_func("/esp32s3/cache/flash-mmu-mapping-ctrl1",
                    test_cache_flash_mmu_mapping_and_ctrl1_state);

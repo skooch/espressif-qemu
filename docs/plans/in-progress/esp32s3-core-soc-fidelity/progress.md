@@ -12,3 +12,16 @@
 - 2026-04-15: Verified `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` succeeds in the worktree.
 - 2026-04-15: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` passes 38/38 in the worktree. A prior concurrent full-suite run lost QEMU with signal 9 during the RTC block, but the new generic-MMIO test, the adjacent RTC tests, and a clean rerun of the full suite all passed.
 - 2026-04-15: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2.
+- 2026-04-16: Ran a 15-second copied-flash firmware trace with `esp32s3_unimplemented_io_*` enabled; collected 289 generic-MMIO trace lines before SPI0 burn-down, dominated by `DR_REG_SPI0_BASE` / SPI_MEM hits.
+- 2026-04-16: Added an explicit SPI0 SPI_MEM register bank at `DR_REG_SPI0_BASE` and extended `hw/ssi/esp32s3_spi.c` to store the active SPI0 offsets not previously covered by the SPI1 model.
+- 2026-04-16: Added `/xtensa/esp32s3/spi0/mem-register-surface` qtest coverage for active SPI0 register storage and read-only idle FSM behavior.
+- 2026-04-16: Verified `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` succeeds after the SPI0 model change.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test -p /xtensa/esp32s3/spi0/mem-register-surface` passes.
+- 2026-04-16: Reran the 15-second copied-flash firmware trace; generic-MMIO trace lines dropped from 289 to 80 and all `0x60003000` SPI0 hits were eliminated.
+- 2026-04-16: Added a narrow ASSIST_DEBUG shim for `RCD_PDEBUGENABLE`, `RCD_RECORDING`, and read-only zero `RCD_PDEBUGPC`, plus `/xtensa/esp32s3/assist-debug/register-surface` qtest coverage.
+- 2026-04-16: Verified `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` succeeds after the ASSIST_DEBUG shim.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test -p /xtensa/esp32s3/assist-debug/register-surface` passes.
+- 2026-04-16: Reran the 15-second copied-flash firmware trace; generic-MMIO trace lines dropped from 80 to 75 and all `0x600ce000` ASSIST_DEBUG hits were eliminated.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` passes 40/40.
+- 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2.
+- 2026-04-16: Verified `git diff --check` succeeds.

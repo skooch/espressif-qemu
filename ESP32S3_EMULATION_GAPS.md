@@ -78,6 +78,20 @@ The qtest `/xtensa/esp32s3/generic-mmio/compatibility-storage` pins the current 
 
 Remaining Phase 1 work is to run guest/firmware traces with these events enabled, classify active catch-all hits by owner and source availability, replace boot-critical or sleep-critical hits with explicit models, and document any remaining catch-all hits as compatibility shims or blocked-for-accuracy surfaces.
 
+The first copied-flash firmware trace on 2026-04-16 produced 289 generic-MMIO trace lines in 15 seconds. The dominant active region was `DR_REG_SPI0_BASE` / SPI_MEM at `0x60003000`, led by 86 reads of `SPI_MEM_FSM_REG(0)`. SPI0 is now mapped as an explicit SPI_MEM register bank and the active SPI_MEM configuration offsets are stored in `hw/ssi/esp32s3_spi.c`. A second 15-second trace dropped the generic-MMIO total to 80 lines and removed all `0x60003000` SPI0 hits.
+
+The same pass also moved `DR_REG_ASSIST_DEBUG_BASE` out of the generic region. The narrow shim stores `RCD_PDEBUGENABLE` and `RCD_RECORDING` and returns zero for read-only `RCD_PDEBUGPC`. A third 15-second trace dropped the generic-MMIO total to 75 lines and removed all `0x600ce000` ASSIST_DEBUG hits.
+
+Remaining active catch-all hits from that second trace are classified as:
+
+| Region | Active offsets | Source state | Phase 1 classification |
+| --- | --- | --- | --- |
+| `DR_REG_APB_SARADC_BASE` | `0x00`, `0x04`, `0x18`, `0x28`, `0x38`, `0x3c`, `0x70` | ESP-IDF `apb_saradc_reg.h` present | Source-backed register surface, but analog ADC behavior is outside this core-SoC pass unless boot/sleep requires it |
+| `DR_REG_SENS_BASE` | `0x10`, `0x34`, `0x3c` | ESP-IDF `sens_reg.h` present | Source-backed register surface, but analog sensor behavior is outside this core-SoC pass unless boot/sleep requires it |
+| `DR_REG_LEDC_BASE` | `0x00`, `0x04`, `0x08`, `0x0c`, `0xa0`, `0xd0` | ESP-IDF `ledc_reg.h` present | Peripheral PWM surface; defer to peripheral pass unless board-path timing depends on it |
+| `DR_REG_ASSIST_DEBUG_BASE` | `0x48`, `0x4c`, `0x5c` | ESP-IDF `assist_debug_reg.h` present | Resolved by explicit narrow core-debug shim |
+| FE2, FE, NRX, BB radio/internal windows | `0x600050f0`, `0x60006090`, `0x6001ccd4`, `0x6001d054` | No public local register header found | Blocked for accuracy without exact radio-internal references; out of current core-SoC scope |
+
 ### Current Fidelity / Risk Table
 
 | Subsystem | Current state | Gap vs real hardware | Likely real-usage risk |

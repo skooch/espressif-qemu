@@ -153,6 +153,7 @@ typedef struct Esp32s3SocState {
     BusState periph_bus;
 
     MemoryRegion cpu_specific_mem[ESP32S3_CPU_COUNT];
+    ESP32S3SpiState spi0;
     ESP32S3SpiState spi1;
     ESP32S3CacheState cache;
     ESP32S3EfuseState efuse;
@@ -179,6 +180,8 @@ typedef struct Esp32s3SocState {
 
     MemoryRegion iomem;
     MemoryRegion ana_iomem;
+    MemoryRegion assist_debug_iomem;
+    uint32_t assist_debug_regs[0x100 / sizeof(uint32_t)];
     ESP32S3IOMuxState iomux;
     DWCSDMMCState sdmmc;
     DeviceState *eth;
@@ -616,6 +619,49 @@ static const MemoryRegionOps esp32s3_ana_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+#define ESP32S3_ASSIST_DEBUG_RCD_PDEBUGENABLE 0x48
+#define ESP32S3_ASSIST_DEBUG_RCD_RECORDING    0x4c
+#define ESP32S3_ASSIST_DEBUG_RCD_PDEBUGPC     0x5c
+
+static uint64_t esp32s3_assist_debug_read(void *opaque, hwaddr addr,
+                                          unsigned int size)
+{
+    Esp32s3SocState *s = ESP32S3_SOC(opaque);
+    hwaddr index = addr / sizeof(uint32_t);
+
+    switch (addr) {
+    case ESP32S3_ASSIST_DEBUG_RCD_PDEBUGPC:
+        return 0;
+    case ESP32S3_ASSIST_DEBUG_RCD_PDEBUGENABLE:
+    case ESP32S3_ASSIST_DEBUG_RCD_RECORDING:
+        return s->assist_debug_regs[index];
+    default:
+        return 0;
+    }
+}
+
+static void esp32s3_assist_debug_write(void *opaque, hwaddr addr,
+                                       uint64_t value, unsigned int size)
+{
+    Esp32s3SocState *s = ESP32S3_SOC(opaque);
+    hwaddr index = addr / sizeof(uint32_t);
+
+    switch (addr) {
+    case ESP32S3_ASSIST_DEBUG_RCD_PDEBUGENABLE:
+    case ESP32S3_ASSIST_DEBUG_RCD_RECORDING:
+        s->assist_debug_regs[index] = (uint32_t)value;
+        break;
+    default:
+        break;
+    }
+}
+
+static const MemoryRegionOps esp32s3_assist_debug_ops = {
+    .read = esp32s3_assist_debug_read,
+    .write = esp32s3_assist_debug_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
 
 
 static void esp32s3_soc_init(Object *obj)
@@ -901,6 +947,11 @@ static void esp32s3_machine_init(MachineState *machine)
     memory_region_init_io(&ss->ana_iomem, OBJECT(ss), &esp32s3_ana_ops,
                           ss, "esp32s3.ana", 0x100);
     memory_region_add_subregion_overlap(sys_mem, 0x6000e000, &ss->ana_iomem, 1);
+    memory_region_init_io(&ss->assist_debug_iomem, OBJECT(ss),
+                          &esp32s3_assist_debug_ops, ss,
+                          "esp32s3.assist-debug", 0x100);
+    memory_region_add_subregion_overlap(sys_mem, DR_REG_ASSIST_DEBUG_BASE,
+                                        &ss->assist_debug_iomem, 1);
 
     // qdev_prop_set_chr(DEVICE(ss), "serial0", serial_hd(0));
     // qdev_prop_set_chr(DEVICE(ss), "serial1", serial_hd(1));
@@ -909,6 +960,7 @@ static void esp32s3_machine_init(MachineState *machine)
     qdev_realize(DEVICE(ss), NULL, &error_fatal);
 
     object_initialize_child(OBJECT(ss), "extmem", &ss->cache, TYPE_ESP32S3_CACHE);
+    object_initialize_child(OBJECT(ss), "spi0", &ss->spi0, TYPE_ESP32S3_SPI);
     object_initialize_child(OBJECT(ss), "spi1", &ss->spi1, TYPE_ESP32S3_SPI);
     object_initialize_child(OBJECT(ss), "efuse", &ss->efuse, TYPE_ESP32S3_EFUSE);
     object_initialize_child(OBJECT(ss), "jtag", &ss->jtag, TYPE_ESP32C3_JTAG);
@@ -953,6 +1005,19 @@ static void esp32s3_machine_init(MachineState *machine)
         memory_region_add_subregion_overlap(sys_mem, DR_REG_USB_SERIAL_JTAG_BASE, mr, 0);
         sysbus_connect_irq(SYS_BUS_DEVICE(&ss->jtag), 0,
                            qdev_get_gpio_in(intmatrix_dev, ETS_USB_SERIAL_JTAG_INTR_SOURCE));
+    }
+
+    /* SPI0 memory-controller register bank.
+     *
+     * ESP-IDF configures SPI0 and SPI1 through the shared SPI_MEM register
+     * layout. SPI0 is not used here as an SSI flash command path, but its
+     * boot-time configuration registers must be explicit rather than falling
+     * through the generic MMIO store.
+     */
+    {
+        sysbus_realize(SYS_BUS_DEVICE(&ss->spi0), &error_fatal);
+        MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->spi0), 0);
+        memory_region_add_subregion_overlap(sys_mem, DR_REG_SPI0_BASE, mr, 0);
     }
 
     /* SPI1 controller (SPI Flash) */

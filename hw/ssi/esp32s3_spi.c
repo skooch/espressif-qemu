@@ -105,6 +105,18 @@ static uint64_t esp32s3_spi_read(void *opaque, hwaddr addr, unsigned int size)
         case A_SPI_MEM_CACHE_FCTRL:
             r = s->cache_fctrl;
             break;
+        case A_SPI_MEM_CACHE_SCTRL:
+            r = s->cache_sctrl;
+            break;
+        case A_SPI_MEM_SRAM_DRD_CMD:
+            r = s->sram_drd_cmd;
+            break;
+        case A_SPI_MEM_SRAM_DWR_CMD:
+            r = s->sram_dwr_cmd;
+            break;
+        case A_SPI_MEM_SRAM_CLK:
+            r = s->sram_clk;
+            break;
         case A_SPI_MEM_FSM:
             r = s->fsm;
             break;
@@ -114,11 +126,17 @@ static uint64_t esp32s3_spi_read(void *opaque, hwaddr addr, unsigned int size)
         case A_SPI_MEM_SUS_STATUS:
             r = s->mem_sus_st;
             break;
+        case A_SPI_MEM_SPI_SMEM_AC:
+            r = s->spi_smem_ac;
+            break;
         case A_SPI_MEM_DDR_CTRL:
             r = s->ddr_ctrl;
             break;
         case A_SPI_MEM_CLOCK_GATE:
             r = s->clock_gate;
+            break;
+        case A_SPI_MEM_CORE_CLK_SEL:
+            r = s->core_clk_sel;
             break;
         default:
 #if SPI1_WARNING
@@ -426,17 +444,35 @@ static void esp32s3_spi_write(void *opaque, hwaddr addr,
         case A_SPI_MEM_CACHE_FCTRL:
             s->cache_fctrl = wvalue;
             break;
+        case A_SPI_MEM_CACHE_SCTRL:
+            s->cache_sctrl = wvalue;
+            break;
+        case A_SPI_MEM_SRAM_DRD_CMD:
+            s->sram_drd_cmd = wvalue;
+            break;
+        case A_SPI_MEM_SRAM_DWR_CMD:
+            s->sram_dwr_cmd = wvalue;
+            break;
+        case A_SPI_MEM_SRAM_CLK:
+            s->sram_clk = wvalue;
+            break;
         case A_SPI_MEM_W0...A_SPI_MEM_W15:
             s->data_reg[(addr - A_SPI_MEM_W0) / sizeof(uint32_t)] = wvalue;
             break;
         case A_SPI_MEM_SUS_STATUS:
             s->mem_sus_st = wvalue;
             break;
+        case A_SPI_MEM_SPI_SMEM_AC:
+            s->spi_smem_ac = wvalue;
+            break;
         case A_SPI_MEM_DDR_CTRL:
             s->ddr_ctrl = wvalue;
             break;
         case A_SPI_MEM_CLOCK_GATE:
             s->clock_gate = wvalue;
+            break;
+        case A_SPI_MEM_CORE_CLK_SEL:
+            s->core_clk_sel = wvalue;
             break;
         default:
 #if SPI1_WARNING
@@ -457,6 +493,13 @@ static void esp32s3_spi_reset_hold(Object *obj, ResetType type)
 {
     ESP32S3SpiState *s = ESP32S3_SPI(obj);
     memset(s->data_reg, 0, ESP32S3_SPI_BUF_WORDS * sizeof(uint32_t));
+    s->cache_sctrl = 0;
+    s->sram_drd_cmd = 0;
+    s->sram_dwr_cmd = 0;
+    s->sram_clk = 0;
+    s->spi_smem_ac = 0;
+    s->core_clk_sel = 0;
+
     s->mem_ctrl1 = FIELD_DP32(s->mem_ctrl1, SPI_MEM_CTRL1, CS_HOLD_DLY_RES, 0x3ff);
     s->mem_clock = FIELD_DP32(s->mem_clock, SPI_MEM_CLOCK, CLKCNT_N, 3);
     s->mem_clock = FIELD_DP32(s->mem_clock, SPI_MEM_CLOCK, CLKCNT_H, 1);

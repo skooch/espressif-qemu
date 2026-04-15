@@ -28,6 +28,8 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 - Modify: `docs/plans/in-progress/esp32s3-core-soc-fidelity/plan.md` (tracked progress)
 - Create: `docs/plans/in-progress/esp32s3-core-soc-fidelity/progress.md` (session log)
 - Modify: `hw/xtensa/esp32s3.c` (generic MMIO, APB_CTRL, ANA mapping, reset glue, board wiring)
+- Modify: `hw/ssi/esp32s3_spi.c` (explicit SPI0/SPI_MEM register-surface handling for boot-critical active offsets)
+- Modify: `include/hw/ssi/esp32s3_spi.h` (SPI_MEM register declarations and state for active SPI0 offsets)
 - Modify: `hw/xtensa/esp32s3_clk.c` (SYSTEM clock contract and CPU/APB clock propagation)
 - Modify: `include/hw/xtensa/esp32s3_clk.h` (clock state needed by explicit contract)
 - Modify: `hw/xtensa/esp32s3_intc.c` (interrupt matrix routing, status, reserved-source policy)
@@ -54,6 +56,7 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 - Modify: `tests/tcg/xtensa/test_s32c1i_atomctl.S` (Xtensa atomctl coverage if integrated into normal verification)
 - Modify: `tests/tcg/xtensa/Makefile.target` (TCG test registration if missing from build)
 - Modify: `CLAUDE.md` (document new required verification or command failures if discovered)
+- Create: `docs/plans/in-progress/esp32s3-core-soc-fidelity/findings.md` (trace classification and information-gating findings)
 
 ## Phases
 
@@ -67,7 +70,9 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 ### Phase 1: Generic MMIO Burn-Down
 - [x] Instrument `hw/xtensa/esp32s3.c` so every active-path hit to `esp32s3_io_ops` can be collected with address, access size, access type, and guest PC when QEMU is launched with a debug flag or trace event.
 - [x] Add a qtest in `tests/qtest/esp32s3-test.c` proving that known unsupported generic-MMIO offsets do not silently gain hardware semantics beyond the explicit compatibility behavior selected for this phase.
-- [ ] Replace each boot-critical or sleep-critical generic-MMIO hit identified by instrumentation with an explicit narrow model in the owning file listed in the file map, using `register-accurate` behavior where references exist and RAZ/WI behavior where references define no implemented state.
+- [x] Replace the boot-critical SPI0/SPI_MEM generic-MMIO hits identified by firmware trace with an explicit narrow register-surface model using ESP-IDF `spi_mem_reg.h` offsets and existing QEMU SPI_MEM behavior.
+- [x] Replace the core-debug ASSIST_DEBUG generic-MMIO hits identified by firmware trace with an explicit narrow shim for the source-backed registers the guest touches.
+- [ ] Decide whether the remaining APB_SARADC and SENS active hits are in scope for this core-SoC pass or should stay documented as analog/peripheral compatibility surfaces for a later peripheral pass.
 - [ ] Keep `esp32s3_io_ops` only for out-of-scope regions and document every remaining active-path hit in `ESP32S3_EMULATION_GAPS.md`.
 - **Status:** in progress
 
@@ -140,6 +145,8 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 | Keep Xtensa extension expansion failure-driven or exact-manual-driven. | Base ISA material is sufficient for base ISA work; ESP32-S3 TIE/SIMD edge behavior needs exact configured-core references or concrete failing opcodes. |
 | Use QEMU trace events for generic-MMIO hit collection. | Trace events are the least invasive way to collect active-path address, size, access direction, value, and guest PC without changing compatibility behavior. |
 | Guard the current generic-MMIO compatibility behavior at `DR_REG_WCL_BASE + 0xf00`. | That offset is still handled by the catch-all window and provides a deterministic unsupported-address sentinel for detecting accidental semantic changes. |
+| Model SPI0 as an explicit SPI_MEM register bank before broader peripheral work. | Firmware trace showed SPI0 dominated the active catch-all surface, ESP-IDF supplies register offsets, and existing QEMU SPI_MEM state can cover the active configuration registers without claiming flash timing fidelity. |
+| Model ASSIST_DEBUG as a narrow core-debug shim. | Firmware trace showed only three source-backed debug-recording offsets, and removing them from the generic MMIO path reduces core-scope catch-all dependence without pulling in peripheral work. |
 
 ## Errors
 | Error | Attempt | Resolution |
@@ -147,3 +154,6 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 | Plan work was initially started in the main checkout. | User corrected that this must happen in a worktree. | Recorded correction in `/Users/skooch/.claude/corrections.md`, deleted the untracked plan file from the main checkout, created peer worktree `/Users/skooch/projects/tdeck-pro-rust/worktrees/esp32s3-core-soc-fidelity-phase0`, and continued there. |
 | Initial worktree ESP32-S3 qtest run failed with `unknown type 'misc.esp32s3.aes'`. | Configured a fresh worktree build with only `--target-list=xtensa-softmmu`; Meson did not find Homebrew `libgcrypt`, so gcrypt-gated ESP32-S3 crypto device models were omitted. | Reconfigured with `PKG_CONFIG_PATH=/opt/homebrew/Cellar/libgcrypt/1.12.1/lib/pkgconfig`, `--enable-gcrypt`, and `--disable-gnutls`; documented the local build requirement in `CLAUDE.md`. |
 | Reconfiguring with `--enable-gcrypt` and default GnuTLS failed compiling TLS sources. | Meson detected GnuTLS, but the local build failed on missing `gnutls/gnutls.h` during TLS source compilation. | Disabled GnuTLS for this ESP32-S3 verification build because the qtest and cache-reject functional verification do not require TLS. |
+| Firmware-trace wrapper failed with `zsh: read-only variable: status`. | Used `status=$?` after QEMU exited. In zsh, `status` is a readonly special parameter. | Reran with `rc=$?` and kept subsequent wrappers away from zsh special parameter names. |
+| Firmware-trace wrapper failed with `mktemp: mkstemp failed ... File exists`. | Used a macOS `mktemp` template with `XXXXXX` before a `.bin` or `.log` suffix. | Reran with `mktemp -t esp32s3-trace-flash` and `mktemp -t esp32s3-mmio-trace`, where macOS appends the unique suffix. |
+| Targeted qtest selector matched zero tests. | Ran with `/esp32s3/spi0/mem-register-surface`, but QEMU qtest registration prefixes the target path. | Listed registered tests and reran with `/xtensa/esp32s3/spi0/mem-register-surface`. |
