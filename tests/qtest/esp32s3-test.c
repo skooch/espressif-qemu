@@ -1600,11 +1600,23 @@ static void test_rtc_state0_requires_hardware_sleep_bits(void)
     qtest_quit(qts);
 }
 
+static void esp32s3_qmp_system_reset(QTestState *qts)
+{
+    qtest_qmp_assert_success(qts, "{ 'execute': 'system_reset' }");
+    qtest_qmp_eventwait(qts, "RESET");
+}
+
 static void test_rtc_reset_transitions(void)
 {
     QTestState *qts = qts_start();
+    const uint32_t scratch_value = 0xfeed1234;
+    const uint32_t uart_int_ena = R_UART_INT_ENA_RXFIFO_FULL_MASK |
+                                  R_UART_INT_ENA_RXFIFO_TOUT_MASK;
     uint32_t options0 = 0;
     uint32_t reset_state;
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_STORE0, scratch_value);
+    qtest_writel(qts, UART0_BASE + A_UART_INT_ENA, uart_int_ena);
 
     options0 = FIELD_DP32(options0, RTC_CNTL_OPTIONS0, SW_PROCPU_RESET, 1);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
@@ -1617,6 +1629,10 @@ static void test_rtc_reset_transitions(void)
                                 RESET_CAUSE_APPCPU), ==, ESP32_POWERON_RESET);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0) &
                     R_RTC_CNTL_OPTIONS0_SW_PROCPU_RESET_MASK, ==, 0);
+    g_assert_cmphex(qtest_readl(qts, UART0_BASE + A_UART_INT_ENA),
+                    ==, uart_int_ena);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STORE0),
+                    ==, scratch_value);
 
     options0 = FIELD_DP32(0, RTC_CNTL_OPTIONS0, SW_SYS_RESET, 1);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
@@ -1629,6 +1645,13 @@ static void test_rtc_reset_transitions(void)
                                 RESET_CAUSE_APPCPU), ==, ESP32_SW_SYS_RESET);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0) &
                     R_RTC_CNTL_OPTIONS0_SW_SYS_RESET_MASK, ==, 0);
+    g_assert_cmphex(qtest_readl(qts, UART0_BASE + A_UART_INT_ENA), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STORE0),
+                    ==, scratch_value);
+
+    qtest_writel(qts, UART0_BASE + A_UART_INT_ENA, uart_int_ena);
+    esp32s3_qmp_system_reset(qts);
+    g_assert_cmphex(qtest_readl(qts, UART0_BASE + A_UART_INT_ENA), ==, 0);
 
     qtest_quit(qts);
 }

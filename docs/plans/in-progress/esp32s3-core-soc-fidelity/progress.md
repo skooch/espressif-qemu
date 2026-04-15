@@ -49,3 +49,13 @@
 - 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2 after the Phase 3 RTC changes.
 - 2026-04-16: Verified a 15-second copied-flash firmware smoke exits only by timeout after the Phase 3 RTC changes.
 - 2026-04-16: Verified `git diff --check` succeeds after the Phase 3 RTC changes.
+- 2026-04-16: Committed the Phase 3 RTC sleep/wake slice as `8f7a77fd0d esp32s3: make rtc sleep surface explicit`.
+- 2026-04-16: Refactored ESP32-S3 reset glue into explicit helpers for partial peripheral reset, per-CPU reset, digital reset, and full-chip reset, with comments identifying QEMU process-level reset request and Xtensa `CPENABLE` restoration as compatibility bridges.
+- 2026-04-16: Extended `/xtensa/esp32s3/rtc/reset-transitions` to prove guest-visible reset cause, CPU reset isolation from UART interrupt-enable state, digital reset clearing UART interrupt-enable state, RTC scratch retention across software reset, and QMP full-reset UART clearing.
+- 2026-04-16: Documented the Phase 3 reset-domain contract and remaining reset accuracy blockers in `ESP32S3_EMULATION_GAPS.md`.
+- 2026-04-16: Verified `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` succeeds after the Phase 3 reset helper changes.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test -p /xtensa/esp32s3/rtc/reset-transitions` passes.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` passes 43/43 after the Phase 3 reset helper changes.
+- 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2 after the Phase 3 reset helper changes.
+- 2026-04-16: Verified a 15-second copied-flash firmware smoke exits only by timeout after the Phase 3 reset helper changes.
+- 2026-04-16: Verified `git diff --check` succeeds after the Phase 3 reset helper changes.

@@ -227,6 +227,11 @@ static void esp32s3_dig_reset(void *opaque, int n, int level)
     Esp32s3SocState *s = ESP32S3_SOC(opaque);
     if (level) {
         s->requested_reset = ESP32S3_SOC_RESET_DIG;
+        /*
+         * Compatibility bridge: QEMU still routes guest-visible digital reset
+         * through the process-level reset request, then reconstructs the
+         * requested ESP32-S3 reset domain in esp32s3_soc_reset().
+         */
         qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
     }
 }
@@ -236,43 +241,96 @@ static void esp32s3_cpu_reset(void* opaque, int n, int level)
     Esp32s3SocState *s = ESP32S3_SOC(opaque);
     if (level) {
         s->requested_reset = (n == 0) ? ESP32S3_SOC_RESET_PROCPU : ESP32S3_SOC_RESET_APPCPU;
-        /* Use different cause for APP CPU so that its reset doesn't cause QEMU to exit,
-         * when -no-reboot option is given.
+        /*
+         * Compatibility bridge: CPU-local resets still use QEMU reset
+         * requests. APP CPU uses a subsystem cause so -no-reboot launches do
+         * not exit for a secondary-core reset.
          */
         ShutdownCause cause = (n == 0) ? SHUTDOWN_CAUSE_GUEST_RESET : SHUTDOWN_CAUSE_SUBSYSTEM_RESET;
         qemu_system_reset_request(cause);
     }
 }
 
+static void esp32s3_soc_reset_peripherals(Esp32s3SocState *s)
+{
+    /*
+     * Partial digital-peripheral reset. This currently covers the modeled
+     * interrupt matrix, UARTs, and I2C controllers. Other modeled devices keep
+     * their QEMU state until their reset-domain ownership is made explicit.
+     */
+    device_cold_reset(DEVICE(&s->intmatrix));
+    for (int i = 0; i < ESP32S3_UART_COUNT; ++i) {
+        device_cold_reset(DEVICE(&s->uart[i]));
+    }
+    for (int i = 0; i < ESP32S3_I2C_COUNT; ++i) {
+        device_cold_reset(DEVICE(&s->i2c[i]));
+    }
+}
+
+static void esp32s3_soc_reset_cpu(Esp32s3SocState *s, int cpu_index)
+{
+    MachineState *ms = MACHINE(qdev_get_machine());
+
+    if (cpu_index >= ms->smp.cpus) {
+        return;
+    }
+
+    xtensa_select_static_vectors(&s->cpu[cpu_index].env,
+                                 s->rtc_cntl.stat_vector_sel[cpu_index]);
+    remove_cpu_watchpoints(&s->cpu[cpu_index]);
+    cpu_reset(CPU(&s->cpu[cpu_index]));
+    /*
+     * QEMU's Xtensa CPU reset leaves CPENABLE disabled in system-mode
+     * emulation. ESP32-S3 firmware expects coprocessor/FPU access after reset,
+     * so this remains a QEMU compatibility bridge.
+     */
+    s->cpu[cpu_index].env.sregs[CPENABLE] = 0xff;
+}
+
+static void esp32s3_soc_reset_digital(Esp32s3SocState *s)
+{
+    esp32s3_soc_reset_peripherals(s);
+    esp32s3_soc_reset_cpu(s, 0);
+    esp32s3_soc_reset_cpu(s, 1);
+}
+
+static void esp32s3_soc_reset_full_chip(Esp32s3SocState *s)
+{
+    /*
+     * QEMU full-chip reset is still a compatibility approximation. It resets
+     * the explicit digital domain and re-bases RTC time, but it does not model
+     * analog rail sequencing, brownout timing, or retention timing.
+     */
+    device_cold_reset(DEVICE(&s->rtc_cntl));
+    esp32s3_soc_reset_digital(s);
+}
+
 static void esp32s3_soc_reset(DeviceState *dev)
 {
     Esp32s3SocState *s = ESP32S3_SOC(dev);
-    MachineState *ms = MACHINE(qdev_get_machine());
 
     if (s->requested_reset == 0) {
         s->requested_reset = ESP32S3_SOC_RESET_ALL;
     }
+
+    if (s->requested_reset == ESP32S3_SOC_RESET_ALL) {
+        esp32s3_soc_reset_full_chip(s);
+        s->requested_reset = 0;
+        return;
+    }
+
     if (s->requested_reset & ESP32S3_SOC_RESET_PERIPH) {
-        device_cold_reset(DEVICE(&s->intmatrix));
-        for (int i = 0; i < ESP32S3_UART_COUNT; ++i) {
-            device_cold_reset(DEVICE(&s->uart[i]));
-        }
-        for (int i = 0; i < ESP32S3_I2C_COUNT; ++i) {
-            device_cold_reset(DEVICE(&s->i2c[i]));
-        }
+        esp32s3_soc_reset_peripherals(s);
     }
+
     if (s->requested_reset & ESP32S3_SOC_RESET_PROCPU) {
-        xtensa_select_static_vectors(&s->cpu[0].env, s->rtc_cntl.stat_vector_sel[0]);
-        remove_cpu_watchpoints(&s->cpu[0]);
-        cpu_reset(CPU(&s->cpu[0]));
-        s->cpu[0].env.sregs[CPENABLE] = 0xff;
+        esp32s3_soc_reset_cpu(s, 0);
     }
-    if (s->requested_reset & ESP32S3_SOC_RESET_APPCPU && ms->smp.cpus > 1) {
-        xtensa_select_static_vectors(&s->cpu[1].env, s->rtc_cntl.stat_vector_sel[1]);
-        remove_cpu_watchpoints(&s->cpu[1]);
-        cpu_reset(CPU(&s->cpu[1]));
-        s->cpu[1].env.sregs[CPENABLE] = 0xff;
+
+    if (s->requested_reset & ESP32S3_SOC_RESET_APPCPU) {
+        esp32s3_soc_reset_cpu(s, 1);
     }
+
     s->requested_reset = 0;
 }
 

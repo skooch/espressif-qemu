@@ -116,6 +116,17 @@ The RTC_CNTL fallback store was removed for the sleep/wake register surface. QEM
 
 This is SDK-contract and board-path accurate for the modeled light-sleep wake/reject flows. It is not a full ESP32-S3 power manager. Full internal power-domain sequencing, CPU-retention DMA timing, retention-memory save/restore, brownout interactions, analog reset behavior, RTC watchdog escalation timing, ULP/touch/USB wake behavior, EXT1 status latching, and oscillator/settling delays remain blocked for accuracy without more detailed source evidence or hardware probes.
 
+### Phase 3 Reset Domain Status
+
+The ESP32-S3 reset path is now split into named helpers for PROCPU reset, APPCPU reset, partial digital peripheral reset, digital reset, and full-chip reset. This makes the current QEMU contract explicit:
+
+- PROCPU and APPCPU resets reset only the targeted modeled CPU, select the RTC-configured static-vector mode, clear CPU watchpoints, and restore `CPENABLE` as a QEMU compatibility bridge for system-mode Xtensa execution.
+- Digital reset resets both modeled CPUs plus the currently owned digital-peripheral subset: interrupt matrix, UARTs, and I2C controllers.
+- Full-chip reset currently resets the explicit digital domain and re-bases RTC time. RTC scratch registers remain retained under the tested software-reset path.
+- The reset request itself still uses QEMU process-level reset events as a compatibility bridge; the SoC reset handler reconstructs the requested ESP32-S3 reset domain from the latched request.
+
+The qtest suite pins guest-visible reset cause, CPU-reset isolation from UART state, digital peripheral reset clearing UART interrupt-enable state, and RTC scratch retention across software CPU/digital resets. Full ESP32-S3 reset-tree fidelity remains incomplete for analog rails, brownout, full peripheral fanout, retention timing, and power-domain sequencing.
+
 ### Current Fidelity / Risk Table
 
 | Subsystem | Current state | Gap vs real hardware | Likely real-usage risk |
