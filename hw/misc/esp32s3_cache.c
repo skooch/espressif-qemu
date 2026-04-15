@@ -35,6 +35,7 @@
 #define ESP32S3_CACHE_ACCESS_ATTR_EXEC   1u
 #define ESP32S3_CACHE_ACCESS_ATTR_READ   2u
 #define ESP32S3_CACHE_ACCESS_ATTR_WRITE  4u
+#define ESP32S3_CACHE_DEADLINE_NONE     (-1)
 
 typedef struct ESP32S3CacheDeferredOp {
     hwaddr addr;
@@ -84,6 +85,15 @@ static const ESP32S3CacheDeferredOp esp32s3_cache_deferred_ops[] = {
     },
 };
 
+G_STATIC_ASSERT(ARRAY_SIZE(esp32s3_cache_deferred_ops) ==
+                ESP32S3_CACHE_DEFERRED_OP_COUNT);
+
+static size_t esp32s3_cache_deferred_op_index(
+    const ESP32S3CacheDeferredOp *op)
+{
+    return op - esp32s3_cache_deferred_ops;
+}
+
 static const ESP32S3CacheDeferredOp *esp32s3_cache_find_deferred_op(hwaddr addr)
 {
     for (size_t i = 0; i < ARRAY_SIZE(esp32s3_cache_deferred_ops); i++) {
@@ -95,13 +105,24 @@ static const ESP32S3CacheDeferredOp *esp32s3_cache_find_deferred_op(hwaddr addr)
     return NULL;
 }
 
+static bool esp32s3_cache_deferred_op_active(ESP32S3CacheState *s,
+                                             size_t op_index)
+{
+    const ESP32S3CacheDeferredOp *op = &esp32s3_cache_deferred_ops[op_index];
+    const hwaddr reg_index = ESP32S3_CACHE_REG_IDX(op->addr);
+
+    return s->completion_deadline_ns[op_index] !=
+           ESP32S3_CACHE_DEADLINE_NONE &&
+           (s->regs[reg_index] & op->ena_mask) != 0;
+}
+
 static bool esp32s3_cache_domain_busy(ESP32S3CacheState *s, bool dcache)
 {
     for (size_t i = 0; i < ARRAY_SIZE(esp32s3_cache_deferred_ops); i++) {
         const ESP32S3CacheDeferredOp *op = &esp32s3_cache_deferred_ops[i];
-        const hwaddr index = ESP32S3_CACHE_REG_IDX(op->addr);
 
-        if (op->dcache == dcache && (s->regs[index] & op->ena_mask)) {
+        if (op->dcache == dcache &&
+            esp32s3_cache_deferred_op_active(s, i)) {
             return true;
         }
     }
@@ -304,34 +325,80 @@ static void esp32s3_cache_clear_illegal_status(ESP32S3CacheState *s,
 static void esp32s3_cache_complete_deferred_ops(void *opaque)
 {
     ESP32S3CacheState *s = ESP32S3_CACHE(opaque);
+    const int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    int64_t next_deadline = INT64_MAX;
 
     for (size_t i = 0; i < ARRAY_SIZE(esp32s3_cache_deferred_ops); i++) {
         const ESP32S3CacheDeferredOp *op = &esp32s3_cache_deferred_ops[i];
         const hwaddr index = ESP32S3_CACHE_REG_IDX(op->addr);
+        const int64_t deadline = s->completion_deadline_ns[i];
 
-        if (s->regs[index] & op->ena_mask) {
+        if (deadline == ESP32S3_CACHE_DEADLINE_NONE) {
+            continue;
+        }
+
+        if ((s->regs[index] & op->ena_mask) == 0) {
+            s->completion_deadline_ns[i] = ESP32S3_CACHE_DEADLINE_NONE;
+            continue;
+        }
+
+        if (deadline <= now) {
             s->regs[index] &= ~op->ena_mask;
             s->regs[index] |= op->done_mask;
+            s->completion_deadline_ns[i] = ESP32S3_CACHE_DEADLINE_NONE;
+        } else if (deadline < next_deadline) {
+            next_deadline = deadline;
         }
+    }
+
+    if (next_deadline == INT64_MAX) {
+        timer_del(&s->completion_timer);
+    } else {
+        timer_mod(&s->completion_timer, next_deadline);
     }
 }
 
-static void esp32s3_cache_maybe_schedule_deferred_ops(ESP32S3CacheState *s)
+static void esp32s3_cache_schedule_next_completion(ESP32S3CacheState *s)
 {
-    for (size_t i = 0; i < ARRAY_SIZE(esp32s3_cache_deferred_ops); i++) {
-        const ESP32S3CacheDeferredOp *op = &esp32s3_cache_deferred_ops[i];
-        const hwaddr index = ESP32S3_CACHE_REG_IDX(op->addr);
+    int64_t next_deadline = INT64_MAX;
 
-        if (s->regs[index] & op->ena_mask) {
-            timer_mod(&s->completion_timer,
-                      qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + CACHE_OP_DELAY_NS);
-            return;
+    for (size_t i = 0; i < ARRAY_SIZE(esp32s3_cache_deferred_ops); i++) {
+        if (esp32s3_cache_deferred_op_active(s, i) &&
+            s->completion_deadline_ns[i] < next_deadline) {
+            next_deadline = s->completion_deadline_ns[i];
         }
     }
 
-    timer_del(&s->completion_timer);
+    if (next_deadline == INT64_MAX) {
+        timer_del(&s->completion_timer);
+    } else {
+        timer_mod(&s->completion_timer, next_deadline);
+    }
 }
 
+static void esp32s3_cache_write_deferred_op(ESP32S3CacheState *s,
+                                            const ESP32S3CacheDeferredOp *op,
+                                            uint32_t value)
+{
+    const size_t op_index = esp32s3_cache_deferred_op_index(op);
+    const hwaddr reg_index = ESP32S3_CACHE_REG_IDX(op->addr);
+    uint32_t new_value = value & ~op->done_mask;
+
+    if (value & op->ena_mask) {
+        s->regs[reg_index] = new_value;
+        s->completion_deadline_ns[op_index] =
+            qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + CACHE_OP_DELAY_NS;
+    } else {
+        if (!esp32s3_cache_deferred_op_active(s, op_index)) {
+            new_value |= s->regs[reg_index] & op->done_mask;
+        }
+        s->regs[reg_index] = new_value;
+        s->completion_deadline_ns[op_index] =
+            ESP32S3_CACHE_DEADLINE_NONE;
+    }
+
+    esp32s3_cache_schedule_next_completion(s);
+}
 
 static inline uint32_t esp32s3_read_mmu_value(ESP32S3CacheState *s, hwaddr reg_addr)
 {
@@ -577,15 +644,13 @@ static void esp32s3_cache_write(void *opaque, hwaddr addr, uint64_t value,
                 }
                 break;
             default:
-                s->regs[index] = value;
                 {
                     const ESP32S3CacheDeferredOp *op = esp32s3_cache_find_deferred_op(addr);
 
                     if (op != NULL) {
-                        if (value & op->ena_mask) {
-                            s->regs[index] &= ~op->done_mask;
-                        }
-                        esp32s3_cache_maybe_schedule_deferred_ops(s);
+                        esp32s3_cache_write_deferred_op(s, op, value);
+                    } else {
+                        s->regs[index] = value;
                     }
                 }
                 break;
@@ -610,6 +675,9 @@ static void esp32s3_cache_reset_hold(Object *obj, ResetType type)
 {
     ESP32S3CacheState *s = ESP32S3_CACHE(obj);
     memset(s->regs, 0, ESP32S3_CACHE_REG_COUNT * sizeof(*s->regs));
+    for (size_t i = 0; i < ARRAY_SIZE(s->completion_deadline_ns); i++) {
+        s->completion_deadline_ns[i] = ESP32S3_CACHE_DEADLINE_NONE;
+    }
     timer_del(&s->completion_timer);
     qemu_set_irq(s->illegal_irq, 0);
     qemu_set_irq(s->access_irq[0], 0);

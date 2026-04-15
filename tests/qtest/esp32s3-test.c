@@ -138,6 +138,11 @@ static QTestState *qts_start_smp1(void)
     return qtest_init("-M esp32s3 -smp 1");
 }
 
+static QTestState *qts_start_with_psram(void)
+{
+    return qtest_init("-M esp32s3 -m 2M");
+}
+
 static QTestState *qts_start_with_openeth(void)
 {
     return qtest_init("-M esp32s3 -nic user,id=emac0,model=open_eth");
@@ -304,6 +309,21 @@ static void test_cache_flash_mmu_mapping_and_ctrl1_state(void)
     unlink(flash_path);
 }
 
+static void test_cache_psram_mmu_mapping(void)
+{
+    QTestState *qts = qts_start_with_psram();
+    const uint32_t mmu_entry0 = DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET;
+    const uint32_t psram_page0 = BIT(15);
+
+    g_assert_cmphex(qtest_readl(qts, mmu_entry0), ==, BIT(14));
+
+    qtest_writel(qts, mmu_entry0, psram_page0);
+    qtest_writel(qts, ESP32S3_DCACHE_BASE, 0x13572468);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_DCACHE_BASE), ==, 0x13572468);
+
+    qtest_quit(qts);
+}
+
 static void assert_cache_deferred_completion(QTestState *qts, uint32_t reg,
                                              uint32_t trigger_bits,
                                              uint32_t ena_mask,
@@ -423,6 +443,121 @@ static void test_cache_deferred_completion_semantics(void)
     g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE) &
                     R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK,
                     ==, R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK);
+
+    qtest_quit(qts);
+}
+
+static void test_cache_deferred_ordering_and_clear(void)
+{
+    QTestState *qts = qts_start();
+    const uint32_t dcache_idle =
+        1u << R_EXTMEM_CACHE_STATE_DCACHE_STATE_SHIFT;
+    const uint32_t icache_idle =
+        1u << R_EXTMEM_CACHE_STATE_ICACHE_STATE_SHIFT;
+    uint32_t state;
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_SYNC_CTRL,
+                 R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK);
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS / 2);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_SYNC_CTRL,
+                 R_EXTMEM_ICACHE_SYNC_CTRL_INVALIDATE_ENA_MASK);
+
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS / 2 - 1);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_DCACHE_SYNC_CTRL) &
+                    R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK,
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_ICACHE_SYNC_CTRL) &
+                    R_EXTMEM_ICACHE_SYNC_CTRL_SYNC_DONE_MASK,
+                    ==, 0);
+    state = qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_STATE);
+    g_assert_cmphex(state & dcache_idle, ==, 0);
+    g_assert_cmphex(state & icache_idle, ==, 0);
+
+    qtest_clock_step(qts, 1);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_DCACHE_SYNC_CTRL) &
+                    R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK,
+                    ==, R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_ICACHE_SYNC_CTRL) &
+                    R_EXTMEM_ICACHE_SYNC_CTRL_SYNC_DONE_MASK,
+                    ==, 0);
+    state = qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_STATE);
+    g_assert_cmphex(state & dcache_idle, ==, dcache_idle);
+    g_assert_cmphex(state & icache_idle, ==, 0);
+
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS / 2);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_ICACHE_SYNC_CTRL) &
+                    R_EXTMEM_ICACHE_SYNC_CTRL_SYNC_DONE_MASK,
+                    ==, R_EXTMEM_ICACHE_SYNC_CTRL_SYNC_DONE_MASK);
+    state = qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_STATE);
+    g_assert_cmphex(state & dcache_idle, ==, dcache_idle);
+    g_assert_cmphex(state & icache_idle, ==, icache_idle);
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_PRELOAD_CTRL,
+                 R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_DCACHE_PRELOAD_CTRL) &
+                    R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_DONE_MASK,
+                    ==, 0);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_PRELOAD_CTRL, 0);
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_DCACHE_PRELOAD_CTRL) &
+                    (R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK |
+                     R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_DONE_MASK),
+                    ==, 0);
+
+    qtest_quit(qts);
+}
+
+static void test_cache_fault_preserved_across_deferred_ops(void)
+{
+    QTestState *qts = qts_start();
+    uint32_t fault_content;
+    uint32_t fault_vaddr;
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_ILG_INT_ENA,
+                 R_EXTMEM_CACHE_ILG_INT_ENA_MMU_ENTRY_FAULT_INT_ENA_MASK);
+    (void) qtest_readl(qts, ESP32S3_DCACHE_BASE);
+
+    fault_content = qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_CACHE_MMU_FAULT_CONTENT);
+    fault_vaddr = qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                              A_EXTMEM_CACHE_MMU_FAULT_VADDR);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_CACHE_ILG_INT_ST) &
+                    R_EXTMEM_CACHE_ILG_INT_ST_MMU_ENTRY_FAULT_ST_MASK,
+                    ==, R_EXTMEM_CACHE_ILG_INT_ST_MMU_ENTRY_FAULT_ST_MASK);
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_SYNC_CTRL,
+                 R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_PRELOAD_CTRL,
+                 R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK);
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS);
+
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_CACHE_ILG_INT_ST) &
+                    R_EXTMEM_CACHE_ILG_INT_ST_MMU_ENTRY_FAULT_ST_MASK,
+                    ==, R_EXTMEM_CACHE_ILG_INT_ST_MMU_ENTRY_FAULT_ST_MASK);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_CACHE_MMU_FAULT_CONTENT),
+                    ==, fault_content);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_CACHE_MMU_FAULT_VADDR),
+                    ==, fault_vaddr);
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_ILG_INT_CLR,
+                 R_EXTMEM_CACHE_ILG_INT_CLR_MMU_ENTRY_FAULT_INT_CLR_MASK);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_CACHE_MMU_FAULT_CONTENT),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_CACHE_MMU_FAULT_VADDR),
+                    ==, 0);
 
     qtest_quit(qts);
 }
@@ -2065,8 +2200,14 @@ int main(int argc, char **argv)
 #ifndef _WIN32
     qtest_add_func("/esp32s3/cache/flash-mmu-mapping-ctrl1",
                    test_cache_flash_mmu_mapping_and_ctrl1_state);
+    qtest_add_func("/esp32s3/cache/psram-mmu-mapping",
+                   test_cache_psram_mmu_mapping);
     qtest_add_func("/esp32s3/cache/deferred-completion",
                    test_cache_deferred_completion_semantics);
+    qtest_add_func("/esp32s3/cache/deferred-ordering-clear",
+                   test_cache_deferred_ordering_and_clear);
+    qtest_add_func("/esp32s3/cache/fault-preserved-deferred",
+                   test_cache_fault_preserved_across_deferred_ops);
     qtest_add_func("/esp32s3/cache/invalid-mmu-fault-irq",
                    test_cache_invalid_mmu_fault_irq);
     qtest_add_func("/esp32s3/cache/core0-dbus-reject-irq",

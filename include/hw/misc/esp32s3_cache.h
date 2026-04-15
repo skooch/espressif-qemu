@@ -87,6 +87,7 @@ _Static_assert(sizeof(ESP32S3MMUEntry) == sizeof(uint32_t), "MMU Entry size must
  * up to 0x100.
  */
 #define ESP32S3_CACHE_REG_COUNT (0x200 / sizeof(uint32_t))
+#define ESP32S3_CACHE_DEFERRED_OP_COUNT 6
 
 /**
  * Convert a register address to its index in the registers array
@@ -126,6 +127,7 @@ struct ESP32S3CacheState {
     /* Registers for controlling the cache */
     uint32_t regs[ESP32S3_CACHE_REG_COUNT];
     QEMUTimer completion_timer;
+    int64_t completion_deadline_ns[ESP32S3_CACHE_DEFERRED_OP_COUNT];
     qemu_irq illegal_irq;
     qemu_irq access_irq[2];
 
@@ -468,8 +470,8 @@ REG32(EXTMEM_CACHE_MMU_POWER_CTRL, 0x12C)
     FIELD(EXTMEM_CACHE_MMU_POWER_CTRL, CACHE_MMU_MEM_FORCE_ON, 0, 1)
 
 REG32(EXTMEM_CACHE_STATE, 0x130)
-    FIELD(EXTMEM_CACHE_STATE, DCACHE_STATE, 0, 12)
-    FIELD(EXTMEM_CACHE_STATE, ICACHE_STATE, 12, 12)
+    FIELD(EXTMEM_CACHE_STATE, ICACHE_STATE, 0, 12)
+    FIELD(EXTMEM_CACHE_STATE, DCACHE_STATE, 12, 12)
 
 REG32(EXTMEM_CACHE_ENCRYPT_DECRYPT_RECORD_DISABLE, 0x134)
     FIELD(EXTMEM_CACHE_ENCRYPT_DECRYPT_RECORD_DISABLE, RECORD_DISABLE_G0CB_DECRYPT, 1, 1)

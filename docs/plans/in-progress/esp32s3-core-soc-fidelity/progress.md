@@ -59,3 +59,14 @@
 - 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2 after the Phase 3 reset helper changes.
 - 2026-04-16: Verified a 15-second copied-flash firmware smoke exits only by timeout after the Phase 3 reset helper changes.
 - 2026-04-16: Verified `git diff --check` succeeds after the Phase 3 reset helper changes.
+- 2026-04-16: Started Phase 4. Confirmed ESP-IDF `extmem_reg.h` defines `EXTMEM_CACHE_STATE` with `ICACHE_STATE` in bits `[11:0]` and `DCACHE_STATE` in bits `[23:12]`; fixed the local register field definitions to match that source.
+- 2026-04-16: Replaced the cache model's single coalesced deferred-operation timer behavior with per-operation completion deadlines for DCache and ICache sync, preload, and autoload controls. Starting an operation clears its done bit, overlapping operations complete in deadline order, and clearing an enable bit before its deadline cancels the operation without setting done.
+- 2026-04-16: Added direct qtest coverage for PSRAM-backed MMU mapping, overlapping DCache/ICache operation ordering, clear-while-busy cancellation, fault metadata preservation across deferred cache operations, and the existing flash-backed core0 DBUS/IBUS reject metadata paths.
+- 2026-04-16: Kept the functional cache-reject test unchanged because direct qtest MMIO cannot prove core1 attribution: qtest-originated memory accesses do not run with `current_cpu` set to CPU1. The existing board-level functional test remains the correct proof for core1 reject handling.
+- 2026-04-16: Documented the Phase 4 cache/MMU/flash/PSRAM contract in `ESP32S3_EMULATION_GAPS.md`, including MMU entry programming, invalid-entry faults, flash read-only mapping, PSRAM read/write mapping, per-core reject metadata, cache maintenance busy/done/cancel behavior, freeze compatibility behavior, and blocked cache/flash microarchitectural timing.
+- 2026-04-16: Verified `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` succeeds after the Phase 4 cache changes.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test -p /xtensa/esp32s3/cache` passes 8/8 after the Phase 4 cache changes.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` passes 46/46 after the Phase 4 cache changes.
+- 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2 after the Phase 4 cache changes.
+- 2026-04-16: Verified a 15-second copied-flash firmware smoke exits only by timeout after the Phase 4 cache changes.
+- 2026-04-16: Verified `git diff --check` succeeds after the Phase 4 cache changes.

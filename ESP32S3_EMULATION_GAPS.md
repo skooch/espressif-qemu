@@ -127,6 +127,19 @@ The ESP32-S3 reset path is now split into named helpers for PROCPU reset, APPCPU
 
 The qtest suite pins guest-visible reset cause, CPU-reset isolation from UART state, digital peripheral reset clearing UART interrupt-enable state, and RTC scratch retention across software CPU/digital resets. Full ESP32-S3 reset-tree fidelity remains incomplete for analog rails, brownout, full peripheral fanout, retention timing, and power-domain sequencing.
 
+### Phase 4 Cache, MMU, Flash, And PSRAM Status
+
+The supported EXTMEM cache/MMU contract is intentionally functional and source-bounded:
+
+- MMU entries use the ESP32-S3 64 KB page format modeled by ESP-IDF and the current QEMU header: page number bits `[13:0]`, invalid bit `14`, and type bit `15` selecting flash or PSRAM. Reserved bits are forced to zero on writes, and the table remains readable through the MMU register window.
+- Invalid DCache and ICache translations latch `EXTMEM_CACHE_ILG_INT_ST.MMU_ENTRY_FAULT_ST` plus `EXTMEM_CACHE_MMU_FAULT_CONTENT` and `EXTMEM_CACHE_MMU_FAULT_VADDR`; clearing the illegal-cache interrupt clears the latched fault metadata.
+- Flash-backed mappings are read-only IOMMU mappings into the flash mirror. A write through a flash-backed DCache or ICache alias is rejected and records per-core DBUS/IBUS reject status, reject virtual address, access attribute, tag attribute, and interrupt status. Direct qtest MMIO can prove core0 reject metadata; core1 attribution depends on `current_cpu` and remains covered by the board-level functional cache-reject test.
+- PSRAM-backed mappings are read/write IOMMU mappings into the attached PSRAM model when the `esp32s3` machine has nonzero `-m` memory. Without PSRAM, a PSRAM-typed MMU entry gives no translation permission.
+- DCache and ICache sync, preload, and autoload control registers now have per-operation deferred completion deadlines. Starting an operation clears the read-only done bit, `CACHE_STATE` reports the matching domain busy until that operation's own deadline, overlapping operations complete in deadline order, and clearing an enable bit before the deadline cancels that operation without manufacturing completion.
+- DCache and ICache freeze controls remain a narrow SDK compatibility surface: enabling freeze immediately reports the matching freeze-done bit, and disabling freeze clears it. No cache pipeline drain, line ownership, or bus stall behavior is modeled.
+
+This is SDK-contract accurate for the modeled MMU programming, flash/PSRAM mapping, invalid-entry fault, reject, and cache-maintenance completion semantics needed by the current firmware and local SDK sources. It is not cycle-accurate cache hardware. Cache cycle timing, line fill/eviction/replacement policy, dirty-line writeback ordering, bus contention, pipeline stall timing, flash-controller micro-timing, encryption throughput timing, and the full cache PMS/access-mask matrix remain blocked for accuracy without hardware probes or exact vendor microarchitectural references.
+
 ### Current Fidelity / Risk Table
 
 | Subsystem | Current state | Gap vs real hardware | Likely real-usage risk |
@@ -136,7 +149,7 @@ The qtest suite pins guest-visible reset cause, CPU-reset isolation from UART st
 | GPIO matrix + IO_MUX | Board-path complete for the routed signals in active use | Not a full silicon-complete routing model | Medium |
 | Generic MMIO surface | Instrumented and narrower than before, but still present | Unknown registers can still appear to work via stored readback unless traced and replaced with explicit models | High |
 | Clock / reset / sleep | Partially modeled | Deep sleep, wake, reset-domain, and wider clock-tree behavior remain incomplete | High |
-| Cache / MMU / external memory | Functional and boot-capable | Operations complete too eagerly and state reporting is too optimistic | High |
+| Cache / MMU / external memory | Functional SDK-contract model for MMU, flash, PSRAM, faults, rejects, and maintenance-operation completion | Still not cycle-accurate; no line replacement, contention, stall timing, or flash-controller micro-timing | Medium to High |
 | USB Serial/JTAG, I2C, UART, SHA | Board-path complete with RX, completion semantics, clock-derived timing, and IRQ coverage | DMA error paths, uncommon timing modes, and multi-CPU interrupt routing remain incomplete | Medium |
 | PMS + RNG | Intentionally narrow modeled behavior | Useful for current firmware, not a full device-faithful implementation | Low to Medium |
 | Ethernet | Generic `open_eth` stand-in with direct link/MII and descriptor loopback regression coverage | Still not an ESP32-S3-specific EMAC model or full PHY implementation | Low for the current workload, Medium to High if future firmware depends on deeper EMAC details |
@@ -150,7 +163,7 @@ The qtest suite pins guest-visible reset cause, CPU-reset isolation from UART st
 - SPI2/SPI3 were intentionally a minimum-function stub. Transfers complete instantly, `USR` clears immediately, and `TRANS_DONE` is raised right away instead of following a more realistic controller state progression.
 - Clock, reset, and sleep/power behavior are only partially modeled. The `SYSTEM` block handles a small subset of registers, RTC sleep/wake logic is tailored to current timer/GPIO/EXT1 paths, and reset still contains QEMU-specific shims.
 - Most previously placeholder peripherals have been tightened to board-path-complete behavior: USB Serial/JTAG now supports RX delivery, FIFO-used status reporting, and RX/TX interrupt state; I2C clears and sets DONE bits per-command with deferred completion IRQ delivery; UART derives baud and pulse timing from the active clock configuration (falling back to 40 MHz only when no clock device is linked); PMS returns RAZ/WI for addresses above 0x100 and a date register at 0xFFC; SHA asserts and clears interrupt state on completion for both DMA and non-DMA paths; RNG is intentionally narrow (only addr==0 && size==4 returns host entropy). Remaining gaps include DMA error paths, uncommon timing modes, unsupported I2C slave/APB-nonfifo modes, and multi-CPU interrupt routing.
-- External memory and cache behavior are still functional rather than cycle-accurate. Flash-backed MMU remaps are immediate, but cache sync/preload/autoload requests now complete after a short deferred timer and drive `CACHE_STATE` busy/idle reporting instead of reporting completion only when software reads the control register.
+- External memory and cache behavior are functional rather than cycle-accurate. Flash-backed and PSRAM-backed MMU remaps are immediate, invalid translations latch fault metadata, flash writes latch reject metadata, and cache sync/preload/autoload requests now complete through per-operation deferred deadlines that drive `CACHE_STATE` busy/idle reporting. Timing, replacement, contention, and pipeline effects are deliberately not modeled.
 - Some blocks are substituted with generic IP rather than an S3-specific model. Ethernet still uses `open_eth`, but the current tree now makes the QEMU-visible contract explicit: `MIICOMMAND`/MII link polling stays latched correctly, backend link toggles update `MIISTATUS`, and loopback mode can drive descriptor RX from TX for direct regression coverage.
 - SPI1 had an outright correctness bug in the flash transfer loop: the byte loop compared the payload value instead of the loop index, making the transfer path data-dependent. (Now fixed; see Stage 2.)
 - The generic Xtensa backend still has known accuracy gaps such as remaining reject-surface coverage gaps and unimplemented opcode paths.
@@ -193,7 +206,7 @@ Current firmware and library code rely on a narrower subset of cache/MMU behavio
 - Multi-core flash writes and erases rely on explicit Core 1 parking around the ROM flash calls. The active firmware uses `FlashStorage::multicore_auto_park()` for littlefs and BLE OTA, so the guest-visible contract we care about first is "park the other core, perform the flash op, then unpark" rather than a cycle-accurate cache-disable implementation.
 - Panic-path crashdump writes rely on the same raw flash path while assuming the other core is already stalled. That means the important emulation surface is still the flash/MMU path itself, even when the multi-core helper is intentionally bypassed.
 - The current reviewed firmware does not appear to rely on the broader EXTMEM management surface such as cache prelock/lock controls, preload/autoload sequencing, PMS reject capture, wraparound control, or cache/MMU fault reporting. Those registers exist in the header today, but they are not part of the confirmed dependency set for the active T-Deck Pro workload.
-- There is now direct ESP32-S3 qtest coverage for flash-backed MMU remapping, the `CTRL1` state touched by PSRAM bring-up, and the deferred completion path for sync/preload/autoload operations. Remaining cache/MMU simplifications are now mostly in the "leave cycle-accuracy for later" bucket: coalesced completion timing, simplified freeze semantics, and no attempt to model contention or ROM-internal cache-disable depth.
+- There is now direct ESP32-S3 qtest coverage for flash-backed MMU remapping, PSRAM-backed MMU mapping, the `CTRL1` state touched by PSRAM bring-up, invalid-MMU fault latching, core0 DBUS/IBUS reject metadata, per-operation sync/preload/autoload completion ordering, clear-while-busy cancellation, and fault preservation across cache-maintenance operations. Remaining cache/MMU simplifications are now mostly in the "leave cycle-accuracy for later" bucket: simplified freeze semantics, no cache-line replacement model, no contention/stall timing, and no ROM-internal cache-disable depth.
 
 ### Task 3 EMAC Inventory And Current Contract (2026-04-05)
 
@@ -269,7 +282,7 @@ Recently resolved in this track:
 ### Deferred
 
 - `P3` Deep clock/reset/sleep fidelity rework to eliminate QEMU-only identity/workaround behavior.
-- `P3` Cache/MMU sequencing and timing realism beyond boot-critical paths.
+- `P3` [PHASE 4 DONE] Cache/MMU functional sequencing for MMU entries, flash, PSRAM, invalid-entry faults, per-core reject metadata, and cache-maintenance busy/done state; cycle timing and microarchitectural realism remain blocked.
 - `P3` Replace `open_eth` with a more ESP32-S3-specific EMAC model if firmware needs more than the current QEMU OpenCores link / packet contract.
 - `P3` Broader Xtensa architectural fidelity work once guest firmware depends on those features.
 

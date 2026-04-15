@@ -4,7 +4,7 @@
 Turn the remaining ESP32-S3 core-SoC quality recommendations into information-gated implementation tracks that improve QEMU accuracy without claiming fidelity beyond the available public and local reference material.
 
 ## Current Phase
-Phase 3
+Phase 5
 
 ## Scope
 This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shims, RTC/reset/sleep, cache/MMU, clocking, interrupt matrix, eFuse, PMS/RNG, Xtensa backend confidence, and documentation. It does not plan unrelated peripheral fidelity.
@@ -93,12 +93,13 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 - **Status:** complete
 
 ### Phase 4: Cache, MMU, Flash, And PSRAM Contract
-- [ ] Define the supported cache/MMU contract in `ESP32S3_EMULATION_GAPS.md`: MMU entry programming, invalid-entry faults, per-core access rejects, sync/preload/autoload busy/done state, freeze state, flash-backed mapping, and PSRAM-backed mapping.
-- [ ] Improve `hw/misc/esp32s3_cache.c` so each supported cache operation has deterministic busy, done, idle, clear, and fault interaction behavior rather than only a single fixed-delay completion path.
-- [ ] Add qtests in `tests/qtest/esp32s3-test.c` for overlapping dcache/icache operations, clear-while-busy behavior, operation completion ordering, fault status preservation, and per-core reject metadata for every modeled reject source.
-- [ ] Extend `tests/functional/test_xtensa_esp32s3_cache_reject.py` only when a board-level behavior cannot be proven with direct qtest MMIO.
-- [ ] Mark cache cycle timing, cache line replacement, bus contention, pipeline stall timing, and flash-controller micro-timing as `blocked for accuracy` in `ESP32S3_EMULATION_GAPS.md`.
-- **Status:** pending
+- [x] Define the supported cache/MMU contract in `ESP32S3_EMULATION_GAPS.md`: MMU entry programming, invalid-entry faults, per-core access rejects, sync/preload/autoload busy/done state, freeze state, flash-backed mapping, and PSRAM-backed mapping.
+- [x] Improve `hw/misc/esp32s3_cache.c` so each supported cache operation has deterministic busy, done, idle, clear, and fault interaction behavior rather than only a single fixed-delay completion path.
+- [x] Add qtests in `tests/qtest/esp32s3-test.c` for overlapping dcache/icache operations, clear-while-busy behavior, operation completion ordering, fault status preservation, and per-core reject metadata for every modeled reject source.
+- [x] Extend `tests/functional/test_xtensa_esp32s3_cache_reject.py` only when a board-level behavior cannot be proven with direct qtest MMIO.
+- [x] Mark cache cycle timing, cache line replacement, bus contention, pipeline stall timing, and flash-controller micro-timing as `blocked for accuracy` in `ESP32S3_EMULATION_GAPS.md`.
+- **Status:** complete
+- **Note:** No new functional-test extension was needed in Phase 4. Direct qtest MMIO now proves the register/MMU/cache-operation contract, while the existing functional cache-reject test remains the correct board-level proof for core1 reject attribution because qtest-originated accesses do not run under a core1 `current_cpu`.
 
 ### Phase 5: Clock Tree And Interrupt Matrix Contract
 - [ ] Define the supported clock contract in `ESP32S3_EMULATION_GAPS.md`: XTAL, RCFAST, PLL-selected CPU rates, APB derivation, RTC slow/fast clock selection, and every modeled consumer of clock updates.
