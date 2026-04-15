@@ -140,6 +140,25 @@ The supported EXTMEM cache/MMU contract is intentionally functional and source-b
 
 This is SDK-contract accurate for the modeled MMU programming, flash/PSRAM mapping, invalid-entry fault, reject, and cache-maintenance completion semantics needed by the current firmware and local SDK sources. It is not cycle-accurate cache hardware. Cache cycle timing, line fill/eviction/replacement policy, dirty-line writeback ordering, bus contention, pipeline stall timing, flash-controller micro-timing, encryption throughput timing, and the full cache PMS/access-mask matrix remain blocked for accuracy without hardware probes or exact vendor microarchitectural references.
 
+### Phase 5 Clock Tree And Interrupt Matrix Status
+
+The supported SYSTEM clock contract is narrow and SDK-contract oriented:
+
+- CPU clock source selection follows the ESP-IDF `SOC_CPU_CLK_SRC_*` values exposed through `SYSTEM_SYSCLK_CONF.SOC_CLK_SEL`: XTAL uses the modeled XTAL frequency, RC_FAST uses the ESP-IDF approximate `17.5 MHz`, and PLL selection uses the modeled `SYSTEM_CPU_PER_CONF.CPUPERIOD_SEL` values currently needed by the guest path.
+- APB frequency is derived as `min(cpu_hz, 80 MHz)`, matching the ESP-IDF clock-tree rule that APB/AHB is fixed at 80 MHz when CPU clock is sourced from PLL and otherwise follows lower CPU sources.
+- RTC writes to `RTC_CNTL_CLK_CONF.SOC_CLK_SEL` continue to propagate into `SYSTEM_SYSCLK_CONF` and the supported consumers. The qtest suite pins RTC-driven XTAL selection and UART timing changes.
+- The supported modeled consumers are Xtensa CPU clock inputs and UART timing/autobaud behavior. Other APB users are not yet connected to the clock model and must not be treated as source-sensitive.
+- `SYSTEM_CPU_PER_CONF` and `SYSTEM_SYSCLK_CONF` now mask guest writes to the source-backed fields present in ESP-IDF `system_reg.h`. Peripheral clock-enable/reset registers and `SYSTEM_CLOCK_GATE` are explicit deterministic register state, but individual peripheral clock gating and reset side effects are still owned by their device-specific phases.
+
+The interrupt matrix contract is also narrow but explicit:
+
+- Mapping registers reset to the ESP-IDF documented value `16`, store the low 5 bits on writes, and are exposed for both CPU windows using the documented `0x800` per-core stride.
+- Status windows at `+0x18c` through `+0x198` and `+0x98c` through `+0x998` reflect the currently asserted peripheral interrupt source levels.
+- Sources `15`, `23`, `33`, `34`, and `46` are suppressed as a QEMU compatibility policy because the current Rust/PAC interrupt vector table has null entries there; status reads mask those bits so firmware does not dispatch through address zero.
+- Routing to CPU0 and CPU1 uses the Xtensa configured external interrupt table. The direct qtest suite proves mapping readback, status assert/deassert, per-core status windows, and reserved-source suppression. Existing device tests continue to prove interrupt-source assertions through the matrix input side, and the board-level cache-reject functional test proves CPU-visible routed interrupt delivery on both cores for the currently exercised reject sources.
+
+This phase does not model analog PLL lock, oscillator startup, jitter, DFS/source-switch latency, divider settling, peripheral clock-domain crossing, timer-group APB-rate coupling, systimer source switching, or undocumented divider interactions. Those are blocked for accuracy without stronger timing references or hardware probes.
+
 ### Current Fidelity / Risk Table
 
 | Subsystem | Current state | Gap vs real hardware | Likely real-usage risk |
@@ -148,7 +167,7 @@ This is SDK-contract accurate for the modeled MMU programming, flash/PSRAM mappi
 | GP-SPI + GDMA | Good enough for current EPD, SD, LoRa, and qtest paths | Timing, busy windows, and broader DMA sequencing are still simplified | Medium |
 | GPIO matrix + IO_MUX | Board-path complete for the routed signals in active use | Not a full silicon-complete routing model | Medium |
 | Generic MMIO surface | Instrumented and narrower than before, but still present | Unknown registers can still appear to work via stored readback unless traced and replaced with explicit models | High |
-| Clock / reset / sleep | Partially modeled | Deep sleep, wake, reset-domain, and wider clock-tree behavior remain incomplete | High |
+| Clock / reset / sleep | Explicit narrow SDK contract for CPU/APB/RTC-selected clock propagation plus modeled RTC/reset flows | PLL dynamics, timer clock coupling, source-switch latency, deep power behavior, and wider clock fanout remain incomplete | High |
 | Cache / MMU / external memory | Functional SDK-contract model for MMU, flash, PSRAM, faults, rejects, and maintenance-operation completion | Still not cycle-accurate; no line replacement, contention, stall timing, or flash-controller micro-timing | Medium to High |
 | USB Serial/JTAG, I2C, UART, SHA | Board-path complete with RX, completion semantics, clock-derived timing, and IRQ coverage | DMA error paths, uncommon timing modes, and multi-CPU interrupt routing remain incomplete | Medium |
 | PMS + RNG | Intentionally narrow modeled behavior | Useful for current firmware, not a full device-faithful implementation | Low to Medium |

@@ -24,6 +24,16 @@
 
 #define CLOCK_DEBUG      0
 #define CLOCK_WARNING    0
+#define SYSTEM_CPU_PER_CONF_SUPPORTED_MASK \
+    (R_SYSTEM_CPU_PER_CONF_CPU_WAITI_DELAY_NUM_MASK | \
+     R_SYSTEM_CPU_PER_CONF_CPU_WAIT_MODE_FORCE_ON_MASK | \
+     R_SYSTEM_CPU_PER_CONF_PLL_FREQ_SEL_MASK | \
+     R_SYSTEM_CPU_PER_CONF_CPUPERIOD_SEL_MASK)
+#define SYSTEM_SYSCLK_CONF_SUPPORTED_MASK \
+    (R_SYSTEM_SYSCLK_CONF_CLK_DIV_EN_MASK | \
+     R_SYSTEM_SYSCLK_CONF_CLK_XTAL_FREQ_MASK | \
+     R_SYSTEM_SYSCLK_CONF_SOC_CLK_SEL_MASK | \
+     R_SYSTEM_SYSCLK_CONF_PRE_DIV_CNT_MASK)
 
 static uint32_t esp32s3_read_cpu_intr(ESP32S3ClockState *s, uint32_t index)
 {
@@ -113,6 +123,20 @@ uint32_t esp32s3_clock_get_cpu_freq(ESP32S3ClockState *s)
     }
 }
 
+static void esp32s3_clock_update_cpu_per_conf(ESP32S3ClockState *s,
+                                              uint32_t value)
+{
+    s->cpuperconf = value & SYSTEM_CPU_PER_CONF_SUPPORTED_MASK;
+    esp32s3_clock_propagate_rates(s);
+}
+
+static void esp32s3_clock_update_sysclk_conf(ESP32S3ClockState *s,
+                                             uint32_t value)
+{
+    s->sysclk = value & SYSTEM_SYSCLK_CONF_SUPPORTED_MASK;
+    esp32s3_clock_propagate_rates(s);
+}
+
 uint32_t esp32s3_clock_get_apb_freq(ESP32S3ClockState *s)
 {
     uint32_t cpu_hz = esp32s3_clock_get_cpu_freq(s);
@@ -134,6 +158,21 @@ static uint64_t esp32s3_clock_read(void *opaque, hwaddr addr, unsigned int size)
             break;
         case A_SYSTEM_CPU_PER_CONF:
             r = s->cpuperconf;
+            break;
+        case A_SYSTEM_PERIP_CLK_EN0:
+            r = s->perip_clk_en0;
+            break;
+        case A_SYSTEM_PERIP_CLK_EN1:
+            r = s->perip_clk_en1;
+            break;
+        case A_SYSTEM_PERIP_RST_EN0:
+            r = s->perip_rst_en0;
+            break;
+        case A_SYSTEM_PERIP_RST_EN1:
+            r = s->perip_rst_en1;
+            break;
+        case A_SYSTEM_CLOCK_GATE:
+            r = s->clock_gate;
             break;
         case A_SYSTEM_SYSCLK_CONF:
             r = s->sysclk;
@@ -179,12 +218,25 @@ static void esp32s3_clock_write(void *opaque, hwaddr addr, uint64_t value,
                 s->app_cpu_addr = (uint32_t)value;
             break;
         case A_SYSTEM_CPU_PER_CONF:
-            s->cpuperconf = (uint32_t)value;
-            esp32s3_clock_propagate_rates(s);
+            esp32s3_clock_update_cpu_per_conf(s, (uint32_t)value);
+            break;
+        case A_SYSTEM_PERIP_CLK_EN0:
+            s->perip_clk_en0 = (uint32_t)value;
+            break;
+        case A_SYSTEM_PERIP_CLK_EN1:
+            s->perip_clk_en1 = (uint32_t)value;
+            break;
+        case A_SYSTEM_PERIP_RST_EN0:
+            s->perip_rst_en0 = (uint32_t)value;
+            break;
+        case A_SYSTEM_PERIP_RST_EN1:
+            s->perip_rst_en1 = (uint32_t)value;
+            break;
+        case A_SYSTEM_CLOCK_GATE:
+            s->clock_gate = value & R_SYSTEM_CLOCK_GATE_CLK_EN_MASK;
             break;
         case A_SYSTEM_SYSCLK_CONF:
-            s->sysclk = (uint32_t)value;
-            esp32s3_clock_propagate_rates(s);
+            esp32s3_clock_update_sysclk_conf(s, (uint32_t)value);
             break;
         case A_SYSTEM_CPU_INTR_FROM_CPU_0:
         case A_SYSTEM_CPU_INTR_FROM_CPU_1:
@@ -220,7 +272,13 @@ static void esp32s3_clock_reset_hold(Object *obj, ResetType type)
 
     /* Divider for PLL clock and APB  frequency */
     s->cpuperconf = (ESP32S3_PERIOD_SEL_80 << R_SYSTEM_CPU_PER_CONF_CPUPERIOD_SEL_SHIFT) |
-                    (ESP32S3_FREQ_SEL_PLL_480 << R_SYSTEM_CPU_PER_CONF_PLL_FREQ_SEL_SHIFT);
+                    (ESP32S3_FREQ_SEL_PLL_480 << R_SYSTEM_CPU_PER_CONF_PLL_FREQ_SEL_SHIFT) |
+                    R_SYSTEM_CPU_PER_CONF_CPU_WAIT_MODE_FORCE_ON_MASK;
+    s->perip_clk_en0 = 0;
+    s->perip_clk_en1 = 0;
+    s->perip_rst_en0 = 0;
+    s->perip_rst_en1 = 0;
+    s->clock_gate = R_SYSTEM_CLOCK_GATE_CLK_EN_MASK;
 
     esp32s3_clock_propagate_rates(s);
 

@@ -4,7 +4,7 @@
 Turn the remaining ESP32-S3 core-SoC quality recommendations into information-gated implementation tracks that improve QEMU accuracy without claiming fidelity beyond the available public and local reference material.
 
 ## Current Phase
-Phase 5
+Phase 6
 
 ## Scope
 This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shims, RTC/reset/sleep, cache/MMU, clocking, interrupt matrix, eFuse, PMS/RNG, Xtensa backend confidence, and documentation. It does not plan unrelated peripheral fidelity.
@@ -102,13 +102,14 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 - **Note:** No new functional-test extension was needed in Phase 4. Direct qtest MMIO now proves the register/MMU/cache-operation contract, while the existing functional cache-reject test remains the correct board-level proof for core1 reject attribution because qtest-originated accesses do not run under a core1 `current_cpu`.
 
 ### Phase 5: Clock Tree And Interrupt Matrix Contract
-- [ ] Define the supported clock contract in `ESP32S3_EMULATION_GAPS.md`: XTAL, RCFAST, PLL-selected CPU rates, APB derivation, RTC slow/fast clock selection, and every modeled consumer of clock updates.
-- [ ] Update `hw/xtensa/esp32s3_clk.c` so unsupported SYSTEM clock fields either have source-backed behavior or deterministic unsupported behavior instead of silent no-op behavior.
-- [ ] Add qtests in `tests/qtest/esp32s3-test.c` proving CPU clock, APB clock, RTC-derived clock update, UART timing, timer behavior, and sleep/wake timing for each supported source.
-- [ ] Add interrupt-matrix qtests in `tests/qtest/esp32s3-test.c` that map a source to CPU0 and CPU1, assert and deassert the source, verify status window reads, verify output IRQ lines, and verify remap behavior.
-- [ ] Document the reserved-source suppression policy in `hw/xtensa/esp32s3_intc.c` and `ESP32S3_EMULATION_GAPS.md` as either source-backed hardware behavior or QEMU compatibility behavior.
-- [ ] Mark analog PLL lock dynamics, jitter, DFS transition timing, and undocumented divider interactions as `blocked for accuracy` in `ESP32S3_EMULATION_GAPS.md`.
-- **Status:** pending
+- [x] Define the supported clock contract in `ESP32S3_EMULATION_GAPS.md`: XTAL, RCFAST, PLL-selected CPU rates, APB derivation, RTC slow/fast clock selection, and every modeled consumer of clock updates.
+- [x] Update `hw/xtensa/esp32s3_clk.c` so unsupported SYSTEM clock fields either have source-backed behavior or deterministic unsupported behavior instead of silent no-op behavior.
+- [x] Add qtests in `tests/qtest/esp32s3-test.c` proving CPU clock, APB clock, RTC-derived clock update, UART timing, timer behavior, and sleep/wake timing for each supported source.
+- [x] Add interrupt-matrix qtests in `tests/qtest/esp32s3-test.c` that map a source to CPU0 and CPU1, assert and deassert the source, verify status window reads, verify output IRQ lines, and verify remap behavior.
+- [x] Document the reserved-source suppression policy in `hw/xtensa/esp32s3_intc.c` and `ESP32S3_EMULATION_GAPS.md` as either source-backed hardware behavior or QEMU compatibility behavior.
+- [x] Mark analog PLL lock dynamics, jitter, DFS transition timing, and undocumented divider interactions as `blocked for accuracy` in `ESP32S3_EMULATION_GAPS.md`.
+- **Status:** complete
+- **Note:** CPU/APB clock behavior is verified through the modeled CPU-clock propagation contract and UART/APB observable timing. Timer-group and systimer source-sensitive timing are not supported modeled consumers in this phase; they are documented as blocked rather than falsely claimed. Direct qtests prove interrupt-matrix mapping/status/remap behavior, while the existing board-level cache-reject functional test remains the proof that routed matrix outputs are CPU-visible on both cores.
 
 ### Phase 6: eFuse, PMS, And RNG Explicit Contracts
 - [ ] Build an ESP32-S3 eFuse field map from ESP-IDF eFuse tables and register headers, then update `hw/nvram/esp32s3_efuse.c` and `include/hw/nvram/esp32s3_efuse.h` so ESP32-S3-specific behavior is not only a thin subclass.

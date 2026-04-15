@@ -49,6 +49,11 @@ typedef struct ESP32S3ClockState {
     /* Registers for clocks configuration and frequency dividers */
     uint32_t cpuperconf;
     uint32_t sysclk;
+    uint32_t perip_clk_en0;
+    uint32_t perip_clk_en1;
+    uint32_t perip_rst_en0;
+    uint32_t perip_rst_en1;
+    uint32_t clock_gate;
 
 
     /* IRQs for crosscore interrupts */

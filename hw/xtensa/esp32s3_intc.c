@@ -19,12 +19,31 @@
 #include "hw/misc/esp32s3_reg.h"
 #include "hw/xtensa/esp32s3_intc.h"
 
-#define INTMATRIX_UNINT_VALUE   6
+#define INTMATRIX_RESET_MAP_VALUE 16
 
 #define INTC_DEBUG      0
 #define INTC_WARNING    0
 
 #define IRQ_MAP(cpu, input) s->irq_map[cpu][input]
+
+static bool esp32s3_intmatrix_source_is_reserved(int source)
+{
+    /*
+     * These sources are present in the ESP32-S3 source-number space but have
+     * null entries in the PAC interrupt vector table used by the current Rust
+     * firmware stack. Suppressing them is a QEMU compatibility policy, not an
+     * EXTMEM/INTERRUPT_CORE register semantic.
+     */
+    static const int reserved_sources[] = {15, 23, 33, 34, 46};
+
+    for (int i = 0; i < ARRAY_SIZE(reserved_sources); i++) {
+        if (source == reserved_sources[i]) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 static void esp32s3_intmatrix_irq_handler(void *opaque, int n, int level)
 {
@@ -39,11 +58,8 @@ static void esp32s3_intmatrix_irq_handler(void *opaque, int n, int level)
         }
     }
 
-    /* Block interrupt sources that have null entries in the PAC __INTERRUPTS
-     * vector table. */
-    static const int reserved_sources[] = {15, 23, 33, 34, 46};
-    for (int ri = 0; ri < 5; ri++) {
-        if (n == reserved_sources[ri]) return;
+    if (esp32s3_intmatrix_source_is_reserved(n)) {
+        return;
     }
 
     for (int i = 0; i < ESP32S3_CPU_COUNT; ++i) {
@@ -120,8 +136,12 @@ static uint64_t esp32s3_intmatrix_read(void* opaque, hwaddr addr, unsigned int s
         }
         if (word >= 0 && word < 4) {
             uint32_t val = s->irq_levels[word];
-            if (word == 0) val &= ~INTMATRIX_RESERVED_MASK_0;
-            if (word == 1) val &= ~INTMATRIX_RESERVED_MASK_1;
+            if (word == 0) {
+                val &= ~INTMATRIX_RESERVED_MASK_0;
+            }
+            if (word == 1) {
+                val &= ~INTMATRIX_RESERVED_MASK_1;
+            }
             return val;
         }
     }
@@ -152,7 +172,7 @@ static const MemoryRegionOps esp_intmatrix_ops = {
 static void esp32s3_intmatrix_reset_hold(Object *obj, ResetType type)
 {
     Esp32s3IntMatrixState *s = ESP32S3_INTMATRIX(obj);
-    memset(s->irq_map, INTMATRIX_UNINT_VALUE, sizeof(s->irq_map));
+    memset(s->irq_map, INTMATRIX_RESET_MAP_VALUE, sizeof(s->irq_map));
     memset(s->irq_levels, 0, sizeof(s->irq_levels));
     for (int i = 0; i < ESP32S3_CPU_COUNT; ++i) {
         if (s->outputs[i] == NULL) {

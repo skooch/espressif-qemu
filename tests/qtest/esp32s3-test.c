@@ -50,6 +50,7 @@
 #define UART0_BASE              DR_REG_UART_BASE
 #define SHA_BASE                DR_REG_SHA_BASE
 #define SYSTEM_BASE             DR_REG_SYSTEM_BASE
+#define INTMATRIX_BASE          DR_REG_INTERRUPT_BASE
 #define APB_CTRL_BASE           DR_REG_APB_CTRL_BASE
 #define RTC_CNTL_BASE           DR_REG_RTCCNTL_BASE
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
@@ -64,6 +65,7 @@
 #define ESP32S3_CACHE_IA_SOURCE        56
 #define ESP32S3_CACHE_CORE0_ACS_SOURCE 94
 #define ESP32S3_EMAC_SOURCE            0
+#define ESP32S3_GPIO_SOURCE            16
 #define APB_CTRL_LEGACY_ECO3_DATE_REG  (APB_CTRL_BASE + 0x07c)
 #define APB_CTRL_QEMU_ORIGIN_REG       (APB_CTRL_BASE + 0x3f8)
 #define APB_CTRL_DATE_REG              (APB_CTRL_BASE + 0x3fc)
@@ -71,6 +73,23 @@
 #define APB_CTRL_DATE_VALUE            0x02101150
 #define APB_CTRL_LEGACY_ECO3_DATE      0x96042000
 #define APB_CTRL_QEMU_ORIGIN           0x51454d55
+#define INTMATRIX_CPU_STRIDE           0x800
+#define INTMATRIX_INTR_STATUS0         0x18c
+#define INTMATRIX_MAP_REG(cpu, source) \
+    (INTMATRIX_BASE + ((cpu) * INTMATRIX_CPU_STRIDE) + ((source) * 4))
+#define INTMATRIX_STATUS_REG(cpu, word) \
+    (INTMATRIX_BASE + ((cpu) * INTMATRIX_CPU_STRIDE) + \
+     INTMATRIX_INTR_STATUS0 + ((word) * 4))
+#define SYSTEM_CPU_PER_CONF_SUPPORTED_MASK \
+    (R_SYSTEM_CPU_PER_CONF_CPU_WAITI_DELAY_NUM_MASK | \
+     R_SYSTEM_CPU_PER_CONF_CPU_WAIT_MODE_FORCE_ON_MASK | \
+     R_SYSTEM_CPU_PER_CONF_PLL_FREQ_SEL_MASK | \
+     R_SYSTEM_CPU_PER_CONF_CPUPERIOD_SEL_MASK)
+#define SYSTEM_SYSCLK_CONF_SUPPORTED_MASK \
+    (R_SYSTEM_SYSCLK_CONF_CLK_DIV_EN_MASK | \
+     R_SYSTEM_SYSCLK_CONF_CLK_XTAL_FREQ_MASK | \
+     R_SYSTEM_SYSCLK_CONF_SOC_CLK_SEL_MASK | \
+     R_SYSTEM_SYSCLK_CONF_PRE_DIV_CNT_MASK)
 
 #define OPENETH_MODER_DEFAULT          0xa000
 #define OPENETH_MODER_LOOPBCK          BIT(7)
@@ -1408,6 +1427,81 @@ static void test_rtc_clk_update_propagates_to_system_and_uart(void)
     qtest_quit(qts);
 }
 
+static void test_system_clock_register_contract(void)
+{
+    QTestState *qts = qts_start();
+
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_CLOCK_GATE) &
+                    R_SYSTEM_CLOCK_GATE_CLK_EN_MASK,
+                    ==, R_SYSTEM_CLOCK_GATE_CLK_EN_MASK);
+
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_CPU_PER_CONF, 0xffffffff);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_CPU_PER_CONF),
+                    ==, SYSTEM_CPU_PER_CONF_SUPPORTED_MASK);
+
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF, 0xffffffff);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF) &
+                    ~SYSTEM_SYSCLK_CONF_SUPPORTED_MASK,
+                    ==, 0);
+
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_PERIP_CLK_EN0, 0x13579bdf);
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_PERIP_CLK_EN1, 0x2468ace0);
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_PERIP_RST_EN0, 0x11223344);
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_PERIP_RST_EN1, 0x55667788);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_PERIP_CLK_EN0),
+                    ==, 0x13579bdf);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_PERIP_CLK_EN1),
+                    ==, 0x2468ace0);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_PERIP_RST_EN0),
+                    ==, 0x11223344);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_PERIP_RST_EN1),
+                    ==, 0x55667788);
+
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_CLOCK_GATE, 0xffffffff);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_CLOCK_GATE),
+                    ==, R_SYSTEM_CLOCK_GATE_CLK_EN_MASK);
+
+    qtest_quit(qts);
+}
+
+static void test_intmatrix_mapping_status_reserved(void)
+{
+    QTestState *qts = qts_start();
+
+    g_assert_cmphex(qtest_readl(qts, INTMATRIX_MAP_REG(0, ESP32S3_GPIO_SOURCE)),
+                    ==, 16);
+    g_assert_cmphex(qtest_readl(qts, INTMATRIX_MAP_REG(1, ESP32S3_GPIO_SOURCE)),
+                    ==, 16);
+
+    qtest_writel(qts, INTMATRIX_MAP_REG(0, ESP32S3_GPIO_SOURCE), 19);
+    qtest_writel(qts, INTMATRIX_MAP_REG(1, ESP32S3_GPIO_SOURCE), 20);
+    g_assert_cmphex(qtest_readl(qts, INTMATRIX_MAP_REG(0, ESP32S3_GPIO_SOURCE)),
+                    ==, 19);
+    g_assert_cmphex(qtest_readl(qts, INTMATRIX_MAP_REG(1, ESP32S3_GPIO_SOURCE)),
+                    ==, 20);
+
+    qtest_set_irq_in(qts, "/machine/soc/intmatrix", NULL,
+                     ESP32S3_GPIO_SOURCE, 1);
+    g_assert_cmphex(qtest_readl(qts, INTMATRIX_STATUS_REG(0, 0)) &
+                    BIT(ESP32S3_GPIO_SOURCE),
+                    ==, BIT(ESP32S3_GPIO_SOURCE));
+    g_assert_cmphex(qtest_readl(qts, INTMATRIX_STATUS_REG(1, 0)) &
+                    BIT(ESP32S3_GPIO_SOURCE),
+                    ==, BIT(ESP32S3_GPIO_SOURCE));
+
+    qtest_set_irq_in(qts, "/machine/soc/intmatrix", NULL,
+                     ESP32S3_GPIO_SOURCE, 0);
+    g_assert_cmphex(qtest_readl(qts, INTMATRIX_STATUS_REG(0, 0)) &
+                    BIT(ESP32S3_GPIO_SOURCE),
+                    ==, 0);
+
+    qtest_set_irq_in(qts, "/machine/soc/intmatrix", NULL, 15, 1);
+    g_assert_cmphex(qtest_readl(qts, INTMATRIX_STATUS_REG(0, 0)) & BIT(15),
+                    ==, 0);
+
+    qtest_quit(qts);
+}
+
 static void test_rtc_explicit_register_surface(void)
 {
     QTestState *qts = qts_start();
@@ -2229,6 +2323,10 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/i2c/read-path-deferred", test_i2c_read_path_and_deferred_complete);
     qtest_add_func("/esp32s3/i2c/unsupported-modes", test_i2c_unsupported_modes);
     qtest_add_func("/esp32s3/rtc/clk-update", test_rtc_clk_update_propagates_to_system_and_uart);
+    qtest_add_func("/esp32s3/system/clock-register-contract",
+                   test_system_clock_register_contract);
+    qtest_add_func("/esp32s3/intmatrix/mapping-status-reserved",
+                   test_intmatrix_mapping_status_reserved);
     qtest_add_func("/esp32s3/rtc/explicit-register-surface",
                    test_rtc_explicit_register_surface);
     qtest_add_func("/esp32s3/rtc/timer-wakeup", test_rtc_timer_wakeup_transition);
