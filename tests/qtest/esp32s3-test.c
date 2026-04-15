@@ -51,6 +51,8 @@
 #define SYSTEM_BASE             DR_REG_SYSTEM_BASE
 #define RTC_CNTL_BASE           DR_REG_RTCCNTL_BASE
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
+#define GENERIC_MMIO_TEST_REG   (DR_REG_WCL_BASE + 0xf00)
+#define GENERIC_MMIO_TEST_REG2  (GENERIC_MMIO_TEST_REG + 4)
 #define RTC_EXT_WAKEUP_CONF_REG (RTC_CNTL_BASE + 0x64)
 #define RTC_EXT_WAKEUP1_REG     (RTC_CNTL_BASE + 0xe0)
 #define RTC_WAKEUP_ENA_EXT1_BIT BIT(16)
@@ -141,6 +143,24 @@ static void assert_openeth_instantiated(QTestState *qts, bool expected)
     bool present = g_strstr_len(qtree, -1, "open_eth") != NULL;
 
     g_assert_cmpint(present, ==, expected);
+}
+
+static void test_generic_mmio_compatibility_storage(void)
+{
+    QTestState *qts = qts_start();
+
+    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_TEST_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_TEST_REG2), ==, 0);
+
+    qtest_writel(qts, GENERIC_MMIO_TEST_REG, 0x11223344);
+    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_TEST_REG), ==, 0x11223344);
+    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_TEST_REG2), ==, 0);
+
+    qtest_writel(qts, GENERIC_MMIO_TEST_REG2, 0xa5a55a5a);
+    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_TEST_REG), ==, 0x11223344);
+    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_TEST_REG2), ==, 0xa5a55a5a);
+
+    qtest_quit(qts);
 }
 
 static void set_gpio_input_level(QTestState *qts, int gpio_num, bool level)
@@ -1784,6 +1804,8 @@ int main(int argc, char **argv)
 
     qtest_add_func("/esp32s3/ana/pll-done", test_ana_pll_done);
     qtest_add_func("/esp32s3/machine/single-cpu-boot", test_single_cpu_boot);
+    qtest_add_func("/esp32s3/generic-mmio/compatibility-storage",
+                   test_generic_mmio_compatibility_storage);
 #ifndef _WIN32
     qtest_add_func("/esp32s3/cache/flash-mmu-mapping-ctrl1",
                    test_cache_flash_mmu_mapping_and_ctrl1_state);

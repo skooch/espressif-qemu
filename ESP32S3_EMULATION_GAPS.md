@@ -67,6 +67,17 @@ Every implementation phase in `docs/plans/in-progress/esp32s3-core-soc-fidelity/
 
 After the Xtensa atomctl TCG regression is registered in the normal local build flow, that regression becomes part of the verification floor for backend-related phases.
 
+### Phase 1 Generic MMIO Status
+
+The catch-all ESP32-S3 MMIO path is now observable through QEMU trace events without changing its compatibility behavior:
+
+- `esp32s3_unimplemented_io_read`: physical address, access size, returned value, and guest PC.
+- `esp32s3_unimplemented_io_write`: physical address, access size, written value, and guest PC.
+
+The qtest `/xtensa/esp32s3/generic-mmio/compatibility-storage` pins the current unsupported-register compatibility behavior at `DR_REG_WCL_BASE + 0xf00`: writes are stored by word offset and reads return the stored value, with adjacent words remaining independent. This is not a hardware-fidelity claim. It is a regression guard so future replacement of catch-all offsets with explicit models is deliberate and reviewable.
+
+Remaining Phase 1 work is to run guest/firmware traces with these events enabled, classify active catch-all hits by owner and source availability, replace boot-critical or sleep-critical hits with explicit models, and document any remaining catch-all hits as compatibility shims or blocked-for-accuracy surfaces.
+
 ### Current Fidelity / Risk Table
 
 | Subsystem | Current state | Gap vs real hardware | Likely real-usage risk |
@@ -74,7 +85,7 @@ After the Xtensa atomctl TCG regression is registered in the normal local build 
 | Boot and active board path | Good enough for the current firmware path and focused regressions | Still relies on selective modeling rather than full-chip behavior | Medium |
 | GP-SPI + GDMA | Good enough for current EPD, SD, LoRa, and qtest paths | Timing, busy windows, and broader DMA sequencing are still simplified | Medium |
 | GPIO matrix + IO_MUX | Board-path complete for the routed signals in active use | Not a full silicon-complete routing model | Medium |
-| Generic MMIO surface | Narrower than before, but still present | Unknown registers can still appear to work via stored readback | High |
+| Generic MMIO surface | Instrumented and narrower than before, but still present | Unknown registers can still appear to work via stored readback unless traced and replaced with explicit models | High |
 | Clock / reset / sleep | Partially modeled | Deep sleep, wake, reset-domain, and wider clock-tree behavior remain incomplete | High |
 | Cache / MMU / external memory | Functional and boot-capable | Operations complete too eagerly and state reporting is too optimistic | High |
 | USB Serial/JTAG, I2C, UART, SHA | Board-path complete with RX, completion semantics, clock-derived timing, and IRQ coverage | DMA error paths, uncommon timing modes, and multi-CPU interrupt routing remain incomplete | Medium |
@@ -85,7 +96,7 @@ After the Xtensa atomctl TCG regression is registered in the normal local build 
 
 ## Current Gaps
 
-- Unimplemented MMIO is often papered over instead of modeled. There is a giant catch-all register window that stores writes and echoes them back on reads, and it forces the PLL-calibration-done bit high so polling loops keep moving. RMT and IO_MUX were also explicitly mapped as unimplemented devices.
+- Unimplemented MMIO is often papered over instead of modeled. There is a giant catch-all register window that stores writes and echoes them back on reads; this path is now traceable through `esp32s3_unimplemented_io_read` and `esp32s3_unimplemented_io_write`, but it still needs active-hit classification and replacement with explicit models. The ANA PLL-ready behavior remains a separate compatibility shim that forces firmware-visible ready bits high so polling loops keep moving. RMT remains explicitly mapped as an unimplemented device.
 - GP-SPI now reads chip-select and DC signals through the routed-signal layer (`esp32s3_gpio_get_routed_signal_level`) rather than hard-coded GPIO numbers. However, the default signal-to-pin assignments (EPD_CS→GPIO34, EPD_DC→GPIO35, SD_CS→GPIO48, LoRa_CS→GPIO3) are still hardwired in GPIO reset state rather than being derived from firmware-written routing registers.
 - SPI2/SPI3 were intentionally a minimum-function stub. Transfers complete instantly, `USR` clears immediately, and `TRANS_DONE` is raised right away instead of following a more realistic controller state progression.
 - Clock, reset, and sleep/power behavior are only partially modeled. The `SYSTEM` block handles a small subset of registers, RTC sleep/wake logic is tailored to current timer/GPIO/EXT1 paths, and reset still contains QEMU-specific shims.

@@ -65,11 +65,11 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 - **Status:** complete
 
 ### Phase 1: Generic MMIO Burn-Down
-- [ ] Instrument `hw/xtensa/esp32s3.c` so every active-path hit to `esp32s3_io_ops` can be collected with address, access size, access type, and guest PC when QEMU is launched with a debug flag or trace event.
-- [ ] Add a qtest in `tests/qtest/esp32s3-test.c` proving that known unsupported generic-MMIO offsets do not silently gain hardware semantics beyond the explicit compatibility behavior selected for this phase.
+- [x] Instrument `hw/xtensa/esp32s3.c` so every active-path hit to `esp32s3_io_ops` can be collected with address, access size, access type, and guest PC when QEMU is launched with a debug flag or trace event.
+- [x] Add a qtest in `tests/qtest/esp32s3-test.c` proving that known unsupported generic-MMIO offsets do not silently gain hardware semantics beyond the explicit compatibility behavior selected for this phase.
 - [ ] Replace each boot-critical or sleep-critical generic-MMIO hit identified by instrumentation with an explicit narrow model in the owning file listed in the file map, using `register-accurate` behavior where references exist and RAZ/WI behavior where references define no implemented state.
 - [ ] Keep `esp32s3_io_ops` only for out-of-scope regions and document every remaining active-path hit in `ESP32S3_EMULATION_GAPS.md`.
-- **Status:** pending
+- **Status:** in progress
 
 ### Phase 2: APB_CTRL And ANA Shim Separation
 - [ ] Replace the RAM-backed APB_CTRL date/revision hack in `hw/xtensa/esp32s3.c` with an explicit APB_CTRL register model that implements documented date/revision reads and rejects unsupported writes deterministically.
@@ -138,8 +138,12 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 | Treat ANA PLL internals as a compatibility shim unless stronger evidence appears. | ESP-IDF and SDK sources expose software-visible polling behavior but not analog PLL calibration internals, lock dynamics, or failure modes. |
 | Treat RNG as host-backed compatibility rather than hardware accuracy. | The listed sources can define the register surface and SDK usage but cannot model the physical entropy source faithfully. |
 | Keep Xtensa extension expansion failure-driven or exact-manual-driven. | Base ISA material is sufficient for base ISA work; ESP32-S3 TIE/SIMD edge behavior needs exact configured-core references or concrete failing opcodes. |
+| Use QEMU trace events for generic-MMIO hit collection. | Trace events are the least invasive way to collect active-path address, size, access direction, value, and guest PC without changing compatibility behavior. |
+| Guard the current generic-MMIO compatibility behavior at `DR_REG_WCL_BASE + 0xf00`. | That offset is still handled by the catch-all window and provides a deterministic unsupported-address sentinel for detecting accidental semantic changes. |
 
 ## Errors
 | Error | Attempt | Resolution |
 |-------|---------|------------|
 | Plan work was initially started in the main checkout. | User corrected that this must happen in a worktree. | Recorded correction in `/Users/skooch/.claude/corrections.md`, deleted the untracked plan file from the main checkout, created peer worktree `/Users/skooch/projects/tdeck-pro-rust/worktrees/esp32s3-core-soc-fidelity-phase0`, and continued there. |
+| Initial worktree ESP32-S3 qtest run failed with `unknown type 'misc.esp32s3.aes'`. | Configured a fresh worktree build with only `--target-list=xtensa-softmmu`; Meson did not find Homebrew `libgcrypt`, so gcrypt-gated ESP32-S3 crypto device models were omitted. | Reconfigured with `PKG_CONFIG_PATH=/opt/homebrew/Cellar/libgcrypt/1.12.1/lib/pkgconfig`, `--enable-gcrypt`, and `--disable-gnutls`; documented the local build requirement in `CLAUDE.md`. |
+| Reconfiguring with `--enable-gcrypt` and default GnuTLS failed compiling TLS sources. | Meson detected GnuTLS, but the local build failed on missing `gnutls/gnutls.h` during TLS source compilation. | Disabled GnuTLS for this ESP32-S3 verification build because the qtest and cache-reject functional verification do not require TLS. |

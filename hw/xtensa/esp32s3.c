@@ -27,6 +27,7 @@
 #include "qemu/osdep.h"
 #include "hw/hw.h"
 #include "target/xtensa/cpu.h"
+#include "trace.h"
 
 #include "hw/misc/esp32s3_rtc_cntl.h"
 #include "hw/xtensa/esp32s3_intc.h"
@@ -526,15 +527,31 @@ static void esp32s3_soc_realize(DeviceState *dev, Error **errp)
 #define ESP32S3_IO_REG_COUNT  (0xd1000 / 4)
 static uint32_t esp32s3_io_regs[ESP32S3_IO_REG_COUNT];
 
+static uint64_t esp32s3_io_guest_pc(void)
+{
+    CPUState *cs = current_cpu;
+
+    if (cs && cs->cc && cs->cc->get_pc) {
+        return cs->cc->get_pc(cs);
+    }
+
+    return 0;
+}
+
 static uint64_t esp32s3_io_read(void *opaque, hwaddr addr, unsigned int size)
 {
     uint32_t r = 0;
+    uint64_t phys_addr = ESP32S3_IO_START_ADDR + addr;
 #if ESP32S3_IO_WARNING
-    warn_report("[ESP32-S3] Unsupported read to $%08lx, size = %i\n", ESP32S3_IO_START_ADDR + addr, size);
+    warn_report("[ESP32-S3] Unsupported read to $%08" PRIx64 ", size = %i\n",
+                phys_addr, size);
 #endif
     if (addr / 4 < ESP32S3_IO_REG_COUNT) {
         r = esp32s3_io_regs[addr / 4];
     }
+
+    trace_esp32s3_unimplemented_io_read(phys_addr, size, r,
+                                        esp32s3_io_guest_pc());
 
     return r;
 }
@@ -542,12 +559,17 @@ static uint64_t esp32s3_io_read(void *opaque, hwaddr addr, unsigned int size)
 
 static void esp32s3_io_write(void *opaque, hwaddr addr, uint64_t value, unsigned int size)
 {
+    uint64_t phys_addr = ESP32S3_IO_START_ADDR + addr;
 #if ESP32S3_IO_WARNING
-        warn_report("[ESP32-S3] Unsupported write $%08lx = %08lx\n", ESP32S3_IO_START_ADDR + addr, value);
+        warn_report("[ESP32-S3] Unsupported write $%08" PRIx64 " = %08" PRIx64 "\n",
+                    phys_addr, value);
 #endif
     if (addr / 4 < ESP32S3_IO_REG_COUNT) {
         esp32s3_io_regs[addr / 4] = (uint32_t)value;
     }
+
+    trace_esp32s3_unimplemented_io_write(phys_addr, size, value,
+                                         esp32s3_io_guest_pc());
 
 }
 

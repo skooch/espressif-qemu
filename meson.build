@@ -3602,6 +3602,7 @@ if have_system
     'hw/virtio',
     'hw/watchdog',
     'hw/xen',
+    'hw/xtensa',
     'hw/gpio',
     'migration',
     'net',

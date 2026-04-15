@@ -1,0 +1,5 @@
+# See docs/devel/tracing.rst for syntax documentation.
+
+# esp32s3.c
+esp32s3_unimplemented_io_read(uint64_t addr, unsigned size, uint64_t value, uint64_t pc) "addr=0x%" PRIx64 " size=%u value=0x%" PRIx64 " pc=0x%" PRIx64
+esp32s3_unimplemented_io_write(uint64_t addr, unsigned size, uint64_t value, uint64_t pc) "addr=0x%" PRIx64 " size=%u value=0x%" PRIx64 " pc=0x%" PRIx64
