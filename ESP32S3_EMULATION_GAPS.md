@@ -76,18 +76,18 @@ The catch-all ESP32-S3 MMIO path is now observable through QEMU trace events wit
 
 The qtest `/xtensa/esp32s3/generic-mmio/compatibility-storage` pins the current unsupported-register compatibility behavior at `DR_REG_WCL_BASE + 0xf00`: writes are stored by word offset and reads return the stored value, with adjacent words remaining independent. This is not a hardware-fidelity claim. It is a regression guard so future replacement of catch-all offsets with explicit models is deliberate and reviewable.
 
-Remaining Phase 1 work is to run guest/firmware traces with these events enabled, classify active catch-all hits by owner and source availability, replace boot-critical or sleep-critical hits with explicit models, and document any remaining catch-all hits as compatibility shims or blocked-for-accuracy surfaces.
+Phase 1 closure used guest/firmware traces with these events enabled to classify active catch-all hits by owner and source availability. Boot-critical SPI0/SPI_MEM hits and core-debug ASSIST_DEBUG hits were replaced with explicit narrow models. Active catch-all use after Phase 1 is restricted to analog/peripheral/radio/internal windows outside this core-SoC pass; any future trace hit in an in-scope core boot, reset, sleep, cache, clock, interrupt, eFuse, PMS, RNG, or Xtensa-backend path should be treated as a new fidelity bug rather than accepted as generic storage behavior.
 
 The first copied-flash firmware trace on 2026-04-16 produced 289 generic-MMIO trace lines in 15 seconds. The dominant active region was `DR_REG_SPI0_BASE` / SPI_MEM at `0x60003000`, led by 86 reads of `SPI_MEM_FSM_REG(0)`. SPI0 is now mapped as an explicit SPI_MEM register bank and the active SPI_MEM configuration offsets are stored in `hw/ssi/esp32s3_spi.c`. A second 15-second trace dropped the generic-MMIO total to 80 lines and removed all `0x60003000` SPI0 hits.
 
 The same pass also moved `DR_REG_ASSIST_DEBUG_BASE` out of the generic region. The narrow shim stores `RCD_PDEBUGENABLE` and `RCD_RECORDING` and returns zero for read-only `RCD_PDEBUGPC`. A third 15-second trace dropped the generic-MMIO total to 75 lines and removed all `0x600ce000` ASSIST_DEBUG hits.
 
-Remaining active catch-all hits from that second trace are classified as:
+Remaining active catch-all hits from the final Phase 1 trace are classified as:
 
 | Region | Active offsets | Source state | Phase 1 classification |
 | --- | --- | --- | --- |
-| `DR_REG_APB_SARADC_BASE` | `0x00`, `0x04`, `0x18`, `0x28`, `0x38`, `0x3c`, `0x70` | ESP-IDF `apb_saradc_reg.h` present | Source-backed register surface, but analog ADC behavior is outside this core-SoC pass unless boot/sleep requires it |
-| `DR_REG_SENS_BASE` | `0x10`, `0x34`, `0x3c` | ESP-IDF `sens_reg.h` present | Source-backed register surface, but analog sensor behavior is outside this core-SoC pass unless boot/sleep requires it |
+| `DR_REG_APB_SARADC_BASE` | `0x00`, `0x04`, `0x18`, `0x28`, `0x38`, `0x3c`, `0x70` | ESP-IDF `apb_saradc_reg.h` present | Analog ADC/control surface; out of current core-SoC Phase 1 scope unless later boot/sleep evidence proves a core dependency |
+| `DR_REG_SENS_BASE` | `0x10`, `0x34`, `0x3c` | ESP-IDF `sens_reg.h` present | Analog sensor/control surface; out of current core-SoC Phase 1 scope unless later boot/sleep evidence proves a core dependency |
 | `DR_REG_LEDC_BASE` | `0x00`, `0x04`, `0x08`, `0x0c`, `0xa0`, `0xd0` | ESP-IDF `ledc_reg.h` present | Peripheral PWM surface; defer to peripheral pass unless board-path timing depends on it |
 | `DR_REG_ASSIST_DEBUG_BASE` | `0x48`, `0x4c`, `0x5c` | ESP-IDF `assist_debug_reg.h` present | Resolved by explicit narrow core-debug shim |
 | FE2, FE, NRX, BB radio/internal windows | `0x600050f0`, `0x60006090`, `0x6001ccd4`, `0x6001d054` | No public local register header found | Blocked for accuracy without exact radio-internal references; out of current core-SoC scope |
@@ -110,7 +110,7 @@ Remaining active catch-all hits from that second trace are classified as:
 
 ## Current Gaps
 
-- Unimplemented MMIO is often papered over instead of modeled. There is a giant catch-all register window that stores writes and echoes them back on reads; this path is now traceable through `esp32s3_unimplemented_io_read` and `esp32s3_unimplemented_io_write`, but it still needs active-hit classification and replacement with explicit models. The ANA PLL-ready behavior remains a separate compatibility shim that forces firmware-visible ready bits high so polling loops keep moving. RMT remains explicitly mapped as an unimplemented device.
+- Unimplemented MMIO is often papered over instead of modeled. There is a giant catch-all register window that stores writes and echoes them back on reads; this path is now traceable through `esp32s3_unimplemented_io_read` and `esp32s3_unimplemented_io_write`. Phase 1 classified the active catch-all hits and replaced the boot-critical SPI0/SPI_MEM and core-debug ASSIST_DEBUG hits with explicit narrow models, but the catch-all still remains for out-of-scope analog, peripheral, and radio/internal windows. The ANA PLL-ready behavior remains a separate compatibility shim that forces firmware-visible ready bits high so polling loops keep moving. RMT remains explicitly mapped as an unimplemented device.
 - GP-SPI now reads chip-select and DC signals through the routed-signal layer (`esp32s3_gpio_get_routed_signal_level`) rather than hard-coded GPIO numbers. However, the default signal-to-pin assignments (EPD_CS→GPIO34, EPD_DC→GPIO35, SD_CS→GPIO48, LoRa_CS→GPIO3) are still hardwired in GPIO reset state rather than being derived from firmware-written routing registers.
 - SPI2/SPI3 were intentionally a minimum-function stub. Transfers complete instantly, `USR` clears immediately, and `TRANS_DONE` is raised right away instead of following a more realistic controller state progression.
 - Clock, reset, and sleep/power behavior are only partially modeled. The `SYSTEM` block handles a small subset of registers, RTC sleep/wake logic is tailored to current timer/GPIO/EXT1 paths, and reset still contains QEMU-specific shims.
@@ -219,7 +219,7 @@ Recently resolved in this track:
 
 - `P0` [DONE] Fix the SPI1 transfer-loop bug so TX/RX bounds use the loop index instead of the payload byte value.
 - `P1` [DONE] Replace GP-SPI hard-coded board pin reads with a routed-signal layer backed by GPIO routing state and a minimal IO_MUX model for the current board path.
-- `P1` Replace boot-critical generic-MMIO behavior with explicit narrow models for the firmware-touched offsets currently relied on.
+- `P1` [PHASE 1 DONE] Replace boot-critical generic-MMIO behavior with explicit narrow models for the firmware-touched SPI0/SPI_MEM and ASSIST_DEBUG offsets; remaining active catch-all hits are classified as out-of-scope analog/peripheral/radio surfaces for this core-SoC pass.
 - `P1` [DONE] Make GP-SPI completion semantics more faithful than an unconditional immediate `USR` clear plus `TRANS_DONE`.
 
 ### Easy Wins

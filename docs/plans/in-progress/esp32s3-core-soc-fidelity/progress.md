@@ -22,6 +22,8 @@
 - 2026-04-16: Verified `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` succeeds after the ASSIST_DEBUG shim.
 - 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test -p /xtensa/esp32s3/assist-debug/register-surface` passes.
 - 2026-04-16: Reran the 15-second copied-flash firmware trace; generic-MMIO trace lines dropped from 80 to 75 and all `0x600ce000` ASSIST_DEBUG hits were eliminated.
+- 2026-04-16: Classified all remaining active catch-all hits from the final Phase 1 trace: APB_SARADC/SENS are analog-control surfaces with ESP-IDF headers but out of this core-SoC pass, LEDC is deferred to peripheral fidelity work, and FE/BB/NRX remain blocked for accuracy without radio-internal references.
+- 2026-04-16: Closed Phase 1 with `esp32s3_io_ops` documented as an out-of-scope compatibility surface only; future in-scope core hits on that path are new fidelity findings.
 - 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` passes 40/40.
 - 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2.
 - 2026-04-16: Verified `git diff --check` succeeds.

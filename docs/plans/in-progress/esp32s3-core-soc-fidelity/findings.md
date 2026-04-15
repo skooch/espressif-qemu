@@ -32,7 +32,13 @@ Trace after mapping a narrow ASSIST_DEBUG shim:
 
 Prioritized follow-up from this trace:
 
-- `P1`: Add a narrow APB_SARADC/SENS compatibility model only if core boot/sleep code needs these analog-control readbacks; otherwise document as peripheral/analog out of scope.
-- `P1`: ASSIST_DEBUG core-debug catch-all hits are resolved by a narrow shim for `RCD_PDEBUGENABLE`, `RCD_RECORDING`, and `RCD_PDEBUGPC`.
-- `P2`: Leave LEDC for the peripheral pass unless firmware-visible PWM behavior becomes part of a board-path test.
+- `P1 complete`: ASSIST_DEBUG core-debug catch-all hits are resolved by a narrow shim for `RCD_PDEBUGENABLE`, `RCD_RECORDING`, and `RCD_PDEBUGPC`.
+- `P1 complete`: APB_SARADC and SENS are source-backed by ESP-IDF headers but remain analog-control surfaces, so Phase 1 leaves them out of the core-SoC burn-down unless later boot/sleep evidence proves a core dependency.
+- `P2 peripheral pass`: Leave LEDC for the peripheral pass unless firmware-visible PWM behavior becomes part of a board-path test.
 - `Blocked`: Do not attempt FE/BB/NRX accuracy from current sources; require exact radio-internal references or a deliberately documented compatibility shim.
+
+Phase 1 conclusion:
+
+- No remaining active catch-all hit from the 15-second copied-flash trace is in the core boot/debug surface targeted by this phase.
+- `esp32s3_io_ops` remains a compatibility surface for out-of-scope analog, PWM peripheral, and radio/internal windows only.
+- Future traces that show in-scope core boot, reset, sleep, cache, clock, interrupt, eFuse, PMS, RNG, or Xtensa-backend dependence on `esp32s3_io_ops` should be handled as new fidelity findings.

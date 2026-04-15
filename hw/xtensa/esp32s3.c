@@ -523,9 +523,11 @@ static void esp32s3_soc_realize(DeviceState *dev, Error **errp)
 
 
 /*
- * Generic catch-all I/O region for unimplemented peripherals.
+ * Generic catch-all I/O region for out-of-scope unimplemented peripherals.
  * Stores writes and returns the stored value on reads, so that firmware
  * write-then-poll patterns don't spin forever on unmodeled registers.
+ * In-scope core-SoC hits on this path are fidelity bugs and should be moved
+ * to explicit narrow models before being treated as supported behavior.
  */
 #define ESP32S3_IO_REG_COUNT  (0xd1000 / 4)
 static uint32_t esp32s3_io_regs[ESP32S3_IO_REG_COUNT];

@@ -4,7 +4,7 @@
 Turn the remaining ESP32-S3 core-SoC quality recommendations into information-gated implementation tracks that improve QEMU accuracy without claiming fidelity beyond the available public and local reference material.
 
 ## Current Phase
-Phase 1
+Phase 2
 
 ## Scope
 This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shims, RTC/reset/sleep, cache/MMU, clocking, interrupt matrix, eFuse, PMS/RNG, Xtensa backend confidence, and documentation. It does not plan unrelated peripheral fidelity.
@@ -72,9 +72,9 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 - [x] Add a qtest in `tests/qtest/esp32s3-test.c` proving that known unsupported generic-MMIO offsets do not silently gain hardware semantics beyond the explicit compatibility behavior selected for this phase.
 - [x] Replace the boot-critical SPI0/SPI_MEM generic-MMIO hits identified by firmware trace with an explicit narrow register-surface model using ESP-IDF `spi_mem_reg.h` offsets and existing QEMU SPI_MEM behavior.
 - [x] Replace the core-debug ASSIST_DEBUG generic-MMIO hits identified by firmware trace with an explicit narrow shim for the source-backed registers the guest touches.
-- [ ] Decide whether the remaining APB_SARADC and SENS active hits are in scope for this core-SoC pass or should stay documented as analog/peripheral compatibility surfaces for a later peripheral pass.
-- [ ] Keep `esp32s3_io_ops` only for out-of-scope regions and document every remaining active-path hit in `ESP32S3_EMULATION_GAPS.md`.
-- **Status:** in progress
+- [x] Decide whether the remaining APB_SARADC and SENS active hits are in scope for this core-SoC pass or should stay documented as analog/peripheral compatibility surfaces for a later peripheral pass.
+- [x] Keep `esp32s3_io_ops` only for out-of-scope regions and document every remaining active-path hit in `ESP32S3_EMULATION_GAPS.md`.
+- **Status:** complete
 
 ### Phase 2: APB_CTRL And ANA Shim Separation
 - [ ] Replace the RAM-backed APB_CTRL date/revision hack in `hw/xtensa/esp32s3.c` with an explicit APB_CTRL register model that implements documented date/revision reads and rejects unsupported writes deterministically.
@@ -147,6 +147,8 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 | Guard the current generic-MMIO compatibility behavior at `DR_REG_WCL_BASE + 0xf00`. | That offset is still handled by the catch-all window and provides a deterministic unsupported-address sentinel for detecting accidental semantic changes. |
 | Model SPI0 as an explicit SPI_MEM register bank before broader peripheral work. | Firmware trace showed SPI0 dominated the active catch-all surface, ESP-IDF supplies register offsets, and existing QEMU SPI_MEM state can cover the active configuration registers without claiming flash timing fidelity. |
 | Model ASSIST_DEBUG as a narrow core-debug shim. | Firmware trace showed only three source-backed debug-recording offsets, and removing them from the generic MMIO path reduces core-scope catch-all dependence without pulling in peripheral work. |
+| Leave APB_SARADC and SENS in the documented out-of-scope catch-all set for Phase 1. | ESP-IDF headers provide register names, but the active offsets belong to analog ADC/sensor-control surfaces rather than the targeted core boot/debug surface; modeling them accurately belongs in a later analog/peripheral pass unless boot/sleep evidence proves a core dependency. |
+| Treat LEDC and FE/BB/NRX trace hits as out of current core-SoC scope. | LEDC is a PWM peripheral, while FE/BB/NRX are radio/internal windows without public local register headers; neither should drive core-SoC modeling without stronger evidence. |
 
 ## Errors
 | Error | Attempt | Resolution |
