@@ -25,6 +25,48 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 - The recent EPD black-screen regression was traced to incorrect GDMA descriptor-address reconstruction. The runtime path now uses ESP32-S3 DMA RAM addressing semantics, the simulator renders again, and the qtests were aligned to the corrected hardware contract.
 - The target is best understood as "board-path complete for the active firmware path, selectively modeled elsewhere". Many subsystems still behave functionally rather than faithfully.
 
+## Core SoC Fidelity Guardrails (2026-04-15)
+
+The active core-SoC fidelity plan is tracked at `docs/plans/in-progress/esp32s3-core-soc-fidelity/plan.md`. That plan is information-gated: every implementation task must declare whether it targets register accuracy, SDK-contract accuracy, board-path accuracy, a compatibility shim, or is blocked for accuracy.
+
+Green focused tests are required but not sufficient evidence of silicon fidelity. The focused `esp32s3` qtest suite and board-level cache reject functional test prove the modeled contracts covered by those tests. They do not prove full ESP32-S3 hardware accuracy for analog PLL behavior, complete power-domain sequencing, cache cycle timing, physical RNG behavior, or undocumented Xtensa/TIE details.
+
+### Reference Availability
+
+Local reference checks for Phase 0:
+
+- Present: ESP-IDF source tree at `/Users/skooch/projects/tdeck-pro-rust/tdeck-pro-rust/external-resources/esp-idf`.
+- Present by dependency lock: adjacent T-Deck Pro firmware references `esp-rs/esp-hal` git dependencies in `Cargo.toml` and `Cargo.lock`, including `esp-hal`, `esp-storage`, `esp-radio`, `esp-rtos`, and `esp-pacs` for ESP32-S3.
+- Not found under `external-resources`: ESP32-S3 Technical Reference Manual files using expected `esp32s3`, `trm`, `technical reference`, or `reference manual` filename patterns.
+- Not found under `external-resources`: Xtensa ISA/manual/reference files using expected `xtensa`, `isa`, `manual`, or `reference` filename patterns.
+
+TRM-dependent and ISA-manual-dependent work is therefore source-blocked until those documents are added to the local reference set or a task explicitly uses another source class. ESP-IDF, ESP HAL, ESP IRS packages, Rust SDK/PAC sources, active firmware behavior, and hardware probes can still support bounded register, SDK-contract, or board-path models.
+
+### Evidence Matrix
+
+| Subsystem | Current source classes | Local source anchors | Target fidelity | Accuracy limit |
+| --- | --- | --- | --- | --- |
+| Generic MMIO burn-down | ESP-IDF register headers, Rust SDK/PAC register definitions, firmware traces, qtests | `components/soc/esp32s3/register/soc/*.h`, adjacent `Cargo.lock` esp-pacs entries | Register-accurate for identified offsets; RAZ/WI or compatibility shim for unsupported offsets | Full behavior of unmodeled devices is blocked until each owning block has source-backed semantics |
+| APB_CTRL date/revision | ESP-IDF SoC register headers and boot/runtime revision checks | `components/soc/esp32s3/register/soc/apb_ctrl_reg.h`, `apb_ctrl_struct.h` | Register-accurate for date/revision and explicit QEMU-origin compatibility value | Broader APB_CTRL behavior remains source-blocked without TRM coverage or firmware need |
+| ANA / PLL ready | ESP-IDF clock/regi2c programming sequences, firmware polling behavior | `components/esp_hal_clock/esp32s3`, `components/esp_hal_regi2c/esp32s3`, `components/soc/esp32s3/register/soc/rtc_i2c_reg.h` | Compatibility shim for firmware-visible ready bits | Analog PLL calibration, lock timing, jitter, and failure modes are blocked for accuracy |
+| RTC, reset, sleep, wake | ESP-IDF PMU/RTC HAL, low-power support, Rust SDK sleep usage, active firmware paths | `components/esp_hal_pmu/esp32s3`, `components/esp_hal_rtc_timer/esp32s3`, `components/esp_hw_support/lowpower/port/esp32s3`, adjacent firmware sleep code | SDK-contract accurate and board-path accurate for modeled wake/reset flows | Full power-domain retention, brownout behavior, and analog reset sequencing are blocked for accuracy |
+| Cache, MMU, flash, PSRAM | ESP-IDF ROM cache patches, SPI flash code, MMU support, Rust `esp-storage`, active firmware storage paths | `components/esp_rom/patches`, `components/esp_mm/port/esp32s3`, `components/spi_flash/esp32s3`, adjacent `esp-storage` dependency | SDK-contract accurate for MMU, fault, reject, flash, and PSRAM setup contracts | Cache cycle timing, line replacement, bus contention, and flash-controller micro-timing are blocked for accuracy |
+| Clock tree | ESP-IDF clock HAL, SoC system registers, RTC clock users, qtests | `components/esp_hal_clock/esp32s3`, `components/soc/esp32s3/register/soc/system_reg.h`, `rtc_cntl_reg.h` | SDK-contract accurate for supported sources, dividers, and consumers | Analog PLL dynamics, source-switch latency, jitter, and undocumented divider interactions are blocked for accuracy |
+| Interrupt matrix | ESP-IDF interrupt register headers, Xtensa interrupt support, qtests | `components/soc/esp32s3/register/soc/interrupt_core0_reg.h`, `interrupt_core1_reg.h`, `components/xtensa` | Register-accurate for mapping, status windows, and output routing | Reserved-source suppression must be classified as source-backed hardware behavior or QEMU compatibility policy |
+| eFuse | ESP-IDF eFuse tables, fields, utility code, SoC eFuse registers | `components/efuse/esp32s3`, `components/soc/esp32s3/register/soc/efuse_reg.h`, `efuse_struct.h` | Register-accurate for synthetic contents and protection mechanics | Factory personalization and security-sensitive provisioning are synthetic unless supplied through an explicit eFuse image |
+| PMS | ESP-IDF sensitive/world-controller register headers, SDK usage, qtests | `components/soc/esp32s3/register/soc/sensitive_reg.h`, `world_controller_reg.h` | Compatibility shim or register-accurate for source-backed offsets | Full internal permission/security policy is blocked unless source-backed or guest-observed |
+| RNG | ESP-IDF bootloader random code, SoC register headers, SDK usage | `components/bootloader_support/src/bootloader_random_esp32s3.c`, RNG-adjacent SoC headers when identified | Compatibility shim using host entropy for the documented data path | Physical entropy source behavior, conditioning, and statistical hardware properties are blocked for accuracy |
+| Xtensa backend | ESP-IDF Xtensa support, QEMU Xtensa backend, current guest binaries, TCG tests | `components/xtensa`, `components/xtensa/esp32s3`, `target/xtensa`, `tests/tcg/xtensa` | Base ISA or guest-failure-driven accuracy | Broad ESP32-S3 TIE/SIMD completeness is blocked unless exact configured-core/TIE references are supplied |
+
+### Required Verification Floor
+
+Every implementation phase in `docs/plans/in-progress/esp32s3-core-soc-fidelity/plan.md` must keep the following checks passing unless the phase explicitly documents a concrete blocker:
+
+- `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test`
+- `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py`
+
+After the Xtensa atomctl TCG regression is registered in the normal local build flow, that regression becomes part of the verification floor for backend-related phases.
+
 ### Current Fidelity / Risk Table
 
 | Subsystem | Current state | Gap vs real hardware | Likely real-usage risk |
