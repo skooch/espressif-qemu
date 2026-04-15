@@ -50,6 +50,7 @@
 #define UART0_BASE              DR_REG_UART_BASE
 #define SHA_BASE                DR_REG_SHA_BASE
 #define SYSTEM_BASE             DR_REG_SYSTEM_BASE
+#define APB_CTRL_BASE           DR_REG_APB_CTRL_BASE
 #define RTC_CNTL_BASE           DR_REG_RTCCNTL_BASE
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
 #define ASSIST_DEBUG_BASE       DR_REG_ASSIST_DEBUG_BASE
@@ -62,6 +63,13 @@
 #define ESP32S3_CACHE_IA_SOURCE        56
 #define ESP32S3_CACHE_CORE0_ACS_SOURCE 94
 #define ESP32S3_EMAC_SOURCE            0
+#define APB_CTRL_LEGACY_ECO3_DATE_REG  (APB_CTRL_BASE + 0x07c)
+#define APB_CTRL_QEMU_ORIGIN_REG       (APB_CTRL_BASE + 0x3f8)
+#define APB_CTRL_DATE_REG              (APB_CTRL_BASE + 0x3fc)
+#define APB_CTRL_UNSUPPORTED_REG       (APB_CTRL_BASE + 0x080)
+#define APB_CTRL_DATE_VALUE            0x02101150
+#define APB_CTRL_LEGACY_ECO3_DATE      0x96042000
+#define APB_CTRL_QEMU_ORIGIN           0x51454d55
 
 #define OPENETH_MODER_DEFAULT          0xa000
 #define OPENETH_MODER_LOOPBCK          BIT(7)
@@ -558,6 +566,35 @@ static void test_ana_pll_done(void)
 
     qtest_writel(qts, ANA_BASE + 0x44, 0x12345678);
     g_assert_cmphex(qtest_readl(qts, ANA_BASE + 0x44), ==, 0x12345678);
+
+    qtest_quit(qts);
+}
+
+static void test_apb_ctrl_register_surface(void)
+{
+    QTestState *qts = qts_start();
+
+    g_assert_cmphex(qtest_readl(qts, APB_CTRL_DATE_REG), ==,
+                    APB_CTRL_DATE_VALUE);
+    g_assert_cmphex(qtest_readl(qts, APB_CTRL_QEMU_ORIGIN_REG), ==,
+                    APB_CTRL_QEMU_ORIGIN);
+    g_assert_cmphex(qtest_readl(qts, APB_CTRL_LEGACY_ECO3_DATE_REG), ==,
+                    APB_CTRL_LEGACY_ECO3_DATE);
+    g_assert_cmphex(qtest_readl(qts, APB_CTRL_LEGACY_ECO3_DATE_REG) & BIT(31),
+                    ==, BIT(31));
+
+    qtest_writel(qts, APB_CTRL_DATE_REG, 0);
+    qtest_writel(qts, APB_CTRL_QEMU_ORIGIN_REG, 0);
+    qtest_writel(qts, APB_CTRL_LEGACY_ECO3_DATE_REG, 0);
+    qtest_writel(qts, APB_CTRL_UNSUPPORTED_REG, 0xffffffff);
+
+    g_assert_cmphex(qtest_readl(qts, APB_CTRL_DATE_REG), ==,
+                    APB_CTRL_DATE_VALUE);
+    g_assert_cmphex(qtest_readl(qts, APB_CTRL_QEMU_ORIGIN_REG), ==,
+                    APB_CTRL_QEMU_ORIGIN);
+    g_assert_cmphex(qtest_readl(qts, APB_CTRL_LEGACY_ECO3_DATE_REG), ==,
+                    APB_CTRL_LEGACY_ECO3_DATE);
+    g_assert_cmphex(qtest_readl(qts, APB_CTRL_UNSUPPORTED_REG), ==, 0);
 
     qtest_quit(qts);
 }
@@ -1873,6 +1910,8 @@ int main(int argc, char **argv)
                    test_spi0_mem_register_surface);
     qtest_add_func("/esp32s3/assist-debug/register-surface",
                    test_assist_debug_register_surface);
+    qtest_add_func("/esp32s3/apb-ctrl/register-surface",
+                   test_apb_ctrl_register_surface);
 #ifndef _WIN32
     qtest_add_func("/esp32s3/cache/flash-mmu-mapping-ctrl1",
                    test_cache_flash_mmu_mapping_and_ctrl1_state);

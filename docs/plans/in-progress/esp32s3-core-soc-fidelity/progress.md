@@ -27,3 +27,13 @@
 - 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` passes 40/40.
 - 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2.
 - 2026-04-16: Verified `git diff --check` succeeds.
+- 2026-04-16: Started Phase 2. Confirmed ESP-IDF ESP32-S3 `apb_ctrl_reg.h` and `syscon_reg.h` define APB_CTRL/SYSCON date at `+0x3fc` with reset value `0x02101150`, while the existing QEMU code exposed an older ESP32-derived ECO marker at `+0x7c` and QEMU-origin marker at `+0x3f8` through RAM.
+- 2026-04-16: Replaced the APB_CTRL RAM-backed register island with an explicit narrow IO model for documented S3 date, QEMU-origin compatibility, and legacy `+0x7c` compatibility marker; unsupported offsets are RAZ/WI.
+- 2026-04-16: Added `/xtensa/esp32s3/apb-ctrl/register-surface` qtest coverage for date reset value, read-only behavior, legacy revision marker, QEMU-origin marker, and unsupported RAZ/WI behavior.
+- 2026-04-16: Documented ANA PLL-ready as a compatibility shim and marked analog PLL calibration, lock timing, jitter, and failure modes as blocked for accuracy without stronger sources.
+- 2026-04-16: Noted that converted TRM material exists under `/Users/skooch/projects/tdeck-pro-rust/tdeck-pro-rust/docs/trm` and Xtensa PDF/converted material exists under `/Users/skooch/projects/tdeck-pro-rust/tdeck-pro-rust/docs/xtensa`; the earlier Phase 0 absence finding was specific to `external-resources` filename searches.
+- 2026-04-16: Verified `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` succeeds after the APB_CTRL and ANA Phase 2 changes.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test -p /xtensa/esp32s3/apb-ctrl/register-surface` passes.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` passes 41/41.
+- 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2.
+- 2026-04-16: Verified `git diff --check` succeeds.

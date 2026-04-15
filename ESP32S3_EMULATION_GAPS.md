@@ -39,8 +39,9 @@ Local reference checks for Phase 0:
 - Present by dependency lock: adjacent T-Deck Pro firmware references `esp-rs/esp-hal` git dependencies in `Cargo.toml` and `Cargo.lock`, including `esp-hal`, `esp-storage`, `esp-radio`, `esp-rtos`, and `esp-pacs` for ESP32-S3.
 - Not found under `external-resources`: ESP32-S3 Technical Reference Manual files using expected `esp32s3`, `trm`, `technical reference`, or `reference manual` filename patterns.
 - Not found under `external-resources`: Xtensa ISA/manual/reference files using expected `xtensa`, `isa`, `manual`, or `reference` filename patterns.
+- Later source check: converted TRM material exists outside `external-resources` at `/Users/skooch/projects/tdeck-pro-rust/tdeck-pro-rust/docs/trm`, and Xtensa PDF/converted material exists at `/Users/skooch/projects/tdeck-pro-rust/tdeck-pro-rust/docs/xtensa`. Use these local corpora for TRM/ISA-backed work when a phase needs manual evidence, while preserving the earlier finding that matching manual files were not found under `external-resources`.
 
-TRM-dependent and ISA-manual-dependent work is therefore source-blocked until those documents are added to the local reference set or a task explicitly uses another source class. ESP-IDF, ESP HAL, ESP IRS packages, Rust SDK/PAC sources, active firmware behavior, and hardware probes can still support bounded register, SDK-contract, or board-path models.
+TRM-dependent and ISA-manual-dependent work is source-gated on locating the exact relevant section in the local converted/PDF corpora or adding a stronger source for that task. ESP-IDF, ESP HAL, ESP IRS packages, Rust SDK/PAC sources, active firmware behavior, and hardware probes can still support bounded register, SDK-contract, or board-path models.
 
 ### Evidence Matrix
 
@@ -92,6 +93,18 @@ Remaining active catch-all hits from the final Phase 1 trace are classified as:
 | `DR_REG_ASSIST_DEBUG_BASE` | `0x48`, `0x4c`, `0x5c` | ESP-IDF `assist_debug_reg.h` present | Resolved by explicit narrow core-debug shim |
 | FE2, FE, NRX, BB radio/internal windows | `0x600050f0`, `0x60006090`, `0x6001ccd4`, `0x6001d054` | No public local register header found | Blocked for accuracy without exact radio-internal references; out of current core-SoC scope |
 
+### Phase 2 APB_CTRL And ANA Status
+
+`DR_REG_APB_CTRL_BASE` / `DR_REG_SYSCON_BASE` now has an explicit narrow model instead of a RAM-backed register island. The supported surface is:
+
+- `+0x3fc`: ESP32-S3 `APB_CTRL_DATE_REG` / `SYSCON_DATE_REG`, returning the ESP-IDF reset value `0x02101150`.
+- `+0x3f8`: QEMU-origin compatibility word, returning `0x51454d55` (`QEMU`).
+- `+0x07c`: legacy ESP32-derived ECO3 marker, returning `0x96042000` only as a compatibility bridge for older guests that inherited the pre-S3 offset.
+
+Writes to the modeled APB_CTRL words are ignored and unsupported APB_CTRL offsets are read-as-zero/write-ignore. This is a deliberate narrow contract, not a full APB_CTRL/SYSCON implementation. Clock-tree, retention, memory-policy, and security-policy fields remain source-gated to their owning phases.
+
+The ANA PLL-ready bit remains a compatibility shim. QEMU returns the firmware-visible ready bit at ANA offset `0x40`, but analog PLL calibration, lock timing, jitter, and failure modes are blocked for accuracy without a hardware probe or exact vendor analog reference.
+
 ### Current Fidelity / Risk Table
 
 | Subsystem | Current state | Gap vs real hardware | Likely real-usage risk |
@@ -110,7 +123,7 @@ Remaining active catch-all hits from the final Phase 1 trace are classified as:
 
 ## Current Gaps
 
-- Unimplemented MMIO is often papered over instead of modeled. There is a giant catch-all register window that stores writes and echoes them back on reads; this path is now traceable through `esp32s3_unimplemented_io_read` and `esp32s3_unimplemented_io_write`. Phase 1 classified the active catch-all hits and replaced the boot-critical SPI0/SPI_MEM and core-debug ASSIST_DEBUG hits with explicit narrow models, but the catch-all still remains for out-of-scope analog, peripheral, and radio/internal windows. The ANA PLL-ready behavior remains a separate compatibility shim that forces firmware-visible ready bits high so polling loops keep moving. RMT remains explicitly mapped as an unimplemented device.
+- Unimplemented MMIO is often papered over instead of modeled. There is a giant catch-all register window that stores writes and echoes them back on reads; this path is now traceable through `esp32s3_unimplemented_io_read` and `esp32s3_unimplemented_io_write`. Phase 1 classified the active catch-all hits and replaced the boot-critical SPI0/SPI_MEM and core-debug ASSIST_DEBUG hits with explicit narrow models, and Phase 2 replaced the APB_CTRL RAM island with an explicit narrow model. The catch-all still remains for out-of-scope analog, peripheral, and radio/internal windows. The ANA PLL-ready behavior remains a named compatibility shim that forces firmware-visible ready bits high so polling loops keep moving. RMT remains explicitly mapped as an unimplemented device.
 - GP-SPI now reads chip-select and DC signals through the routed-signal layer (`esp32s3_gpio_get_routed_signal_level`) rather than hard-coded GPIO numbers. However, the default signal-to-pin assignments (EPD_CS→GPIO34, EPD_DC→GPIO35, SD_CS→GPIO48, LoRa_CS→GPIO3) are still hardwired in GPIO reset state rather than being derived from firmware-written routing registers.
 - SPI2/SPI3 were intentionally a minimum-function stub. Transfers complete instantly, `USR` clears immediately, and `TRANS_DONE` is raised right away instead of following a more realistic controller state progression.
 - Clock, reset, and sleep/power behavior are only partially modeled. The `SYSTEM` block handles a small subset of registers, RTC sleep/wake logic is tailored to current timer/GPIO/EXT1 paths, and reset still contains QEMU-specific shims.

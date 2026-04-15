@@ -179,6 +179,7 @@ typedef struct Esp32s3SocState {
     TdeckLoraSx1262State lora;
 
     MemoryRegion iomem;
+    MemoryRegion apb_ctrl_iomem;
     MemoryRegion ana_iomem;
     MemoryRegion assist_debug_iomem;
     uint32_t assist_debug_regs[0x100 / sizeof(uint32_t)];
@@ -204,10 +205,12 @@ typedef struct Esp32s3SocState {
 /* Temporary macro to mark the CPU as in non-debugging mode */
 #define A_ASSIST_DEBUG_CORE_0_DEBUG_MODE_REG    0x098
 
-/* "QEMU" as a 32-bit value, can be used by the application to to check whether it is running in
- * QEMU or on real hardware */
-#define RGB_QEMU_ORIGIN     0x51454d55
-#define RGB_QEMU_ORIGIN_REG 0x3F8
+#define ESP32S3_APB_CTRL_LEGACY_ECO3_DATE_REG 0x07c
+#define ESP32S3_APB_CTRL_QEMU_ORIGIN_REG      0x3f8
+#define ESP32S3_APB_CTRL_DATE_REG             0x3fc
+#define ESP32S3_APB_CTRL_DATE_VALUE           0x02101150
+#define ESP32S3_APB_CTRL_LEGACY_ECO3_DATE     0x96042000
+#define ESP32S3_APB_CTRL_QEMU_ORIGIN          0x51454d55
 
 static void remove_cpu_watchpoints(XtensaCPU* xcs)
 {
@@ -494,19 +497,6 @@ static void esp32s3_soc_realize(DeviceState *dev, Error **errp)
     sysbus_connect_irq(SYS_BUS_DEVICE(&s->sdmmc), 0,
                        qdev_get_gpio_in(intmatrix_dev, ETS_SDIO_HOST_INTR_SOURCE));
 
-    /* Emulation of APB_CTRL_DATE_REG, needed for ECO3 revision detection.
-     * This is a small hack to avoid creating a whole new device just to emulate one
-     * register.
-     */
-    const hwaddr apb_ctrl_regs = DR_REG_APB_CTRL_BASE;
-    MemoryRegion *apbctrl_mem = g_new(MemoryRegion, 1);
-    memory_region_init_ram(apbctrl_mem, NULL, "esp32s3.apbctrl", 0x400 /* bytes */, &error_fatal);
-    memory_region_add_subregion(sys_mem, apb_ctrl_regs, apbctrl_mem);
-    uint32_t apb_ctrl_date_reg_val = 0x16042000 | 0x80000000;  /* MSB indicates ECO3 silicon revision */
-    uint32_t qemu_sig = RGB_QEMU_ORIGIN;
-    cpu_physical_memory_write(apb_ctrl_regs + 0x7c, &apb_ctrl_date_reg_val, 4);
-    cpu_physical_memory_write(apb_ctrl_regs + RGB_QEMU_ORIGIN_REG, &qemu_sig, 4);
-
     qemu_register_reset((QEMUResetHandler*) esp32s3_soc_reset, dev);
 
     /* TWAI realization */
@@ -586,6 +576,53 @@ static const MemoryRegionOps esp32s3_io_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+static uint64_t esp32s3_apb_ctrl_read(void *opaque, hwaddr addr,
+                                      unsigned int size)
+{
+    switch (addr) {
+    case ESP32S3_APB_CTRL_LEGACY_ECO3_DATE_REG:
+        /*
+         * Compatibility with the earlier ESP32-derived QEMU marker. ESP32-S3
+         * defines APB_CTRL/SYSCON DATE at +0x3fc; this legacy +0x7c value is
+         * not a hardware-fidelity claim.
+         */
+        return ESP32S3_APB_CTRL_LEGACY_ECO3_DATE;
+    case ESP32S3_APB_CTRL_QEMU_ORIGIN_REG:
+        return ESP32S3_APB_CTRL_QEMU_ORIGIN;
+    case ESP32S3_APB_CTRL_DATE_REG:
+        return ESP32S3_APB_CTRL_DATE_VALUE;
+    default:
+        return 0;
+    }
+}
+
+static void esp32s3_apb_ctrl_write(void *opaque, hwaddr addr, uint64_t value,
+                                   unsigned int size)
+{
+    /*
+     * This narrow APB_CTRL/SYSCON model intentionally exposes only immutable
+     * date/origin values. Broader APB_CTRL clock, PMS, retention, and memory
+     * policy fields need their own source-backed model before writes gain
+     * guest-visible semantics.
+     */
+}
+
+static const MemoryRegionOps esp32s3_apb_ctrl_ops = {
+    .read = esp32s3_apb_ctrl_read,
+    .write = esp32s3_apb_ctrl_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+static uint32_t esp32s3_ana_pll_ready_compat(uint32_t value)
+{
+    /*
+     * Compatibility shim: firmware polls this ready bit during clock/PLL
+     * bring-up. QEMU does not model analog PLL calibration, lock timing,
+     * jitter, or failure modes from the available sources.
+     */
+    return value | BIT(24);
+}
+
 #define ESP32S3_ANA_REG_COUNT (0x100 / sizeof(uint32_t))
 static uint32_t esp32s3_ana_regs[ESP32S3_ANA_REG_COUNT];
 
@@ -599,7 +636,7 @@ static uint64_t esp32s3_ana_read(void *opaque, hwaddr addr, unsigned int size)
     }
 
     if (addr == 0x40) {
-        r |= (1u << 24);
+        r = esp32s3_ana_pll_ready_compat(r);
     }
 
     return r;
@@ -946,6 +983,11 @@ static void esp32s3_machine_init(MachineState *machine)
     memory_region_init_io(&ss->iomem, OBJECT(&ss->cpu[0]), &esp32s3_io_ops,
                           NULL, "esp32s3.iomem", 0xd1000);
     memory_region_add_subregion_overlap(sys_mem, ESP32S3_IO_START_ADDR, &ss->iomem, -1);
+    memory_region_init_io(&ss->apb_ctrl_iomem, OBJECT(ss),
+                          &esp32s3_apb_ctrl_ops, ss,
+                          "esp32s3.apb-ctrl", 0x400);
+    memory_region_add_subregion_overlap(sys_mem, DR_REG_APB_CTRL_BASE,
+                                        &ss->apb_ctrl_iomem, 1);
     memory_region_init_io(&ss->ana_iomem, OBJECT(ss), &esp32s3_ana_ops,
                           ss, "esp32s3.ana", 0x100);
     memory_region_add_subregion_overlap(sys_mem, 0x6000e000, &ss->ana_iomem, 1);

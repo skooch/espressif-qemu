@@ -4,7 +4,7 @@
 Turn the remaining ESP32-S3 core-SoC quality recommendations into information-gated implementation tracks that improve QEMU accuracy without claiming fidelity beyond the available public and local reference material.
 
 ## Current Phase
-Phase 2
+Phase 3
 
 ## Scope
 This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shims, RTC/reset/sleep, cache/MMU, clocking, interrupt matrix, eFuse, PMS/RNG, Xtensa backend confidence, and documentation. It does not plan unrelated peripheral fidelity.
@@ -77,11 +77,11 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 - **Status:** complete
 
 ### Phase 2: APB_CTRL And ANA Shim Separation
-- [ ] Replace the RAM-backed APB_CTRL date/revision hack in `hw/xtensa/esp32s3.c` with an explicit APB_CTRL register model that implements documented date/revision reads and rejects unsupported writes deterministically.
-- [ ] Add qtests in `tests/qtest/esp32s3-test.c` for APB_CTRL reset value, read-only behavior, revision value, and QEMU-origin compatibility value if the compatibility value remains required.
-- [ ] Split the ANA PLL-ready behavior in `hw/xtensa/esp32s3.c` into a named compatibility shim with comments stating that analog PLL calibration, lock timing, and failure modes are not modeled from current sources.
-- [ ] Add an `ESP32S3_EMULATION_GAPS.md` entry marking ANA/PLL internals as `blocked for accuracy` unless a hardware probe or exact vendor analog reference is added.
-- **Status:** pending
+- [x] Replace the RAM-backed APB_CTRL date/revision hack in `hw/xtensa/esp32s3.c` with an explicit APB_CTRL register model that implements documented date/revision reads and rejects unsupported writes deterministically.
+- [x] Add qtests in `tests/qtest/esp32s3-test.c` for APB_CTRL reset value, read-only behavior, revision value, and QEMU-origin compatibility value if the compatibility value remains required.
+- [x] Split the ANA PLL-ready behavior in `hw/xtensa/esp32s3.c` into a named compatibility shim with comments stating that analog PLL calibration, lock timing, and failure modes are not modeled from current sources.
+- [x] Add an `ESP32S3_EMULATION_GAPS.md` entry marking ANA/PLL internals as `blocked for accuracy` unless a hardware probe or exact vendor analog reference is added.
+- **Status:** complete
 
 ### Phase 3: RTC, Reset, Sleep, And Wake State Model
 - [ ] Replace each RTC register fallback in `hw/misc/esp32s3_rtc_cntl.c` that is touched by ESP-IDF, ESP HAL, the Rust SDK, or active firmware with explicit register behavior and a qtest covering reset value, write mask, read value, and side effect.
@@ -149,6 +149,8 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 | Model ASSIST_DEBUG as a narrow core-debug shim. | Firmware trace showed only three source-backed debug-recording offsets, and removing them from the generic MMIO path reduces core-scope catch-all dependence without pulling in peripheral work. |
 | Leave APB_SARADC and SENS in the documented out-of-scope catch-all set for Phase 1. | ESP-IDF headers provide register names, but the active offsets belong to analog ADC/sensor-control surfaces rather than the targeted core boot/debug surface; modeling them accurately belongs in a later analog/peripheral pass unless boot/sleep evidence proves a core dependency. |
 | Treat LEDC and FE/BB/NRX trace hits as out of current core-SoC scope. | LEDC is a PWM peripheral, while FE/BB/NRX are radio/internal windows without public local register headers; neither should drive core-SoC modeling without stronger evidence. |
+| Preserve the old APB_CTRL `+0x7c` ECO marker as compatibility only. | ESP32-S3 sources define APB_CTRL/SYSCON date at `+0x3fc`, but the previous model exposed the ESP32-derived ECO marker at `+0x7c`; keeping it explicitly avoids accidental guest breakage while documenting that it is not S3 hardware fidelity. |
+| Make unsupported APB_CTRL offsets RAZ/WI in Phase 2. | The current source-backed requirement is date/origin compatibility only; clock, retention, memory-policy, and security-policy fields belong to later owning phases rather than broad RAM-backed semantics. |
 
 ## Errors
 | Error | Attempt | Resolution |
@@ -159,3 +161,5 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 | Firmware-trace wrapper failed with `zsh: read-only variable: status`. | Used `status=$?` after QEMU exited. In zsh, `status` is a readonly special parameter. | Reran with `rc=$?` and kept subsequent wrappers away from zsh special parameter names. |
 | Firmware-trace wrapper failed with `mktemp: mkstemp failed ... File exists`. | Used a macOS `mktemp` template with `XXXXXX` before a `.bin` or `.log` suffix. | Reran with `mktemp -t esp32s3-trace-flash` and `mktemp -t esp32s3-mmio-trace`, where macOS appends the unique suffix. |
 | Targeted qtest selector matched zero tests. | Ran with `/esp32s3/spi0/mem-register-surface`, but QEMU qtest registration prefixes the target path. | Listed registered tests and reran with `/xtensa/esp32s3/spi0/mem-register-surface`. |
+| Header search failed with `No such file or directory` for an ESP-IDF `register/soc/soc.h` path. | Included a guessed ESP-IDF path in an `rg` command while checking APB_CTRL base definitions. | Used the QEMU local `include/hw/misc/esp32s3_reg.h` base definition and the existing ESP-IDF `apb_ctrl_reg.h` / `syscon_reg.h` headers directly. |
+| Firmware source search failed with `No such file or directory` for a non-existent adjacent `crates` directory. | Included `/Users/skooch/projects/tdeck-pro-rust/tdeck-pro-rust/crates` in a scoped `rg` command. | Reused the successful `src/` hits and did not assume an adjacent `crates/` layout for this firmware repository. |
