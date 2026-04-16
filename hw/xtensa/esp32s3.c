@@ -179,8 +179,12 @@ typedef struct Esp32s3SocState {
 
     MemoryRegion iomem;
     MemoryRegion apb_ctrl_iomem;
+    MemoryRegion apb_saradc_iomem;
+    MemoryRegion sens_iomem;
     MemoryRegion ana_iomem;
     MemoryRegion assist_debug_iomem;
+    uint32_t apb_saradc_regs[0x400 / sizeof(uint32_t)];
+    uint32_t sens_regs[0x200 / sizeof(uint32_t)];
     uint32_t assist_debug_regs[0x100 / sizeof(uint32_t)];
     ESP32S3IOMuxState iomux;
     DWCSDMMCState sdmmc;
@@ -225,6 +229,22 @@ static void remove_cpu_watchpoints(XtensaCPU* xcs)
 
 static void esp32s3_soc_apply_reset(Esp32s3SocState *s, uint32_t reset_domain);
 
+static void esp32s3_soc_reset_analog_register_shims(Esp32s3SocState *s)
+{
+    memset(s->apb_saradc_regs, 0, sizeof(s->apb_saradc_regs));
+    memset(s->sens_regs, 0, sizeof(s->sens_regs));
+
+    s->apb_saradc_regs[0x00 / sizeof(uint32_t)] =
+        (1u << 30) | (0xfu << 19) | (0xfu << 15) | (4u << 7) | BIT(6);
+    s->apb_saradc_regs[0x04 / sizeof(uint32_t)] =
+        (10u << 12) | (0xffu << 1);
+    s->apb_saradc_regs[0x38 / sizeof(uint32_t)] =
+        (2u << 10) | (1u << 8);
+    s->apb_saradc_regs[0x3c / sizeof(uint32_t)] =
+        (13u << 19) | (13u << 14);
+    s->apb_saradc_regs[0x70 / sizeof(uint32_t)] = 4;
+}
+
 static void esp32s3_dig_reset(void *opaque, int n, int level)
 {
     Esp32s3SocState *s = ESP32S3_SOC(opaque);
@@ -258,6 +278,7 @@ static void esp32s3_soc_reset_peripherals(Esp32s3SocState *s)
     for (int i = 0; i < ESP32S3_I2C_COUNT; ++i) {
         device_cold_reset(DEVICE(&s->i2c[i]));
     }
+    esp32s3_soc_reset_analog_register_shims(s);
 }
 
 static bool esp32s3_soc_cpu_present(int cpu_index)
@@ -765,6 +786,102 @@ static const MemoryRegionOps esp32s3_apb_ctrl_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+static uint32_t esp32s3_apb_saradc_write_mask(hwaddr addr)
+{
+    switch (addr) {
+    case 0x00:
+        return 0xdffffffb;
+    case 0x04:
+        return 0x01ffffff;
+    case 0x18:
+    case 0x28:
+        return 0x00ffffff;
+    case 0x38:
+        return 0x00001ffc;
+    case 0x3c:
+        return 0x800fc000;
+    case 0x70:
+        return 0x007fffff;
+    default:
+        return 0;
+    }
+}
+
+static uint64_t esp32s3_apb_saradc_read(void *opaque, hwaddr addr,
+                                        unsigned int size)
+{
+    Esp32s3SocState *s = ESP32S3_SOC(opaque);
+    hwaddr index = addr / sizeof(uint32_t);
+
+    if (index < G_N_ELEMENTS(s->apb_saradc_regs)) {
+        return s->apb_saradc_regs[index];
+    }
+
+    return 0;
+}
+
+static void esp32s3_apb_saradc_write(void *opaque, hwaddr addr,
+                                     uint64_t value, unsigned int size)
+{
+    Esp32s3SocState *s = ESP32S3_SOC(opaque);
+    hwaddr index = addr / sizeof(uint32_t);
+    uint32_t mask = esp32s3_apb_saradc_write_mask(addr);
+
+    if (mask && index < G_N_ELEMENTS(s->apb_saradc_regs)) {
+        s->apb_saradc_regs[index] = (uint32_t)value & mask;
+    }
+}
+
+static const MemoryRegionOps esp32s3_apb_saradc_ops = {
+    .read = esp32s3_apb_saradc_read,
+    .write = esp32s3_apb_saradc_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+static uint32_t esp32s3_sens_write_mask(hwaddr addr)
+{
+    switch (addr) {
+    case 0x10:
+        return BIT(31);
+    case 0x34:
+        return 0xf0000000;
+    case 0x3c:
+        return 0xe0000000;
+    default:
+        return 0;
+    }
+}
+
+static uint64_t esp32s3_sens_read(void *opaque, hwaddr addr, unsigned int size)
+{
+    Esp32s3SocState *s = ESP32S3_SOC(opaque);
+    hwaddr index = addr / sizeof(uint32_t);
+
+    if (index < G_N_ELEMENTS(s->sens_regs)) {
+        return s->sens_regs[index];
+    }
+
+    return 0;
+}
+
+static void esp32s3_sens_write(void *opaque, hwaddr addr, uint64_t value,
+                               unsigned int size)
+{
+    Esp32s3SocState *s = ESP32S3_SOC(opaque);
+    hwaddr index = addr / sizeof(uint32_t);
+    uint32_t mask = esp32s3_sens_write_mask(addr);
+
+    if (mask && index < G_N_ELEMENTS(s->sens_regs)) {
+        s->sens_regs[index] = (uint32_t)value & mask;
+    }
+}
+
+static const MemoryRegionOps esp32s3_sens_ops = {
+    .read = esp32s3_sens_read,
+    .write = esp32s3_sens_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
 static uint32_t esp32s3_ana_pll_ready_compat(uint32_t value)
 {
     /*
@@ -1146,6 +1263,15 @@ static void esp32s3_machine_init(MachineState *machine)
                           "esp32s3.apb-ctrl", 0x400);
     memory_region_add_subregion_overlap(sys_mem, DR_REG_APB_CTRL_BASE,
                                         &ss->apb_ctrl_iomem, 1);
+    memory_region_init_io(&ss->apb_saradc_iomem, OBJECT(ss),
+                          &esp32s3_apb_saradc_ops, ss,
+                          "esp32s3.apb-saradc", 0x400);
+    memory_region_add_subregion_overlap(sys_mem, DR_REG_APB_SARADC_BASE,
+                                        &ss->apb_saradc_iomem, 1);
+    memory_region_init_io(&ss->sens_iomem, OBJECT(ss), &esp32s3_sens_ops,
+                          ss, "esp32s3.sens", 0x200);
+    memory_region_add_subregion_overlap(sys_mem, DR_REG_SENS_BASE,
+                                        &ss->sens_iomem, 1);
     memory_region_init_io(&ss->ana_iomem, OBJECT(ss), &esp32s3_ana_ops,
                           ss, "esp32s3.ana", 0x100);
     memory_region_add_subregion_overlap(sys_mem, 0x6000e000, &ss->ana_iomem, 1);

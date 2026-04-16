@@ -10,11 +10,11 @@
 
 **Created:** 2026-04-05
 
-**Branch:** `codex/esp32s3-p0-sleep-clock-reset`
+**Branch:** `codex/esp32s3-p1-generic-mmio`
 
-**HEAD:** `2d3a245e33`
+**HEAD:** `c45da302ce`
 
-This plan supersedes the old split between `ESP32S3_EMULATION_GAPS.md` and the residual `xtensa-blockers.md` watch queue for active prioritization. The deferred-foundation plan is complete; this is the new clean backlog for follow-on work.
+This plan supersedes the old split between `ESP32S3_EMULATION_GAPS.md` and the residual `xtensa-blockers.md` watch queue for active prioritization. The deferred-foundation plan is complete; this is the new clean backlog for follow-on work. The P0 branch has been merged to `tdeck-peripherals`; active implementation has moved to the P1 generic-MMIO burn-down branch.
 
 ## Active Implementation Slice: P0 Light-Sleep Board Transition
 
@@ -113,6 +113,29 @@ The fourth P0 slice adds a guest-level regression for the modeled light-sleep pa
 
 **Status:** complete; board-path sleep/wake regression ready to commit.
 
+## Active Implementation Slice: P1 APB_SARADC/SENS Generic-MMIO Burn-Down
+
+The first P1 slice removes the remaining source-backed analog-control windows from the generic MMIO echo path. This is deliberately a narrow register-surface shim for firmware-touched APB_SARADC and SENS offsets, not an ADC, calibration, or physical analog model.
+
+### File Map
+
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/plan.md` (track P1 generic-MMIO slice status)
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/progress.md` (session log)
+- Modify: `ESP32S3_EMULATION_GAPS.md` (document APB_SARADC/SENS removal from the catch-all path and remaining limits)
+- Modify: `hw/xtensa/esp32s3.c` (add explicit APB_SARADC and SENS MMIO regions with source-backed defaults and masks)
+- Modify: `tests/qtest/esp32s3-test.c` (pin reset defaults, write masks, unsupported-offset RAZ/WI behavior, and reset restoration)
+
+### P1 APB_SARADC/SENS Tasks
+
+- [x] Replace active `DR_REG_APB_SARADC_BASE` catch-all offsets `0x00`, `0x04`, `0x18`, `0x28`, `0x38`, `0x3c`, and `0x70` with an explicit narrow register model backed by ESP-IDF `apb_saradc_reg.h` reset defaults and write masks.
+- [x] Replace active `DR_REG_SENS_BASE` catch-all offsets `0x10`, `0x34`, and `0x3c` with an explicit narrow register model backed by ESP-IDF `sens_reg.h` masks.
+- [x] Make unsupported APB_SARADC/SENS offsets deterministic RAZ/WI instead of stored readback.
+- [x] Reset the APB_SARADC/SENS shim state through the modeled digital-peripheral reset path.
+- [x] Add qtest coverage for documented reset defaults, write-mask behavior, unsupported-offset RAZ/WI behavior, and reset restoration.
+- [x] Run the ESP32-S3 qtest suite plus cache-reject and sleep-wake functional tests before committing.
+
+**Status:** complete; APB_SARADC/SENS generic-MMIO burn-down slice ready to commit.
+
 ## Evidence Summary
 
 - The active hardware target is `../tdeck-pro-rust/`, which is heavily `esp-rs` based rather than an ESP-IDF application. `Cargo.toml` enables `esp-hal` with `esp32s3`, `psram`, and `unstable`, `esp-storage`, `esp-hal-ota`, `esp-radio` with `wifi` and `ble`, `esp-rtos`, and `embassy-net`.
@@ -150,10 +173,10 @@ Why this is next:
 
 First slices:
 
-- [ ] Inventory the firmware-touched offsets that still land in the generic MMIO echo region during the active T-Deck Pro path.
-- [ ] Replace the first boot-critical and sleep-critical offsets with narrow models or explicit RAZ/WI behavior instead of stored readback.
+- [x] Inventory the firmware-touched offsets that still land in the generic MMIO echo region during the active T-Deck Pro path.
+- [x] Replace the first boot-critical and sleep-critical offsets with narrow models or explicit RAZ/WI behavior instead of stored readback.
 - [ ] Keep the fallback region only for truly out-of-scope addresses and make the remaining active-path hits visible in tests or logs.
-- [ ] Add direct regressions for each register group moved out of the catch-all path.
+- [x] Add direct regressions for each register group moved out of the catch-all path.
 
 ### P1: Cache, MMU, PSRAM, and Flash Contract Hardening
 

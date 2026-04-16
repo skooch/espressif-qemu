@@ -55,6 +55,8 @@
 #define SYSTEM_BASE             DR_REG_SYSTEM_BASE
 #define INTMATRIX_BASE          DR_REG_INTERRUPT_BASE
 #define APB_CTRL_BASE           DR_REG_APB_CTRL_BASE
+#define APB_SARADC_BASE         DR_REG_APB_SARADC_BASE
+#define SENS_BASE               DR_REG_SENS_BASE
 #define RTC_CNTL_BASE           DR_REG_RTCCNTL_BASE
 #define EFUSE_BASE              DR_REG_EFUSE_BASE
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
@@ -77,6 +79,11 @@
 #define APB_CTRL_DATE_VALUE            0x02101150
 #define APB_CTRL_LEGACY_ECO3_DATE      0x96042000
 #define APB_CTRL_QEMU_ORIGIN           0x51454d55
+#define APB_SARADC_CTRL_DEFAULT        0x407f8240
+#define APB_SARADC_CTRL2_DEFAULT       0x0000a1fe
+#define APB_SARADC_ARB_CTRL_DEFAULT    0x00000900
+#define APB_SARADC_FILTER0_DEFAULT     0x006b4000
+#define APB_SARADC_CLKM_CONF_DEFAULT   0x00000004
 #define INTMATRIX_CPU_STRIDE           0x800
 #define INTMATRIX_INTR_STATUS0         0x18c
 #define INTMATRIX_MAP_REG(cpu, source) \
@@ -760,6 +767,64 @@ static void test_apb_ctrl_register_surface(void)
     g_assert_cmphex(qtest_readl(qts, APB_CTRL_LEGACY_ECO3_DATE_REG), ==,
                     APB_CTRL_LEGACY_ECO3_DATE);
     g_assert_cmphex(qtest_readl(qts, APB_CTRL_UNSUPPORTED_REG), ==, 0);
+
+    qtest_quit(qts);
+}
+
+static void test_analog_source_backed_register_shims(void)
+{
+    QTestState *qts = qts_start();
+    const struct {
+        uint32_t addr;
+        uint32_t reset_value;
+        uint32_t write_mask;
+    } apb_saradc_cases[] = {
+        { APB_SARADC_BASE + 0x00, APB_SARADC_CTRL_DEFAULT,      0xdffffffb },
+        { APB_SARADC_BASE + 0x04, APB_SARADC_CTRL2_DEFAULT,     0x01ffffff },
+        { APB_SARADC_BASE + 0x18, 0,                            0x00ffffff },
+        { APB_SARADC_BASE + 0x28, 0,                            0x00ffffff },
+        { APB_SARADC_BASE + 0x38, APB_SARADC_ARB_CTRL_DEFAULT,  0x00001ffc },
+        { APB_SARADC_BASE + 0x3c, APB_SARADC_FILTER0_DEFAULT,   0x800fc000 },
+        { APB_SARADC_BASE + 0x70, APB_SARADC_CLKM_CONF_DEFAULT, 0x007fffff },
+    };
+    const struct {
+        uint32_t addr;
+        uint32_t write_mask;
+    } sens_cases[] = {
+        { SENS_BASE + 0x10, BIT(31) },
+        { SENS_BASE + 0x34, 0xf0000000 },
+        { SENS_BASE + 0x3c, 0xe0000000 },
+    };
+    uint32_t options0;
+
+    for (int i = 0; i < G_N_ELEMENTS(apb_saradc_cases); i++) {
+        g_assert_cmphex(qtest_readl(qts, apb_saradc_cases[i].addr), ==,
+                        apb_saradc_cases[i].reset_value);
+        qtest_writel(qts, apb_saradc_cases[i].addr, UINT32_MAX);
+        g_assert_cmphex(qtest_readl(qts, apb_saradc_cases[i].addr), ==,
+                        apb_saradc_cases[i].write_mask);
+    }
+
+    for (int i = 0; i < G_N_ELEMENTS(sens_cases); i++) {
+        g_assert_cmphex(qtest_readl(qts, sens_cases[i].addr), ==, 0);
+        qtest_writel(qts, sens_cases[i].addr, UINT32_MAX);
+        g_assert_cmphex(qtest_readl(qts, sens_cases[i].addr), ==,
+                        sens_cases[i].write_mask);
+    }
+
+    qtest_writel(qts, APB_SARADC_BASE + 0x74, UINT32_MAX);
+    qtest_writel(qts, SENS_BASE + 0x118, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, APB_SARADC_BASE + 0x74), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, SENS_BASE + 0x118), ==, 0);
+
+    qtest_writel(qts, APB_SARADC_BASE + 0x00, 0);
+    qtest_writel(qts, SENS_BASE + 0x10, UINT32_MAX);
+    options0 = FIELD_DP32(0, RTC_CNTL_OPTIONS0, SW_SYS_RESET, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
+
+    g_assert_cmphex(qtest_readl(qts, APB_SARADC_BASE + 0x00), ==,
+                    APB_SARADC_CTRL_DEFAULT);
+    g_assert_cmphex(qtest_readl(qts, SENS_BASE + 0x10), ==, 0);
 
     qtest_quit(qts);
 }
@@ -2550,6 +2615,8 @@ int main(int argc, char **argv)
                    test_assist_debug_register_surface);
     qtest_add_func("/esp32s3/apb-ctrl/register-surface",
                    test_apb_ctrl_register_surface);
+    qtest_add_func("/esp32s3/analog/source-backed-register-shims",
+                   test_analog_source_backed_register_shims);
 #ifndef _WIN32
     qtest_add_func("/esp32s3/cache/flash-mmu-mapping-ctrl1",
                    test_cache_flash_mmu_mapping_and_ctrl1_state);

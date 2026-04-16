@@ -17,3 +17,9 @@
 - 2026-04-16: Started fourth P0 slice: add a board-path ROM functional regression for recoverable RTC timer light-sleep wake.
 - 2026-04-16: Added `test_xtensa_esp32s3_sleep_wake.py`, which boots an ESP32-S3 ROM ELF via `-bios`, enters RTC timer light sleep, resumes, validates wake cause/state, and exits through semihosting.
 - 2026-04-16: Verified board-path sleep/wake slice with `test_xtensa_esp32s3_sleep_wake.py`, `git diff --check`, `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test`, full `esp32s3-test` qtest suite, and `test_xtensa_esp32s3_cache_reject.py`.
+- 2026-04-16: Merged `codex/esp32s3-p0-sleep-clock-reset` into `tdeck-peripherals` at `c45da302ce` and pushed `tdeck-peripherals`.
+- 2026-04-16: Created peer worktree `/Users/skooch/projects/tdeck-pro-rust/worktrees/esp32s3-p1-generic-mmio` on branch `codex/esp32s3-p1-generic-mmio` from pushed `tdeck-peripherals` head `c45da302ce`.
+- 2026-04-16: Started first P1 generic-MMIO burn-down slice: replace source-backed APB_SARADC and SENS active offsets with explicit narrow shims rather than catch-all readback.
+- 2026-04-16: Implemented APB_SARADC/SENS MMIO regions with ESP-IDF-backed reset defaults and write masks for the active firmware-touched offsets, while making unsupported offsets RAZ/WI.
+- 2026-04-16: Added qtest coverage for APB_SARADC/SENS reset defaults, write-mask behavior, unsupported-offset RAZ/WI behavior, and reset restoration.
+- 2026-04-16: Verified the APB_SARADC/SENS slice with `git diff --check`, targeted `/xtensa/esp32s3/analog/source-backed-register-shims`, full `esp32s3-test`, `test_xtensa_esp32s3_cache_reject.py`, and `test_xtensa_esp32s3_sleep_wake.py`.
