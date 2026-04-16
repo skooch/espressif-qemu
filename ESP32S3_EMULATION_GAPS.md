@@ -322,10 +322,10 @@ Current firmware and board-path findings:
 
 The active Xtensa/backend queue now lives in `docs/plans/implemented/esp32s3-deferred-foundation/xtensa-blockers.md` so it stays separate from the peripheral backlog and tied to current firmware behavior.
 
-Current ranking:
+Current ranking after the T-Deck Pro re-prioritization:
 
-- `P0` Remaining ESP32-S3 reject surface beyond the current qtest and board-regression matrix. The shared illegal-cache path and the first `CORE0/1` reject path now exist, and the tree has checked-in board regressions for both the single-core/core0 path and the SMP/core1 path, but the rest of the reject/write-IC/access-mask matrix is only partially modeled.
-- `P1` Remaining missing Xtensa opcodes beyond the current ESP32-S3 core/FPU/TIE coverage. The generic unimplemented-opcode fallback still exists, but the current guest stress instructions (`ee.movi.32.a`, `ee.zero.accx`, `ee.vmulas.s16.accx`) are already translated, so no active firmware blocker is confirmed there yet.
+- `P2` watch work: remaining ESP32-S3 reject surface beyond the current qtest and board-regression matrix. The shared illegal-cache path and the first `CORE0/1` reject path now exist, and the tree has checked-in board regressions for both the single-core/core0 path and the SMP/core1 path, but the rest of the reject/write-IC/access-mask matrix is only partially modeled. Keep this gated behind a concrete guest dependency.
+- `P2` trigger work: remaining missing Xtensa opcodes beyond the current ESP32-S3 core/FPU/TIE coverage. The generic unimplemented-opcode fallback still exists, but the current guest stress instructions (`ee.movi.32.a`, `ee.zero.accx`, `ee.vmulas.s16.accx`) are already translated, so no active firmware blocker is confirmed there yet.
 
 Recently resolved in this track:
 
