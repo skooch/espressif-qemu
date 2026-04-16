@@ -318,53 +318,71 @@ static gchar *create_flash_image_with_patterns(void)
     return g_steal_pointer(&tmp_path);
 }
 
-static void test_cache_flash_mmu_mapping_and_ctrl1_state(void)
+static void test_cache_ctrl1_flash_ibus_gate(void)
 {
     g_autofree gchar *flash_path = create_flash_image_with_patterns();
     QTestState *qts = qts_start_with_flash(flash_path);
     const uint32_t mmu_entry0 = DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET;
-    const uint32_t dcache_ctrl1_bits =
-        R_EXTMEM_DCACHE_CTRL1_SHUT_DBUS_MASK |
-        R_EXTMEM_DCACHE_CTRL1_SHUT_IBUS_MASK;
     const uint32_t icache_ctrl1_bits =
-        R_EXTMEM_ICACHE_CTRL1_SHUT_DBUS_MASK |
-        R_EXTMEM_ICACHE_CTRL1_SHUT_IBUS_MASK;
+        R_EXTMEM_ICACHE_CTRL1_SHUT_CORE0_BUS_MASK |
+        R_EXTMEM_ICACHE_CTRL1_SHUT_CORE1_BUS_MASK;
 
     g_assert_cmphex(qtest_readl(qts, mmu_entry0), ==, BIT(14));
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_CTRL1) &
+                    icache_ctrl1_bits,
+                    ==, icache_ctrl1_bits);
 
     qtest_writel(qts, mmu_entry0, 0);
-    g_assert_cmphex(qtest_readl(qts, 0x3c000000), ==, 0x11111111);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, 0);
 
-    qtest_writel(qts, mmu_entry0, 1);
-    g_assert_cmphex(qtest_readl(qts, 0x3c000000), ==, 0x22222222);
-
-    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_CTRL1,
-                 dcache_ctrl1_bits);
-    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_CTRL1) &
-                    dcache_ctrl1_bits,
-                    ==, dcache_ctrl1_bits);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_CTRL1,
+                 R_EXTMEM_ICACHE_CTRL1_SHUT_CORE1_BUS_MASK);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, 0x11111111);
 
     qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_CTRL1,
                  icache_ctrl1_bits);
     g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_CTRL1) &
                     icache_ctrl1_bits,
                     ==, icache_ctrl1_bits);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_CACHE_ILG_INT_ST),
+                    ==, 0);
 
     qtest_quit(qts);
     unlink(flash_path);
 }
 
-static void test_cache_psram_mmu_mapping(void)
+static void test_cache_ctrl1_psram_dbus_gate(void)
 {
     QTestState *qts = qts_start_with_psram();
     const uint32_t mmu_entry0 = DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET;
     const uint32_t psram_page0 = BIT(15);
+    const uint32_t dcache_ctrl1_bits =
+        R_EXTMEM_DCACHE_CTRL1_SHUT_CORE0_BUS_MASK |
+        R_EXTMEM_DCACHE_CTRL1_SHUT_CORE1_BUS_MASK;
 
     g_assert_cmphex(qtest_readl(qts, mmu_entry0), ==, BIT(14));
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_CTRL1) &
+                    dcache_ctrl1_bits,
+                    ==, dcache_ctrl1_bits);
 
     qtest_writel(qts, mmu_entry0, psram_page0);
     qtest_writel(qts, ESP32S3_DCACHE_BASE, 0x13572468);
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_CTRL1,
+                 R_EXTMEM_DCACHE_CTRL1_SHUT_CORE1_BUS_MASK);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_DCACHE_BASE), ==, 0);
+
+    qtest_writel(qts, ESP32S3_DCACHE_BASE, 0x13572468);
     g_assert_cmphex(qtest_readl(qts, ESP32S3_DCACHE_BASE), ==, 0x13572468);
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_CTRL1,
+                 dcache_ctrl1_bits);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_DCACHE_BASE), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_CACHE_ILG_INT_ST),
+                    ==, 0);
 
     qtest_quit(qts);
 }
@@ -704,6 +722,8 @@ static void test_cache_core0_dbus_reject_irq(void)
 
     qtest_irq_intercept_in(qts, "/machine/soc/intmatrix");
     qtest_writel(qts, mmu_entry0, 0);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_CTRL1,
+                 R_EXTMEM_DCACHE_CTRL1_SHUT_CORE1_BUS_MASK);
 
     assert_cache_core0_reject_irq(qts, ESP32S3_DCACHE_BASE,
                                   R_EXTMEM_CORE0_ACS_CACHE_INT_ENA_CORE0_DBUS_REJECT_INT_ENA_MASK,
@@ -725,6 +745,8 @@ static void test_cache_core0_ibus_reject_irq(void)
 
     qtest_irq_intercept_in(qts, "/machine/soc/intmatrix");
     qtest_writel(qts, mmu_entry0, 0);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_CTRL1,
+                 R_EXTMEM_ICACHE_CTRL1_SHUT_CORE1_BUS_MASK);
 
     assert_cache_core0_reject_irq(qts, ESP32S3_ICACHE_BASE,
                                   R_EXTMEM_CORE0_ACS_CACHE_INT_ENA_CORE0_IBUS_REJECT_INT_ENA_MASK,
@@ -2627,10 +2649,10 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/analog/source-backed-register-shims",
                    test_analog_source_backed_register_shims);
 #ifndef _WIN32
-    qtest_add_func("/esp32s3/cache/flash-mmu-mapping-ctrl1",
-                   test_cache_flash_mmu_mapping_and_ctrl1_state);
-    qtest_add_func("/esp32s3/cache/psram-mmu-mapping",
-                   test_cache_psram_mmu_mapping);
+    qtest_add_func("/esp32s3/cache/ctrl1-flash-ibus-gate",
+                   test_cache_ctrl1_flash_ibus_gate);
+    qtest_add_func("/esp32s3/cache/ctrl1-psram-dbus-gate",
+                   test_cache_ctrl1_psram_dbus_gate);
     qtest_add_func("/esp32s3/cache/deferred-completion",
                    test_cache_deferred_completion_semantics);
     qtest_add_func("/esp32s3/cache/deferred-ordering-clear",

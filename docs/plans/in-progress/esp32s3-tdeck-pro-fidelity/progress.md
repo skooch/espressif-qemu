@@ -26,3 +26,5 @@
 - 2026-04-16: Started second P1 generic-MMIO burn-down slice: restrict stored-readback fallback behavior to explicitly classified LEDC and FE/FE2/NRX/BB out-of-scope ranges.
 - 2026-04-16: Updated the generic-MMIO qtest to prove deferred out-of-scope ranges still provide compatibility storage while other unmapped core fallthroughs are RAZ/WI.
 - 2026-04-16: Verified the generic-MMIO fallback allowlist slice with `git diff --check`, incremental `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test`, targeted `/xtensa/esp32s3/generic-mmio/compatibility-storage`, full `esp32s3-test`, `test_xtensa_esp32s3_cache_reject.py`, and `test_xtensa_esp32s3_sleep_wake.py`.
+- 2026-04-16: Started first P1 cache/MMU hardening slice: make the `esp-hal` PSRAM bring-up contract explicit by honoring `EXTMEM_DCACHE_CTRL1`/`EXTMEM_ICACHE_CTRL1` per-core bus gating in MMU alias translation.
+- 2026-04-16: Updated the cache register model to use ESP-IDF-backed per-core `CTRL1` field names and reset defaults, and added direct qtests that prove flash/PSRAM alias windows stay inaccessible until the guest clears the relevant core0 shut bit.

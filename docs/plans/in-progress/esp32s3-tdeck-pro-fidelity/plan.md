@@ -214,6 +214,12 @@ First slices:
 - [ ] Keep the already-landed reject and fault paths as the baseline, and only widen the remaining `CORE0/1_ACS_CACHE_INT_*` surface if the guest starts reading those bits.
 - [ ] Add the next regression at the same layer as the blocker: qtest for direct MMIO contract, or a board-path guest repro if the library-visible behavior only appears there.
 
+Current P1 cache/MMU progress:
+
+- 2026-04-16: The EXTMEM cache model now resets `DCACHE_CTRL1`/`ICACHE_CTRL1` to the ESP-IDF documented per-core bus-shut defaults and the MMU alias translation now refuses core0 accesses until the relevant bus bit is cleared.
+- 2026-04-16: Direct qtests now cover the active `esp-hal`-style contract for flash/PSRAM alias accesses: MMU mapping alone is not sufficient, and the guest must clear the relevant `CTRL1` shut bit before the mapped window becomes usable.
+- 2026-04-16: Remaining work in this track is the flash `multicore_auto_park()` sequence and any ROM-internal cache suspend/resume depth that turns out to be guest-visible beyond the now-explicit `CTRL1` gate.
+
 ### P2: Xtensa Backend Residual Queue
 
 Why this is not higher yet:

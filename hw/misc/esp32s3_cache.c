@@ -189,6 +189,27 @@ static uint32_t esp32s3_cache_access_core(void)
     return 0;
 }
 
+static bool esp32s3_cache_bus_enabled(const ESP32S3CacheState *s,
+                                      uint32_t core, bool dcache)
+{
+    const hwaddr ctrl1_addr = dcache ? A_EXTMEM_DCACHE_CTRL1
+                                     : A_EXTMEM_ICACHE_CTRL1;
+    const uint32_t ctrl1 = s->regs[ESP32S3_CACHE_REG_IDX(ctrl1_addr)];
+    uint32_t shut_mask;
+
+    if (dcache) {
+        shut_mask = core == 0
+            ? R_EXTMEM_DCACHE_CTRL1_SHUT_CORE0_BUS_MASK
+            : R_EXTMEM_DCACHE_CTRL1_SHUT_CORE1_BUS_MASK;
+    } else {
+        shut_mask = core == 0
+            ? R_EXTMEM_ICACHE_CTRL1_SHUT_CORE0_BUS_MASK
+            : R_EXTMEM_ICACHE_CTRL1_SHUT_CORE1_BUS_MASK;
+    }
+
+    return (ctrl1 & shut_mask) == 0;
+}
+
 static void esp32s3_cache_update_access_irq(ESP32S3CacheState *s, uint32_t core)
 {
     const uint32_t ena =
@@ -675,6 +696,8 @@ static void esp32s3_cache_reset_hold(Object *obj, ResetType type)
 {
     ESP32S3CacheState *s = ESP32S3_CACHE(obj);
     memset(s->regs, 0, ESP32S3_CACHE_REG_COUNT * sizeof(*s->regs));
+    s->icache_enable = false;
+    s->dcache_enable = false;
     for (size_t i = 0; i < ARRAY_SIZE(s->completion_deadline_ns); i++) {
         s->completion_deadline_ns[i] = ESP32S3_CACHE_DEADLINE_NONE;
     }
@@ -697,9 +720,15 @@ static void esp32s3_cache_reset_hold(Object *obj, ResetType type)
     s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_DCACHE_AUTOLOAD_CTRL)] = R_EXTMEM_DCACHE_AUTOLOAD_CTRL_AUTOLOAD_DONE_MASK;
     /* Same goes for the manual preload */
     s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_DCACHE_PRELOAD_CTRL)] = R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_DONE_MASK;
+    s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_DCACHE_CTRL1)] =
+        R_EXTMEM_DCACHE_CTRL1_SHUT_CORE0_BUS_MASK |
+        R_EXTMEM_DCACHE_CTRL1_SHUT_CORE1_BUS_MASK;
     s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CACHE_CONF_MISC)] =
         R_EXTMEM_CACHE_CONF_MISC_CACHE_IGNORE_SYNC_MMU_ENTRY_FAULT_MASK |
         R_EXTMEM_CACHE_CONF_MISC_CACHE_IGNORE_PRELOAD_MMU_ENTRY_FAULT_MASK;
+    s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_ICACHE_CTRL1)] =
+        R_EXTMEM_ICACHE_CTRL1_SHUT_CORE0_BUS_MASK |
+        R_EXTMEM_ICACHE_CTRL1_SHUT_CORE1_BUS_MASK;
     s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CORE0_DBUS_REJECT_VADDR)] = UINT32_MAX;
     s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CORE0_IBUS_REJECT_VADDR)] = UINT32_MAX;
     s->regs[ESP32S3_CACHE_REG_IDX(A_EXTMEM_CORE1_DBUS_REJECT_VADDR)] = UINT32_MAX;
@@ -844,6 +873,12 @@ static IOMMUTLBEntry esp32s3_mmu_region_translate(IOMMUMemoryRegion *iommu, hwad
             (region->dcache ? 0 : ESP32S3_CACHE_MMU_FAULT_ICACHE);
 
         esp32s3_cache_raise_mmu_fault(s, vaddr, entry, fault_code);
+        ret.perm = IOMMU_NONE;
+        return ret;
+    }
+
+    if (!esp32s3_cache_bus_enabled(s, esp32s3_cache_access_core(),
+                                   region->dcache)) {
         ret.perm = IOMMU_NONE;
         return ret;
     }
