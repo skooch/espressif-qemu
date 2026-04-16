@@ -140,6 +140,9 @@ struct ESP32S3CacheState {
 _Static_assert(sizeof(((ESP32S3CacheState*)0)->mmu) == ESP32S3_MMU_SIZE,
                "The size of `mmu` field in structure ESP32C3CacheState must be equal to ESP32S3_MMU_SIZE");
 
+void esp32s3_cache_flash_modified(ESP32S3CacheState *s, hwaddr addr,
+                                  hwaddr size);
+
 
 REG32(EXTMEM_DCACHE_CTRL, 0x000)
     FIELD(EXTMEM_DCACHE_CTRL, ENABLE, 0, 1)

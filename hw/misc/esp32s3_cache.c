@@ -459,6 +459,50 @@ static void esp32s3_mmu_invalidate_page(ESP32S3CacheState *s, hwaddr virt_addr, 
     }
 }
 
+void esp32s3_cache_flash_modified(ESP32S3CacheState *s, hwaddr addr,
+                                  hwaddr size)
+{
+    int64_t flash_len;
+    hwaddr end;
+
+    if (s == NULL || s->flash_blk == NULL) {
+        return;
+    }
+
+    flash_len = blk_getlength(s->flash_blk);
+    if (flash_len <= 0 || addr >= flash_len) {
+        return;
+    }
+
+    end = size == 0 ? flash_len : MIN(addr + size, (hwaddr) flash_len);
+
+    for (hwaddr page = addr & ~(ESP32S3_PAGE_SIZE - 1);
+         page < end;
+         page += ESP32S3_PAGE_SIZE) {
+        size_t remaining = flash_len - page;
+        size_t load_size = MIN((size_t) ESP32S3_PAGE_SIZE, remaining);
+        uint8_t *cache_data =
+            ((uint8_t *) memory_region_get_ram_ptr(&s->flash_mr)) + page;
+
+        blk_pread(s->flash_blk, page, load_size, cache_data, 0);
+        if (load_size < ESP32S3_PAGE_SIZE) {
+            memset(cache_data + load_size, 0xff,
+                   ESP32S3_PAGE_SIZE - load_size);
+        }
+
+        for (int i = 0; i < ESP32S3_MMU_TABLE_ENTRY_COUNT; i++) {
+            const ESP32S3MMUEntry entry = s->mmu[i];
+
+            if (!entry.invalid &&
+                entry.type == ESP32S3_MMU_TYPE_FLASH &&
+                entry.page_number * ESP32S3_PAGE_SIZE == page) {
+                esp32s3_mmu_invalidate_page(s, i * ESP32S3_PAGE_SIZE, page,
+                                            false, false);
+            }
+        }
+    }
+}
+
 
 static inline void esp32s3_write_mmu_value(ESP32S3CacheState *s, hwaddr reg_addr, uint32_t value)
 {

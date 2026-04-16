@@ -18,6 +18,8 @@
 
 #define ESP32S3_SPI_CS_COUNT 3
 
+typedef struct ESP32S3CacheState ESP32S3CacheState;
+
 typedef struct ESP32S3SpiState {
     SysBusDevice parent_obj;
 
@@ -55,6 +57,7 @@ typedef struct ESP32S3SpiState {
     uint32_t ddr_ctrl;
     uint32_t clock_gate;
     uint32_t core_clk_sel;
+    ESP32S3CacheState *cache;
     ESP32S3XtsAesState *xts_aes;
 } ESP32S3SpiState;
 

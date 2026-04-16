@@ -218,7 +218,8 @@ Current P1 cache/MMU progress:
 
 - 2026-04-16: The EXTMEM cache model now resets `DCACHE_CTRL1`/`ICACHE_CTRL1` to the ESP-IDF documented per-core bus-shut defaults and the MMU alias translation now refuses core0 accesses until the relevant bus bit is cleared.
 - 2026-04-16: Direct qtests now cover the active `esp-hal`-style contract for flash/PSRAM alias accesses: MMU mapping alone is not sufficient, and the guest must clear the relevant `CTRL1` shut bit before the mapped window becomes usable.
-- 2026-04-16: Remaining work in this track is the flash `multicore_auto_park()` sequence and any ROM-internal cache suspend/resume depth that turns out to be guest-visible beyond the now-explicit `CTRL1` gate.
+- 2026-04-16: SPI1 flash program and sector erase operations now refresh any mapped flash pages in the EXTMEM mirror, so a guest that parks the other core and mutates flash through SPI1 sees the updated contents through the cache alias without forcing an MMU remap.
+- 2026-04-16: Remaining work in this track is any additional board-path evidence around `multicore_auto_park()` sequencing itself and any ROM-internal cache suspend/resume depth that turns out to be guest-visible beyond the now-explicit `CTRL1` gate and flash-mirror refresh.
 
 ### P2: Xtensa Backend Residual Queue
 

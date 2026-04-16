@@ -17,6 +17,7 @@
 #include "hw/registerfields.h"
 #include "hw/irq.h"
 #include "hw/qdev-properties.h"
+#include "hw/misc/esp32s3_cache.h"
 #include "hw/ssi/ssi.h"
 #include "hw/ssi/esp32s3_spi.h"
 #include "qemu/error-report.h"
@@ -214,6 +215,31 @@ static void esp32s3_spi_perform_transaction(ESP32S3SpiState *s, ESP32S3SpiTransa
     esp32s3_spi_txrx_buffer(s, t->data, t->tx_bytes, t->data, t->rx_bytes);
     qemu_set_irq(s->cs_gpio[0], 1);
     esp32s3_spi_cs_set(s, 1);
+
+    if (s->cache != NULL) {
+        hwaddr flash_size = 0;
+
+        switch (t->cmd) {
+        case CMD_PP:
+            flash_size = t->tx_bytes;
+            break;
+        case CMD_SE:
+            flash_size = 4 * 1024;
+            break;
+        case CMD_BE:
+            flash_size = 64 * 1024;
+            break;
+        case CMD_CE:
+            flash_size = 0;
+            break;
+        default:
+            break;
+        }
+
+        if (flash_size != 0 || t->cmd == CMD_CE) {
+            esp32s3_cache_flash_modified(s->cache, t->addr, flash_size);
+        }
+    }
 }
 
 

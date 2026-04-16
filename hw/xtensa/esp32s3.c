@@ -1378,6 +1378,7 @@ static void esp32s3_machine_init(MachineState *machine)
 
     /* SPI1 controller (SPI Flash) */
     {
+        ss->spi1.cache = &ss->cache;
         ss->spi1.xts_aes = &ss->xts_aes;
         sysbus_realize(SYS_BUS_DEVICE(&ss->spi1), &error_fatal);
         MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->spi1), 0);

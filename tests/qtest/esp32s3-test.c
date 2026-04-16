@@ -318,6 +318,33 @@ static gchar *create_flash_image_with_patterns(void)
     return g_steal_pointer(&tmp_path);
 }
 
+static gchar *create_erased_flash_image(void)
+{
+    g_autofree gchar *tmp_path = NULL;
+    int fd;
+    uint8_t erased_sector[4096];
+
+    fd = g_file_open_tmp("esp32s3-flash-XXXXXX", &tmp_path, NULL);
+    g_assert_cmpint(fd, >=, 0);
+    g_assert_cmpint(ftruncate(fd, 2 * 1024 * 1024), ==, 0);
+
+    memset(erased_sector, 0xff, sizeof(erased_sector));
+    g_assert_cmpint(pwrite(fd, erased_sector, sizeof(erased_sector), 0),
+                    ==, sizeof(erased_sector));
+
+    close(fd);
+    return g_steal_pointer(&tmp_path);
+}
+
+static uint32_t spi1_read_flash_word(QTestState *qts, uint32_t addr)
+{
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_MISO_DLEN, 31);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_ADDR, addr);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD, R_SPI_MEM_CMD_FLASH_READ_MASK);
+
+    return qtest_readl(qts, SPI1_BASE + A_SPI_MEM_W0);
+}
+
 static void test_cache_ctrl1_flash_ibus_gate(void)
 {
     g_autofree gchar *flash_path = create_flash_image_with_patterns();
@@ -385,6 +412,39 @@ static void test_cache_ctrl1_psram_dbus_gate(void)
                     ==, 0);
 
     qtest_quit(qts);
+}
+
+static void test_flash_spi_updates_mapped_alias(void)
+{
+    g_autofree gchar *flash_path = create_erased_flash_image();
+    QTestState *qts = qts_start_with_flash(flash_path);
+    const uint32_t mmu_entry0 = DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET;
+    const uint32_t programmed_word = 0x78563412;
+
+    qtest_writel(qts, mmu_entry0, 0);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_CTRL1,
+                 R_EXTMEM_ICACHE_CTRL1_SHUT_CORE1_BUS_MASK);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, 0xffffffff);
+
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD,
+                 R_SPI_MEM_CMD_FLASH_WREN_MASK);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_W0, programmed_word);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_ADDR, 0x04000000);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD,
+                 R_SPI_MEM_CMD_FLASH_PP_MASK);
+    g_assert_cmphex(spi1_read_flash_word(qts, 0), ==, programmed_word);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, programmed_word);
+
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD,
+                 R_SPI_MEM_CMD_FLASH_WREN_MASK);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_ADDR, 0);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD,
+                 R_SPI_MEM_CMD_FLASH_SE_MASK);
+    g_assert_cmphex(spi1_read_flash_word(qts, 0), ==, 0xffffffff);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, 0xffffffff);
+
+    qtest_quit(qts);
+    unlink(flash_path);
 }
 
 static void assert_cache_deferred_completion(QTestState *qts, uint32_t reg,
@@ -2653,6 +2713,8 @@ int main(int argc, char **argv)
                    test_cache_ctrl1_flash_ibus_gate);
     qtest_add_func("/esp32s3/cache/ctrl1-psram-dbus-gate",
                    test_cache_ctrl1_psram_dbus_gate);
+    qtest_add_func("/esp32s3/cache/flash-spi-updates-mapped-alias",
+                   test_flash_spi_updates_mapped_alias);
     qtest_add_func("/esp32s3/cache/deferred-completion",
                    test_cache_deferred_completion_semantics);
     qtest_add_func("/esp32s3/cache/deferred-ordering-clear",
