@@ -414,6 +414,26 @@ static void esp32s3_core1_runstall(void *opaque, int n, int level)
     esp32s3_soc_update_cpu_run_state(s, 1);
 }
 
+static void esp32s3_update_clock_consumers(Esp32s3SocState *s)
+{
+    uint64_t apb_freq_hz = esp32s3_clock_get_apb_freq(&s->clock);
+    uint64_t xtal_freq_hz = esp32s3_clock_get_xtal_freq(&s->clock);
+
+    for (int i = 0; i < ESP32S3_TIMG_COUNT; i++) {
+        esp_timg_set_clocks(ESP_TIMG(&s->timg[i]), apb_freq_hz,
+                            xtal_freq_hz);
+    }
+}
+
+static void esp32s3_system_clock_update(void *opaque, int n, int level)
+{
+    Esp32s3SocState *s = ESP32S3_SOC(opaque);
+
+    if (level) {
+        esp32s3_update_clock_consumers(s);
+    }
+}
+
 static void esp32s3_clk_update(void* opaque, int n, int level)
 {
     Esp32s3SocState *s = ESP32S3_SOC(opaque);
@@ -923,6 +943,8 @@ static void esp32s3_soc_init(Object *obj)
                             ESP32S3_RTC_LIGHT_SLEEP_GPIO, 1);
     qdev_init_gpio_in_named(DEVICE(s), esp32s3_core1_runstall,
                             ESP32S3_CLOCK_CORE1_RUNSTALL_GPIO, 1);
+    qdev_init_gpio_in_named(DEVICE(s), esp32s3_system_clock_update,
+                            ESP32S3_CLOCK_UPDATE_GPIO, 1);
 
     object_initialize_child(obj, "twai", &s->twai, TYPE_ESP32S3_TWAI);
 
@@ -1264,6 +1286,11 @@ static void esp32s3_machine_init(MachineState *machine)
                                     qdev_get_gpio_in_named(DEVICE(ss),
                                                            ESP32S3_CLOCK_CORE1_RUNSTALL_GPIO,
                                                            0));
+        qdev_connect_gpio_out_named(DEVICE(&ss->clock),
+                                    ESP32S3_CLOCK_UPDATE_GPIO, 0,
+                                    qdev_get_gpio_in_named(DEVICE(ss),
+                                                           ESP32S3_CLOCK_UPDATE_GPIO,
+                                                           0));
         ss->clock.cpu[0] = CPU(&ss->cpu[0]);
         ss->clock.cpu[1] = machine->smp.cpus > 1 ? CPU(&ss->cpu[1]) : NULL;
         ss->rtc_cntl.clock = &ss->clock;
@@ -1300,6 +1327,7 @@ static void esp32s3_machine_init(MachineState *machine)
         qdev_connect_gpio_out_named(DEVICE(&ss->timg[1]), ESP32S3_WDT_IRQ_INTERRUPT, 0,
                                     qdev_get_gpio_in(intmatrix_dev, ETS_TG1_WDT_LEVEL_INTR_SOURCE));
     }
+    esp32s3_update_clock_consumers(ss);
 
     /* System timer */
     {

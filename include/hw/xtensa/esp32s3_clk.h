@@ -21,6 +21,7 @@
 #define ESP32S3_CLOCK_CLASS(klass) OBJECT_CLASS_CHECK(ESP32S3ClockClass, klass, TYPE_ESP32S3_CLOCK)
 
 #define ESP32S3_CLOCK_CORE1_RUNSTALL_GPIO "core1-runstall"
+#define ESP32S3_CLOCK_UPDATE_GPIO         "clock-update"
 
 #define ESP32S3_SYSTEM_CPU_INTR_COUNT   4
 
@@ -71,6 +72,7 @@ typedef struct ESP32S3ClockState {
     /* CPU references for clock-rate propagation only. */
     CPUState *cpu[2];
     qemu_irq core1_runstall;
+    qemu_irq clock_update;
     uint32_t core1_control0;
 } ESP32S3ClockState;
 

@@ -35,6 +35,7 @@
 #include "hw/nvram/esp32s3_efuse.h"
 #include "hw/ssi/esp32s3_gpspi.h"
 #include "hw/ssi/esp32s3_spi.h"
+#include "hw/timer/esp_timg.h"
 #include "hw/xtensa/esp32s3_clk.h"
 #include "hw/xtensa/esp32s3_clk_defs.h"
 
@@ -49,6 +50,7 @@
 #define I2C0_BASE               DR_REG_I2C_EXT_BASE
 #define EMAC_BASE               DR_REG_EMAC_BASE
 #define UART0_BASE              DR_REG_UART_BASE
+#define TIMG0_BASE              DR_REG_TIMERGROUP0_BASE
 #define SHA_BASE                DR_REG_SHA_BASE
 #define SYSTEM_BASE             DR_REG_SYSTEM_BASE
 #define INTMATRIX_BASE          DR_REG_INTERRUPT_BASE
@@ -1494,6 +1496,39 @@ static void test_system_core1_runstall_transition(void)
     qtest_quit(qts);
 }
 
+static void test_timg_apb_clock_fanout(void)
+{
+    QTestState *qts = qts_start();
+    uint32_t t0_config = 0;
+    uint32_t sysclk_conf;
+
+    qtest_writel(qts, TIMG0_BASE + A_TIMG_T0LOADLO, 0);
+    qtest_writel(qts, TIMG0_BASE + A_TIMG_T0LOADHI, 0);
+    qtest_writel(qts, TIMG0_BASE + A_TIMG_T0LOAD, 1);
+
+    t0_config = FIELD_DP32(t0_config, TIMG_T0CONFIG, DIVIDER, 1);
+    t0_config = FIELD_DP32(t0_config, TIMG_T0CONFIG, INCREASE, 1);
+    t0_config = FIELD_DP32(t0_config, TIMG_T0CONFIG, EN, 1);
+    qtest_writel(qts, TIMG0_BASE + A_TIMG_T0CONFIG, t0_config);
+
+    qtest_clock_step(qts, 1000);
+    qtest_writel(qts, TIMG0_BASE + A_TIMG_T0UPDATE,
+                 R_TIMG_T0UPDATE_UPDATE_MASK);
+    g_assert_cmpuint(qtest_readl(qts, TIMG0_BASE + A_TIMG_T0LO), ==, 80);
+
+    sysclk_conf = qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF);
+    sysclk_conf = FIELD_DP32(sysclk_conf, SYSTEM_SYSCLK_CONF, SOC_CLK_SEL,
+                             ESP32S3_CLK_SEL_XTAL);
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF, sysclk_conf);
+
+    qtest_clock_step(qts, 1000);
+    qtest_writel(qts, TIMG0_BASE + A_TIMG_T0UPDATE,
+                 R_TIMG_T0UPDATE_UPDATE_MASK);
+    g_assert_cmpuint(qtest_readl(qts, TIMG0_BASE + A_TIMG_T0LO), ==, 120);
+
+    qtest_quit(qts);
+}
+
 static void test_intmatrix_mapping_status_reserved(void)
 {
     QTestState *qts = qts_start();
@@ -2551,6 +2586,8 @@ int main(int argc, char **argv)
                    test_system_clock_register_contract);
     qtest_add_func("/esp32s3/system/core1-runstall",
                    test_system_core1_runstall_transition);
+    qtest_add_func("/esp32s3/timg/apb-clock-fanout",
+                   test_timg_apb_clock_fanout);
     qtest_add_func("/esp32s3/intmatrix/mapping-status-reserved",
                    test_intmatrix_mapping_status_reserved);
     qtest_add_func("/esp32s3/rtc/explicit-register-surface",

@@ -66,6 +66,32 @@ The second P0 slice removes the guest software-reset dependency on QEMU process-
 
 **Status:** complete; reset slice ready to commit.
 
+## Active Implementation Slice: P0 TIMG Clock Fanout
+
+The third P0 slice expands clock-rate fanout from CPU/UART-only behavior into timer-group consumers. TIMG APB-sourced counters and watchdogs now receive the SoC-derived APB frequency, and XTAL-sourced timer paths receive the modeled XTAL frequency.
+
+### File Map
+
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/plan.md` (track P0 clock fanout slice status)
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/progress.md` (session log)
+- Modify: `ESP32S3_EMULATION_GAPS.md` (document TIMG clock fanout and remaining clock limits)
+- Modify: `include/hw/timer/esp_timg.h` (add dynamic clock update API and state)
+- Modify: `hw/timer/esp_timg.c` (use dynamic APB/XTAL frequencies for TIMG counters and watchdogs)
+- Modify: `include/hw/xtensa/esp32s3_clk.h` (add SYSTEM clock-update output)
+- Modify: `hw/xtensa/esp32s3_clk.c` (emit clock-update when SYSTEM/RTC clock configuration changes)
+- Modify: `hw/xtensa/esp32s3.c` (fan out clock updates into both timer groups)
+- Modify: `tests/qtest/esp32s3-test.c` (prove TIMG APB counter rate follows SYSTEM clock selection)
+
+### P0 Clock Fanout Tasks
+
+- [x] Add a clock-update output from the SYSTEM clock block for direct SYSTEM writes and RTC-driven clock changes.
+- [x] Fan out derived APB and XTAL rates from the SoC clock model into both ESP32-S3 timer groups.
+- [x] Preserve enabled TIMG counter/watchdog elapsed ticks across a clock-rate change before applying the new frequency.
+- [x] Add a qtest proving a TIMG APB counter advances at 80 ticks/us under PLL/APB=80 MHz and 40 ticks/us after switching SOC clock to XTAL.
+- [x] Run the full ESP32-S3 qtest suite and cache-reject functional test before committing.
+
+**Status:** complete; TIMG clock fanout slice ready to commit.
+
 ## Evidence Summary
 
 - The active hardware target is `../tdeck-pro-rust/`, which is heavily `esp-rs` based rather than an ESP-IDF application. `Cargo.toml` enables `esp-hal` with `esp32s3`, `psram`, and `unstable`, `esp-storage`, `esp-hal-ota`, `esp-radio` with `wifi` and `ble`, `esp-rtos`, and `embassy-net`.

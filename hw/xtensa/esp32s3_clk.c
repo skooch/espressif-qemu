@@ -76,6 +76,12 @@ void esp32s3_clock_propagate_rates(ESP32S3ClockState *s)
     }
 }
 
+static void esp32s3_clock_emit_update(ESP32S3ClockState *s)
+{
+    esp32s3_clock_propagate_rates(s);
+    qemu_irq_pulse(s->clock_update);
+}
+
 void esp32s3_clock_apply_rtc_soc_clk(ESP32S3ClockState *s,
                                      uint32_t soc_clk_sel,
                                      uint32_t xtal_freq_hz)
@@ -90,7 +96,7 @@ void esp32s3_clock_apply_rtc_soc_clk(ESP32S3ClockState *s,
                            soc_clk_sel);
     s->sysclk = FIELD_DP32(s->sysclk, SYSTEM_SYSCLK_CONF, CLK_XTAL_FREQ,
                            xtal_mhz);
-    esp32s3_clock_propagate_rates(s);
+    esp32s3_clock_emit_update(s);
 }
 
 uint32_t esp32s3_clock_get_xtal_freq(ESP32S3ClockState *s)
@@ -127,14 +133,14 @@ static void esp32s3_clock_update_cpu_per_conf(ESP32S3ClockState *s,
                                               uint32_t value)
 {
     s->cpuperconf = value & SYSTEM_CPU_PER_CONF_SUPPORTED_MASK;
-    esp32s3_clock_propagate_rates(s);
+    esp32s3_clock_emit_update(s);
 }
 
 static void esp32s3_clock_update_sysclk_conf(ESP32S3ClockState *s,
                                              uint32_t value)
 {
     s->sysclk = value & SYSTEM_SYSCLK_CONF_SUPPORTED_MASK;
-    esp32s3_clock_propagate_rates(s);
+    esp32s3_clock_emit_update(s);
 }
 
 uint32_t esp32s3_clock_get_apb_freq(ESP32S3ClockState *s)
@@ -279,7 +285,7 @@ static void esp32s3_clock_reset_hold(Object *obj, ResetType type)
     s->clock_gate = R_SYSTEM_CLOCK_GATE_CLK_EN_MASK;
     s->core1_control0 = 0;
 
-    esp32s3_clock_propagate_rates(s);
+    esp32s3_clock_emit_update(s);
 
     /* Initialize the IRQs */
     s->levels = 0;
@@ -310,6 +316,8 @@ static void esp32s3_clock_init(Object *obj)
     }
     qdev_init_gpio_out_named(DEVICE(sbd), &s->core1_runstall,
                              ESP32S3_CLOCK_CORE1_RUNSTALL_GPIO, 1);
+    qdev_init_gpio_out_named(DEVICE(sbd), &s->clock_update,
+                             ESP32S3_CLOCK_UPDATE_GPIO, 1);
 }
 
 static void esp32s3_clock_class_init(ObjectClass *klass, void *data)

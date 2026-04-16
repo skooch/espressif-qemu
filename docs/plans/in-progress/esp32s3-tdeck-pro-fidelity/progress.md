@@ -10,3 +10,7 @@
 - 2026-04-16: Implemented local PROCPU, APPCPU, and digital reset dispatch from RTC_CNTL reset GPIO callbacks while preserving host/QMP full-chip reset through QEMU reset registration.
 - 2026-04-16: Updated reset qtest coverage to validate PROCPU, APPCPU, and digital reset effects without waiting for synthetic QMP `RESET` events; targeted reset qtest passes.
 - 2026-04-16: Verified reset slice with `git diff --check`, `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test`, full `esp32s3-test` qtest suite, and `test_xtensa_esp32s3_cache_reject.py`.
+- 2026-04-16: Started third P0 slice: expand clock-rate fanout from CPU/UART-only behavior into APB-sensitive timer-group paths.
+- 2026-04-16: Implemented SYSTEM clock-update output, SoC TIMG clock fanout, and dynamic APB/XTAL TIMG counter/watchdog rates.
+- 2026-04-16: Added targeted TIMG qtest proving APB counter timing follows SYSTEM SOC clock selection; targeted TIMG/RTC/UART clock qtests pass.
+- 2026-04-16: Verified TIMG clock fanout slice with `git diff --check`, `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test`, full `esp32s3-test` qtest suite, and `test_xtensa_esp32s3_cache_reject.py`.

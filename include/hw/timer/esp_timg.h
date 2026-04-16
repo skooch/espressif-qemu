@@ -155,6 +155,8 @@ typedef struct ESPTimgState {
     ESPT0State t1;
     ESPWdtState wdt;
     ESPRtcState rtc;
+    uint64_t apb_freq_hz;
+    uint64_t xtal_freq_hz;
 
     /* Property used to disable the watchdog from command line */
     bool wdt_disable;
@@ -166,6 +168,9 @@ typedef struct ESPTimgClass {
     /* Virtual attribute */
     size_t m_has_t1;
 } ESPTimgClass;
+
+void esp_timg_set_clocks(ESPTimgState *s, uint64_t apb_freq_hz,
+                         uint64_t xtal_freq_hz);
 
 
 REG32(TIMG_T0CONFIG, 0x0000)
