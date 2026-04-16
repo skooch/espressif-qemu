@@ -109,3 +109,10 @@
 - 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2 after the Phase 7 backend-gate documentation.
 - 2026-04-16: Verified `/opt/homebrew/bin/timeout 30s build/qemu-system-xtensa -monitor none -display none -serial none -M sim -cpu esp32s3 -nographic -semihosting -icount 6 -kernel build/tests/tcg/xtensa-softmmu-phase7/test_s32c1i_atomctl` exits 0 after the Phase 7 backend-gate documentation.
 - 2026-04-16: Verified `git diff --check` succeeds after the Phase 7 backend-gate documentation.
+- 2026-04-16: Started Phase 8. Added the final core-SoC fidelity status table to `ESP32S3_EMULATION_GAPS.md`, classifying each subsystem as register-accurate, SDK-contract accurate, board-path accurate, compatibility shim, or blocked for accuracy with explicit boundaries.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` passes 49/49 after the Phase 8 final documentation update.
+- 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2 after the Phase 8 final documentation update.
+- 2026-04-16: Verified `/opt/homebrew/bin/timeout 30s build/qemu-system-xtensa -monitor none -display none -serial none -M sim -cpu esp32s3 -nographic -semihosting -icount 6 -kernel build/tests/tcg/xtensa-softmmu-phase7/test_s32c1i_atomctl` exits 0 after the Phase 8 final documentation update.
+- 2026-04-16: Verified `git diff --check` succeeds after the Phase 8 final documentation update.
+- 2026-04-16: Marked Phase 8 complete after all required verification passed and prepared the plan directory for movement from `docs/plans/in-progress/esp32s3-core-soc-fidelity/` to `docs/plans/implemented/esp32s3-core-soc-fidelity/`.
+- 2026-04-16: Moved the completed plan directory to `docs/plans/implemented/esp32s3-core-soc-fidelity/`.

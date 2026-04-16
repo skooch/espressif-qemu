@@ -4,7 +4,7 @@
 Turn the remaining ESP32-S3 core-SoC quality recommendations into information-gated implementation tracks that improve QEMU accuracy without claiming fidelity beyond the available public and local reference material.
 
 ## Current Phase
-Phase 8
+Complete
 
 ## Scope
 This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shims, RTC/reset/sleep, cache/MMU, clocking, interrupt matrix, eFuse, PMS/RNG, Xtensa backend confidence, and documentation. It does not plan unrelated peripheral fidelity.
@@ -25,8 +25,8 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 
 ## File Map
 - Modify: `ESP32S3_EMULATION_GAPS.md` (fidelity limits, evidence matrix, verification floor, and updated status)
-- Modify: `docs/plans/in-progress/esp32s3-core-soc-fidelity/plan.md` (tracked progress)
-- Create: `docs/plans/in-progress/esp32s3-core-soc-fidelity/progress.md` (session log)
+- Modify: `docs/plans/implemented/esp32s3-core-soc-fidelity/plan.md` (tracked progress)
+- Create: `docs/plans/implemented/esp32s3-core-soc-fidelity/progress.md` (session log)
 - Modify: `hw/xtensa/esp32s3.c` (generic MMIO, APB_CTRL, ANA mapping, reset glue, board wiring)
 - Modify: `hw/ssi/esp32s3_spi.c` (explicit SPI0/SPI_MEM register-surface handling for boot-critical active offsets)
 - Modify: `include/hw/ssi/esp32s3_spi.h` (SPI_MEM register declarations and state for active SPI0 offsets)
@@ -56,7 +56,7 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 - Modify: `tests/tcg/xtensa/test_s32c1i_atomctl.S` (Xtensa atomctl coverage if integration changes are needed)
 - Modify: `tests/tcg/xtensa/Makefile.softmmu-target` (TCG test registration if missing from build)
 - Modify: `CLAUDE.md` (document new required verification or command failures if discovered)
-- Create: `docs/plans/in-progress/esp32s3-core-soc-fidelity/findings.md` (trace classification and information-gating findings)
+- Create: `docs/plans/implemented/esp32s3-core-soc-fidelity/findings.md` (trace classification and information-gating findings)
 
 ## Phases
 
@@ -132,12 +132,12 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 - **Note:** The local build tree currently does not expose a Ninja target for Xtensa TCG tests and this machine still lacks `gmake`, so Phase 7 used the repo-documented local fallback compile/run path. Registration in the normal TCG makefile is confirmed by source inspection, but full local TCG harness execution remains environment-gated until GNU make or an equivalent configured TCG runner is available.
 
 ### Phase 8: Documentation, Verification, And Plan Exit
-- [ ] Update `ESP32S3_EMULATION_GAPS.md` so each subsystem has a final status: `register-accurate`, `SDK-contract accurate`, `board-path accurate`, `compatibility shim`, or `blocked for accuracy`.
-- [ ] Run `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` and record the result in the implementation progress for the active phase.
-- [ ] Run `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` and record the result in the implementation progress for the active phase.
-- [ ] Run the Xtensa TCG atomctl regression using the Phase 7-confirmed registration or documented local fallback path, and record the exact command and result in the implementation progress.
-- [ ] Move this plan from `docs/plans/in-progress/esp32s3-core-soc-fidelity/plan.md` to `docs/plans/implemented/esp32s3-core-soc-fidelity/plan.md` only after all required verification steps have passed or documented blockers have been accepted.
-- **Status:** pending
+- [x] Update `ESP32S3_EMULATION_GAPS.md` so each subsystem has a final status: `register-accurate`, `SDK-contract accurate`, `board-path accurate`, `compatibility shim`, or `blocked for accuracy`.
+- [x] Run `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` and record the result in the implementation progress for the active phase.
+- [x] Run `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` and record the result in the implementation progress for the active phase.
+- [x] Run the Xtensa TCG atomctl regression using the Phase 7-confirmed registration or documented local fallback path, and record the exact command and result in the implementation progress.
+- [x] Move this plan from `docs/plans/in-progress/esp32s3-core-soc-fidelity/plan.md` to `docs/plans/implemented/esp32s3-core-soc-fidelity/plan.md` only after all required verification steps have passed or documented blockers have been accepted.
+- **Status:** complete
 
 ## Decisions
 | Decision | Rationale |
@@ -172,3 +172,4 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 | Initial Phase 6 eFuse qtest expected programmed block reads to update immediately after a program command. | The model writes successful programs to the persistent mirror and ESP-IDF performs a read command after programming to refresh read registers. | Updated the qtest helper to run an eFuse read command after successful programming before asserting guest-visible read-register contents. |
 | Phase 6 RNG qtest crashed QEMU with signal 11 on a write to the read-only RNG region. | The RNG model had no write handler, so the qtest exposed an unsafe guest-write path instead of deterministic unsupported behavior. | Added an explicit no-op RNG write handler and kept qtest coverage proving writes do not crash and unsupported offsets remain zero. |
 | Phase 7 plan referenced non-existent `tests/tcg/xtensa/Makefile.target`. | Tried to inspect the named file while confirming atomctl registration. | Corrected the plan to reference `tests/tcg/xtensa/Makefile.softmmu-target`, which wildcard-registers `test_s32c1i_atomctl.S`; no makefile edit was required. |
+| Final Phase 8 commit staging failed because `docs/plans/in-progress/esp32s3-core-soc-fidelity` no longer existed after `git mv`. | Included both the new implemented path and the old moved path in a targeted `git add` command. | Staged the final documentation and move with `git add -A` over `ESP32S3_EMULATION_GAPS.md` and `docs/plans/` instead of naming the removed directory directly. |

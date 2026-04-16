@@ -27,7 +27,7 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 
 ## Core SoC Fidelity Guardrails (2026-04-15)
 
-The active core-SoC fidelity plan is tracked at `docs/plans/in-progress/esp32s3-core-soc-fidelity/plan.md`. That plan is information-gated: every implementation task must declare whether it targets register accuracy, SDK-contract accuracy, board-path accuracy, a compatibility shim, or is blocked for accuracy.
+The completed core-SoC fidelity plan is tracked at `docs/plans/implemented/esp32s3-core-soc-fidelity/plan.md`. That plan was information-gated: every implementation task declared whether it targeted register accuracy, SDK-contract accuracy, board-path accuracy, a compatibility shim, or was blocked for accuracy.
 
 Green focused tests are required but not sufficient evidence of silicon fidelity. The focused `esp32s3` qtest suite and board-level cache reject functional test prove the modeled contracts covered by those tests. They do not prove full ESP32-S3 hardware accuracy for analog PLL behavior, complete power-domain sequencing, cache cycle timing, physical RNG behavior, or undocumented Xtensa/TIE details.
 
@@ -61,12 +61,28 @@ TRM-dependent and ISA-manual-dependent work is source-gated on locating the exac
 
 ### Required Verification Floor
 
-Every implementation phase in `docs/plans/in-progress/esp32s3-core-soc-fidelity/plan.md` must keep the following checks passing unless the phase explicitly documents a concrete blocker:
+Every future implementation phase that changes this core-SoC surface must keep the following checks passing unless the phase explicitly documents a concrete blocker:
 
 - `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test`
 - `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py`
 
 The Xtensa atomctl TCG regression is registered by `tests/tcg/xtensa/Makefile.softmmu-target` through the normal Xtensa softmmu wildcard test list. On this machine, the local build tree does not expose a Ninja TCG test target and GNU make is unavailable, so backend-related phases must run the atomctl regression through the documented local fallback path until a full TCG harness runner is available.
+
+### Final Core-SoC Fidelity Status
+
+| Subsystem | Final status | Boundary |
+| --- | --- | --- |
+| Generic MMIO burn-down | Register-accurate for replaced SPI0/SPI_MEM and ASSIST_DEBUG active offsets; compatibility shim for remaining out-of-scope catch-all windows | Remaining APB_SARADC, SENS, LEDC, and radio/internal catch-all hits are deferred to their owning analog/peripheral/radio phases |
+| APB_CTRL date/revision | Register-accurate for ESP32-S3 date; compatibility shim for QEMU-origin and legacy ECO marker words | Broader APB_CTRL/SYSCON behavior remains source-gated to future owning phases |
+| ANA / PLL ready | Compatibility shim | Analog PLL calibration, lock timing, jitter, and failure modes remain blocked for accuracy |
+| RTC, reset, sleep, wake | SDK-contract accurate and board-path accurate for modeled light-sleep wake/reject and reset-domain flows | Full power-domain sequencing, retention timing, brownout interactions, ULP/touch/USB wake, and analog reset behavior remain blocked for accuracy |
+| Cache, MMU, flash, PSRAM | SDK-contract accurate for MMU entries, flash/PSRAM mappings, invalid-entry faults, per-core rejects, and cache-maintenance busy/done/cancel behavior | Cache cycle timing, replacement policy, contention, pipeline stalls, and flash-controller micro-timing remain blocked for accuracy |
+| Clock tree | SDK-contract accurate for XTAL, RC_FAST, PLL-selected CPU rates, APB derivation, RTC-driven source updates, and modeled consumers | Analog PLL dynamics, oscillator startup, jitter, DFS/source-switch latency, and broader timer/peripheral fanout remain blocked for accuracy |
+| Interrupt matrix | Register-accurate for source mapping, per-core status windows, output routing, remap behavior, and documented reserved-source suppression policy | The reserved-source suppression itself is a QEMU compatibility policy, not proven hardware behavior |
+| eFuse | Register-accurate for the synthetic ESP32-S3 eFuse image, programming flow, reset state, and protection mechanics covered by ESP-IDF tables | Factory personalization, security provisioning, coding-error repair behavior, and physical burn timing remain synthetic or blocked |
+| PMS | Register-surface accurate for source-backed SENSITIVE/PMS offsets; compatibility shim for unsupported offsets | Lock-bit enforcement and real permission denial side effects remain blocked for accuracy |
+| RNG | Compatibility shim for the documented `WDEV_RND_REG` data path using host entropy | Physical entropy source behavior, conditioning, startup timing, and statistical hardware properties remain blocked for accuracy |
+| Xtensa backend | Base backend gate covered for the current guest path and `S32C1I`/`ATOMCTL` local-memory distinction | Broad ESP32-S3 configured-core, TIE, and SIMD completeness remains blocked unless exact extension references or reproduced opcode failures are supplied |
 
 ### Phase 1 Generic MMIO Status
 
