@@ -32,6 +32,7 @@
 #include "hw/misc/esp32s3_rng.h"
 #include "hw/misc/esp32s3_reg.h"
 #include "hw/misc/esp_sha.h"
+#include "hw/nvram/esp32s3_efuse.h"
 #include "hw/ssi/esp32s3_gpspi.h"
 #include "hw/ssi/esp32s3_spi.h"
 #include "hw/xtensa/esp32s3_clk.h"
@@ -53,6 +54,7 @@
 #define INTMATRIX_BASE          DR_REG_INTERRUPT_BASE
 #define APB_CTRL_BASE           DR_REG_APB_CTRL_BASE
 #define RTC_CNTL_BASE           DR_REG_RTCCNTL_BASE
+#define EFUSE_BASE              DR_REG_EFUSE_BASE
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
 #define ASSIST_DEBUG_BASE       DR_REG_ASSIST_DEBUG_BASE
 #define GENERIC_MMIO_TEST_REG   (DR_REG_WCL_BASE + 0xf00)
@@ -90,6 +92,12 @@
      R_SYSTEM_SYSCLK_CONF_CLK_XTAL_FREQ_MASK | \
      R_SYSTEM_SYSCLK_CONF_SOC_CLK_SEL_MASK | \
      R_SYSTEM_SYSCLK_CONF_PRE_DIV_CNT_MASK)
+#define EFUSE_OP_DELAY_NS       100000
+#define EFUSE_READ_DONE         BIT(0)
+#define EFUSE_PGM_DONE          BIT(1)
+#define EFUSE_WRITE_OPCODE      0x5a5a
+#define EFUSE_READ_OPCODE       0x5aa5
+#define PMS_DATE_VALUE          0x02101280
 
 #define OPENETH_MODER_DEFAULT          0xa000
 #define OPENETH_MODER_LOOPBCK          BIT(7)
@@ -2095,11 +2103,19 @@ static void test_sha_dma_start_and_continue_irq_paths(void)
 static void test_rng_modeled_surface(void)
 {
     QTestState *qts = qts_start();
-    uint32_t a = qtest_readl(qts, ESP32S3_RNG_BASE);
-    uint32_t b = qtest_readl(qts, ESP32S3_RNG_BASE);
+    uint32_t first = qtest_readl(qts, ESP32S3_RNG_BASE);
+    bool changed = false;
 
-    g_assert_cmpuint(a, !=, 0);
-    g_assert_cmpuint(b, !=, 0);
+    for (int i = 0; i < 8; i++) {
+        changed |= qtest_readl(qts, ESP32S3_RNG_BASE) != first;
+    }
+
+    g_assert_true(changed);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_RNG_BASE + 4), ==, 0);
+    qtest_writel(qts, ESP32S3_RNG_BASE, 0xffffffff);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_RNG_BASE + 4), ==, 0);
+    qtest_qmp_assert_success(qts, "{ 'execute': 'system_reset' }");
+    qtest_qmp_eventwait(qts, "RESET");
     g_assert_cmphex(qtest_readl(qts, ESP32S3_RNG_BASE + 4), ==, 0);
 
     qtest_quit(qts);
@@ -2110,11 +2126,172 @@ static void test_pms_modeled_surface(void)
     QTestState *qts = qts_start();
     const uint32_t test_data = 0x12345678;
 
-    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x44), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x04), ==, 0xff);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x0c), ==, 1);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x14), ==, 0x7ff);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x2c), ==, 0xf);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x34), ==, 0x3);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x44), ==, 0xfff);
     qtest_writel(qts, PMS_BASE + 0x44, test_data);
-    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x44), ==, test_data);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x44), ==,
+                    test_data & 0xfff);
     g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x200), ==, 0);
-    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0xffc), ==, 0x20260400);
+    qtest_writel(qts, PMS_BASE + 0x200, test_data);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x200), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x308), ==, 1);
+    qtest_writel(qts, PMS_BASE + 0x308, 0xffffffff);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x308), ==, 1);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0xffc), ==, PMS_DATE_VALUE);
+    qtest_writel(qts, PMS_BASE + 0xffc, 0xffffffff);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0xffc), ==, 0x0fffffff);
+
+    qtest_quit(qts);
+}
+
+static hwaddr efuse_block_word_addr(unsigned block, unsigned word)
+{
+    unsigned word_offset;
+    unsigned max_words;
+
+    g_assert_cmpuint(block, <=, 10);
+    max_words = block < 2 ? ESP_EFUSE_BLOCK0_WORDS : 8;
+    g_assert_cmpuint(word, <, max_words);
+
+    if (block == 0) {
+        word_offset = 0;
+    } else if (block == 1) {
+        word_offset = ESP_EFUSE_BLOCK0_WORDS;
+    } else {
+        word_offset = ESP_EFUSE_BLOCK0_WORDS + ESP_EFUSE_BLOCK1_WORDS +
+                      (block - 2) * 8;
+    }
+
+    return EFUSE_BASE + A_EFUSE_RD_WR_DIS_REG + (word_offset + word) * 4;
+}
+
+static void efuse_clear_ints(QTestState *qts)
+{
+    qtest_writel(qts, EFUSE_BASE + A_EFUSE_INT_CLR,
+                 EFUSE_READ_DONE | EFUSE_PGM_DONE);
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_INT_RAW), ==, 0);
+}
+
+static void efuse_reload_blocks(QTestState *qts)
+{
+    qtest_writel(qts, EFUSE_BASE + A_EFUSE_CONF, EFUSE_READ_OPCODE);
+    qtest_writel(qts, EFUSE_BASE + A_EFUSE_CMD, BIT(0));
+    qtest_clock_step(qts, EFUSE_OP_DELAY_NS);
+
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_CMD), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_INT_RAW) &
+                    EFUSE_READ_DONE, ==, EFUSE_READ_DONE);
+    efuse_clear_ints(qts);
+}
+
+static void efuse_program_block(QTestState *qts, unsigned block,
+                                const uint32_t words[ESP_EFUSE_PGM_DATA_COUNT],
+                                bool expect_done)
+{
+    for (int i = 0; i < ESP_EFUSE_PGM_DATA_COUNT; i++) {
+        qtest_writel(qts, EFUSE_BASE + A_EFUSE_PGM_DATA0_REG + i * 4,
+                     words[i]);
+    }
+
+    qtest_writel(qts, EFUSE_BASE + A_EFUSE_CONF, EFUSE_WRITE_OPCODE);
+    qtest_writel(qts, EFUSE_BASE + A_EFUSE_CMD, (block << 2) | BIT(1));
+    qtest_clock_step(qts, EFUSE_OP_DELAY_NS);
+
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_CMD), ==, 0);
+    if (expect_done) {
+        g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_INT_RAW) &
+                        EFUSE_PGM_DONE, ==, EFUSE_PGM_DONE);
+        efuse_clear_ints(qts);
+        efuse_reload_blocks(qts);
+    } else {
+        g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_INT_RAW) &
+                        EFUSE_PGM_DONE, ==, 0);
+    }
+}
+
+static void test_efuse_explicit_contract(void)
+{
+    QTestState *qts = qts_start();
+    const uint32_t block3_first[ESP_EFUSE_PGM_DATA_COUNT] = {
+        0x0000ffff, 0x13572468, 0, 0, 0, 0, 0, 0,
+    };
+    const uint32_t block3_second[ESP_EFUSE_PGM_DATA_COUNT] = {
+        0x00ff0000, 0, 0, 0, 0, 0, 0, 0,
+    };
+    const uint32_t block3_protected[ESP_EFUSE_PGM_DATA_COUNT] = {
+        0xff000000, 0xffffffff, 0, 0, 0, 0, 0, 0,
+    };
+    const uint32_t protect_usr_data[ESP_EFUSE_PGM_DATA_COUNT] = {
+        BIT(22), 0, 0, 0, 0, 0, 0, 0,
+    };
+    const uint32_t protect_key0_read[ESP_EFUSE_PGM_DATA_COUNT] = {
+        0, BIT(0), 0, 0, 0, 0, 0, 0,
+    };
+    const uint32_t block4_key[ESP_EFUSE_PGM_DATA_COUNT] = {
+        0x11112222, 0x33334444, 0, 0, 0, 0, 0, 0,
+    };
+
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_CLK), ==,
+                    ESP32S3_EFUSE_CLK_RESET);
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_DAC_CONF), ==,
+                    ESP32S3_EFUSE_DAC_CONF_RESET);
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_RD_TIM_CONF), ==,
+                    ESP32S3_EFUSE_RD_TIM_RESET);
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_WR_TIM_CONF1), ==,
+                    ESP32S3_EFUSE_WR_TIM1_RESET);
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_WR_TIM_CONF2), ==,
+                    ESP32S3_EFUSE_WR_TIM2_RESET);
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_DATE), ==,
+                    ESP32S3_EFUSE_DATE_RESET);
+
+    qtest_writel(qts, EFUSE_BASE + A_EFUSE_CLK, 0xffffffff);
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_CLK), ==,
+                    ESP32S3_EFUSE_CLK_WR_MASK);
+    qtest_writel(qts, EFUSE_BASE + A_EFUSE_DATE, 0xffffffff);
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_DATE), ==,
+                    ESP32S3_EFUSE_DATE_WR_MASK);
+
+    efuse_program_block(qts, 3, block3_first, true);
+    g_assert_cmphex(qtest_readl(qts, efuse_block_word_addr(3, 0)), ==,
+                    0x0000ffff);
+    g_assert_cmphex(qtest_readl(qts, efuse_block_word_addr(3, 1)), ==,
+                    0x13572468);
+
+    efuse_program_block(qts, 3, block3_second, true);
+    g_assert_cmphex(qtest_readl(qts, efuse_block_word_addr(3, 0)), ==,
+                    0x00ffffff);
+
+    efuse_program_block(qts, 0, protect_usr_data, true);
+    g_assert_cmphex(qtest_readl(qts, efuse_block_word_addr(0, 0)) & BIT(22),
+                    ==, BIT(22));
+    efuse_program_block(qts, 3, block3_protected, false);
+    g_assert_cmphex(qtest_readl(qts, efuse_block_word_addr(3, 0)), ==,
+                    0x00ffffff);
+    g_assert_cmphex(qtest_readl(qts, efuse_block_word_addr(3, 1)), ==,
+                    0x13572468);
+
+    efuse_program_block(qts, 4, block4_key, true);
+    g_assert_cmphex(qtest_readl(qts, efuse_block_word_addr(4, 0)), ==,
+                    0x11112222);
+    efuse_program_block(qts, 0, protect_key0_read, true);
+    efuse_reload_blocks(qts);
+    g_assert_cmphex(qtest_readl(qts, efuse_block_word_addr(4, 0)), ==, 0);
+
+    qtest_qmp_assert_success(qts, "{ 'execute': 'system_reset' }");
+    qtest_qmp_eventwait(qts, "RESET");
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_CLK), ==,
+                    ESP32S3_EFUSE_CLK_RESET);
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_DATE), ==,
+                    ESP32S3_EFUSE_DATE_RESET);
+    g_assert_cmphex(qtest_readl(qts, EFUSE_BASE + A_EFUSE_PGM_DATA0_REG), ==,
+                    0);
+    g_assert_cmphex(qtest_readl(qts, efuse_block_word_addr(3, 0)), ==,
+                    0x00ffffff);
+    g_assert_cmphex(qtest_readl(qts, efuse_block_word_addr(4, 0)), ==, 0);
 
     qtest_quit(qts);
 }
@@ -2351,6 +2528,8 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/emac/link-loopback", test_emac_link_and_loopback_surface);
     qtest_add_func("/esp32s3/pms/modeled-surface", test_pms_modeled_surface);
     qtest_add_func("/esp32s3/rng/modeled-surface", test_rng_modeled_surface);
+    qtest_add_func("/esp32s3/efuse/explicit-contract",
+                   test_efuse_explicit_contract);
 
     return g_test_run();
 }

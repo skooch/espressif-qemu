@@ -83,3 +83,20 @@
 - 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2 after the Phase 5 clock/interrupt changes.
 - 2026-04-16: Verified a 15-second copied-flash firmware smoke exits only by timeout after the Phase 5 clock/interrupt changes.
 - 2026-04-16: Verified `git diff --check` succeeds after the Phase 5 clock/interrupt changes.
+- 2026-04-16: Committed the Phase 5 clock/interrupt slice as `d74f23ce40 esp32s3: define clock and interrupt contracts`.
+- 2026-04-16: Started Phase 6. Confirmed ESP-IDF `esp_efuse_table.csv`, `esp_efuse_table.c`, `efuse_reg.h`, and `efuse_ll.h` define the ESP32-S3 eFuse field map, command opcodes, reset values, timing fields, and post-program read flow.
+- 2026-04-16: Updated the recent-ESP eFuse model to reset transient program/check registers and command/interrupt state deterministically, expose `EFUSE_DATE`, apply write masks for timing/config/date registers, and clear raw interrupts by written bits.
+- 2026-04-16: Added ESP32-S3 eFuse reset defaults and S3-specific key block bounds so block 10 remains `SYS_DATA_PART2` instead of being exposed as a seventh key block.
+- 2026-04-16: Added `/xtensa/esp32s3/efuse/explicit-contract` qtest coverage for reset defaults, write masks, synthetic programming, one-way OR semantics, write-protect, read-protect, read-command reload, reset retention, and transient program-register reset.
+- 2026-04-16: Replaced PMS raw echo behavior with an explicit register table for source-backed `SENSITIVE` offsets, including reset values and write masks from ESP-IDF `sensitive_reg.h`; unsupported PMS offsets are now RAZ/WI.
+- 2026-04-16: Updated the RNG model with an explicit no-op write handler for the read-only `WDEV_RND_REG` compatibility path, preventing guest writes from crashing QEMU.
+- 2026-04-16: Updated `/xtensa/esp32s3/pms/modeled-surface` and `/xtensa/esp32s3/rng/modeled-surface` qtests for PMS reset/mask/unsupported/date behavior and RNG non-stability, unsupported offset, ignored write, and reset behavior.
+- 2026-04-16: Documented the Phase 6 eFuse/PMS/RNG contract in `ESP32S3_EMULATION_GAPS.md`, including synthetic eFuse personalization, PMS enforcement blockers, and host-backed RNG entropy limits.
+- 2026-04-16: Verified `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` succeeds after the Phase 6 eFuse/PMS/RNG changes.
+- 2026-04-16: Initial Phase 6 targeted qtest found that programmed eFuse contents require an explicit read-command reload before read-register assertions; updated the helper to match the ESP-IDF post-program flow.
+- 2026-04-16: Initial Phase 6 RNG targeted qtest exposed a QEMU signal 11 crash on guest writes to the read-only RNG region; fixed with an explicit no-op write handler.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test -p /xtensa/esp32s3/efuse -p /xtensa/esp32s3/pms -p /xtensa/esp32s3/rng` passes 3/3 after the Phase 6 changes.
+- 2026-04-16: Verified `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` passes 49/49 after the Phase 6 eFuse/PMS/RNG changes.
+- 2026-04-16: Verified `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` passes 2/2 after the Phase 6 eFuse/PMS/RNG changes.
+- 2026-04-16: Verified a 15-second copied-flash firmware smoke exits only by timeout after the Phase 6 eFuse/PMS/RNG changes.
+- 2026-04-16: Verified `git diff --check` succeeds after the Phase 6 eFuse/PMS/RNG changes.

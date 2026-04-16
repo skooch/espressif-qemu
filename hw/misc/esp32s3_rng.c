@@ -30,8 +30,15 @@ static uint64_t esp32s3_rng_read(void *opaque, hwaddr addr, unsigned int size)
     return s->last_value;
 }
 
+static void esp32s3_rng_write(void *opaque, hwaddr addr,
+                              uint64_t value, unsigned int size)
+{
+    /* WDEV_RND is a read-only data path in the supported QEMU contract. */
+}
+
 static const MemoryRegionOps esp32s3_rng_ops = {
     .read =  esp32s3_rng_read,
+    .write = esp32s3_rng_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 

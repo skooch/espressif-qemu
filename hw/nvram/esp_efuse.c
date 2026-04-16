@@ -39,6 +39,14 @@
 #define EFUSE_WRITE_OPCODE  0x5A5A
 #define EFUSE_READ_OPCODE   0x5AA5
 
+#define EFUSE_CLK_WR_MASK        0x00010007
+#define EFUSE_CONF_WR_MASK       0x0000ffff
+#define EFUSE_DAC_CONF_WR_MASK   0x0003ffff
+#define EFUSE_RD_TIM_WR_MASK     0xff000000
+#define EFUSE_WR_TIM1_WR_MASK    0x00ffff00
+#define EFUSE_WR_TIM2_WR_MASK    0x0000ffff
+#define EFUSE_DATE_WR_MASK       0x0fffffff
+
 
 /**
  * Define a few helpers for the efuse blocks
@@ -369,6 +377,8 @@ static uint64_t esp_efuse_read(void *opaque, hwaddr addr, unsigned int size)
             return s->efuses.wr_tim_conf1;
         case A_EFUSE_WR_TIM_CONF2:
             return s->efuses.wr_tim_conf2;
+        case A_EFUSE_DATE:
+            return s->efuses.date;
         case A_EFUSE_STATUS:
             return s->efuses.status;
         /* The other registers are read-only */
@@ -442,7 +452,7 @@ static void esp_efuse_write(void *opaque, hwaddr addr,
             s->efuses.int_raw &= ((~value) & 0b11);
             break;
         case A_EFUSE_INT_RAW:
-            s->efuses.int_raw = 0;
+            s->efuses.int_raw &= ((~value) & 0b11);
             break;
         case A_EFUSE_INT_ENA:
             s->efuses.int_ena = value & 0b11;
@@ -471,22 +481,25 @@ static void esp_efuse_write(void *opaque, hwaddr addr,
             return;
 
         case A_EFUSE_CLK:
-            s->efuses.clk = value;
+            s->efuses.clk = value & EFUSE_CLK_WR_MASK;
             return;
         case A_EFUSE_CONF:
-            s->efuses.conf = value;
+            s->efuses.conf = value & EFUSE_CONF_WR_MASK;
             return;
         case A_EFUSE_DAC_CONF:
-            s->efuses.dac_conf = value;
+            s->efuses.dac_conf = value & EFUSE_DAC_CONF_WR_MASK;
             return;
         case A_EFUSE_RD_TIM_CONF:
-            s->efuses.rd_tim_conf = value;
+            s->efuses.rd_tim_conf = value & EFUSE_RD_TIM_WR_MASK;
             return;
         case A_EFUSE_WR_TIM_CONF1:
-            s->efuses.wr_tim_conf1 = value;
+            s->efuses.wr_tim_conf1 = value & EFUSE_WR_TIM1_WR_MASK;
             return;
         case A_EFUSE_WR_TIM_CONF2:
-            s->efuses.wr_tim_conf2 = value;
+            s->efuses.wr_tim_conf2 = value & EFUSE_WR_TIM2_WR_MASK;
+            return;
+        case A_EFUSE_DATE:
+            s->efuses.date = value & EFUSE_DATE_WR_MASK;
             return;
         /* The other registers are read-only */
         default:
@@ -561,6 +574,18 @@ static bool virt_efuse_get_key(ESPEfuseState *s, EfuseBlocksIdx efuse_block_num,
     return true;
 }
 
+static void esp_efuse_apply_common_reset_defaults(ESPEfuseState *s)
+{
+    memset(s->efuses.pgm_data, 0, sizeof(s->efuses.pgm_data));
+    memset(s->efuses.pgm_check, 0, sizeof(s->efuses.pgm_check));
+    s->efuses.cmd = 0;
+    s->efuses.int_raw = 0;
+    s->efuses.int_st = 0;
+    s->efuses.int_ena = 0;
+    s->op_cmd_mirror = 0;
+    s->efuses.status = FIELD_DP32(0, EFUSE_STATUS, STATE, 1);
+}
+
 
 static const MemoryRegionOps esp_efuse_ops = {
     .read =  esp_efuse_read,
@@ -572,10 +597,16 @@ static const MemoryRegionOps esp_efuse_ops = {
 static void esp_efuse_reset_hold(Object *obj, ResetType type)
 {
     ESPEfuseState *s = ESP_EFUSE(obj);
+    ESPEfuseClass *efuse_class = ESP_EFUSE_GET_CLASS(obj);
+
     timer_del(&s->op_timer);
     qemu_irq_lower(s->irq);
     esp_efuse_reload_from_blk(s);
     esp_hide_protected_block(s);
+    esp_efuse_apply_common_reset_defaults(s);
+    if (efuse_class->apply_reset_defaults) {
+        efuse_class->apply_reset_defaults(s);
+    }
 }
 
 static void esp_efuse_realize(DeviceState *dev, Error **errp)

@@ -56,7 +56,7 @@ TRM-dependent and ISA-manual-dependent work is source-gated on locating the exac
 | Interrupt matrix | ESP-IDF interrupt register headers, Xtensa interrupt support, qtests | `components/soc/esp32s3/register/soc/interrupt_core0_reg.h`, `interrupt_core1_reg.h`, `components/xtensa` | Register-accurate for mapping, status windows, and output routing | Reserved-source suppression must be classified as source-backed hardware behavior or QEMU compatibility policy |
 | eFuse | ESP-IDF eFuse tables, fields, utility code, SoC eFuse registers | `components/efuse/esp32s3`, `components/soc/esp32s3/register/soc/efuse_reg.h`, `efuse_struct.h` | Register-accurate for synthetic contents and protection mechanics | Factory personalization and security-sensitive provisioning are synthetic unless supplied through an explicit eFuse image |
 | PMS | ESP-IDF sensitive/world-controller register headers, SDK usage, qtests | `components/soc/esp32s3/register/soc/sensitive_reg.h`, `world_controller_reg.h` | Compatibility shim or register-accurate for source-backed offsets | Full internal permission/security policy is blocked unless source-backed or guest-observed |
-| RNG | ESP-IDF bootloader random code, SoC register headers, SDK usage | `components/bootloader_support/src/bootloader_random_esp32s3.c`, RNG-adjacent SoC headers when identified | Compatibility shim using host entropy for the documented data path | Physical entropy source behavior, conditioning, and statistical hardware properties are blocked for accuracy |
+| RNG | ESP-IDF SoC register headers, SDK usage, qtests | `components/soc/esp32s3/include/soc/wdev_reg.h`, `soc_caps.h` | Compatibility shim using host entropy for the documented data path | Physical entropy source behavior, conditioning, and statistical hardware properties are blocked for accuracy |
 | Xtensa backend | ESP-IDF Xtensa support, QEMU Xtensa backend, current guest binaries, TCG tests | `components/xtensa`, `components/xtensa/esp32s3`, `target/xtensa`, `tests/tcg/xtensa` | Base ISA or guest-failure-driven accuracy | Broad ESP32-S3 TIE/SIMD completeness is blocked unless exact configured-core/TIE references are supplied |
 
 ### Required Verification Floor
@@ -159,6 +159,30 @@ The interrupt matrix contract is also narrow but explicit:
 
 This phase does not model analog PLL lock, oscillator startup, jitter, DFS/source-switch latency, divider settling, peripheral clock-domain crossing, timer-group APB-rate coupling, systimer source switching, or undocumented divider interactions. Those are blocked for accuracy without stronger timing references or hardware probes.
 
+### Phase 6 eFuse, PMS, And RNG Status
+
+The eFuse contract is now explicit for the synthetic S3 eFuse image used by QEMU:
+
+- ESP32-S3 reset defaults and write masks are source-backed from ESP-IDF `efuse_reg.h` for `EFUSE_CLK`, `EFUSE_CONF`, `EFUSE_DAC_CONF`, `EFUSE_RD_TIM_CONF`, `EFUSE_WR_TIM_CONF1`, `EFUSE_WR_TIM_CONF2`, and `EFUSE_DATE`.
+- The generic recent-ESP eFuse model now resets transient program/check registers, command state, interrupt state, and ready status deterministically on reset.
+- Programming preserves one-way eFuse semantics by OR-ing new bits into the persistent mirror. Guest-visible read registers update after an eFuse read command, matching the ESP-IDF post-program flow.
+- Write protection is tested for user-data block programming via the ESP32-S3 `WR_DIS.BLOCK_USR_DATA` bit. Read protection is tested for key block visibility via the `RD_DIS.BLOCK_KEY0` bit.
+- The ESP32-S3 subclass now bounds key access to hardware key blocks 0 through 5. Block 10 remains `SYS_DATA_PART2`, not a seventh key block.
+
+The PMS contract is a register-surface contract only:
+
+- Source-backed SENSITIVE/PMS offsets used by the current model have reset values and write masks from ESP-IDF `sensitive_reg.h`, including cache access, MMU access, DMA APB permission pairs through the current immediate surface, `SENSITIVE_CLOCK_GATE`, `SENSITIVE_RTC_PMS`, and `SENSITIVE_DATE`.
+- Unsupported PMS offsets are read-as-zero/write-ignore. Lock-bit enforcement and real memory-permission denial side effects are not modeled in this phase.
+- This is not a security-policy model. It prevents broad raw echo behavior and pins the SDK-visible register surface, but it does not enforce the full internal permission matrix.
+
+The RNG contract remains intentionally compatibility-oriented:
+
+- Only `WDEV_RND_REG` at `0x6003507c` is modeled as the 32-bit data path from ESP-IDF `wdev_reg.h`.
+- Reads return host-backed random values. Writes are ignored so guest mistakes do not crash QEMU.
+- Unsupported offsets remain zero. The tests require repeated reads to be non-stable, but they do not claim hardware entropy quality, conditioning, startup behavior, or statistical equivalence.
+
+Factory-programmed eFuse values, MAC/chip personalization, security provisioning, eFuse coding-error repair behavior, physical eFuse burn voltage/timing, PMS enforcement, and physical RNG behavior remain synthetic or blocked for accuracy unless an explicit eFuse image, hardware probe, or stronger vendor reference is added.
+
 ### Current Fidelity / Risk Table
 
 | Subsystem | Current state | Gap vs real hardware | Likely real-usage risk |
@@ -170,7 +194,7 @@ This phase does not model analog PLL lock, oscillator startup, jitter, DFS/sourc
 | Clock / reset / sleep | Explicit narrow SDK contract for CPU/APB/RTC-selected clock propagation plus modeled RTC/reset flows | PLL dynamics, timer clock coupling, source-switch latency, deep power behavior, and wider clock fanout remain incomplete | High |
 | Cache / MMU / external memory | Functional SDK-contract model for MMU, flash, PSRAM, faults, rejects, and maintenance-operation completion | Still not cycle-accurate; no line replacement, contention, stall timing, or flash-controller micro-timing | Medium to High |
 | USB Serial/JTAG, I2C, UART, SHA | Board-path complete with RX, completion semantics, clock-derived timing, and IRQ coverage | DMA error paths, uncommon timing modes, and multi-CPU interrupt routing remain incomplete | Medium |
-| PMS + RNG | Intentionally narrow modeled behavior | Useful for current firmware, not a full device-faithful implementation | Low to Medium |
+| eFuse / PMS / RNG | Explicit synthetic eFuse contract, source-backed PMS register masks, host-backed RNG data path | Factory personalization, security provisioning, PMS enforcement, and physical entropy behavior remain synthetic or blocked | Low to Medium |
 | Ethernet | Generic `open_eth` stand-in with direct link/MII and descriptor loopback regression coverage | Still not an ESP32-S3-specific EMAC model or full PHY implementation | Low for the current workload, Medium to High if future firmware depends on deeper EMAC details |
 | RMT | Unimplemented | Entire block still absent | High if firmware depends on it |
 | Xtensa backend | Sufficient for current guest path | Architectural edge cases and local-memory exclusion remain incomplete | High for broader firmware coverage |
@@ -181,7 +205,7 @@ This phase does not model analog PLL lock, oscillator startup, jitter, DFS/sourc
 - GP-SPI now reads chip-select and DC signals through the routed-signal layer (`esp32s3_gpio_get_routed_signal_level`) rather than hard-coded GPIO numbers. However, the default signal-to-pin assignments (EPD_CS→GPIO34, EPD_DC→GPIO35, SD_CS→GPIO48, LoRa_CS→GPIO3) are still hardwired in GPIO reset state rather than being derived from firmware-written routing registers.
 - SPI2/SPI3 were intentionally a minimum-function stub. Transfers complete instantly, `USR` clears immediately, and `TRANS_DONE` is raised right away instead of following a more realistic controller state progression.
 - Clock, reset, and sleep/power behavior are only partially modeled. The `SYSTEM` block handles a small subset of registers, RTC sleep/wake logic is tailored to current timer/GPIO/EXT1 paths, and reset still contains QEMU-specific shims.
-- Most previously placeholder peripherals have been tightened to board-path-complete behavior: USB Serial/JTAG now supports RX delivery, FIFO-used status reporting, and RX/TX interrupt state; I2C clears and sets DONE bits per-command with deferred completion IRQ delivery; UART derives baud and pulse timing from the active clock configuration (falling back to 40 MHz only when no clock device is linked); PMS returns RAZ/WI for addresses above 0x100 and a date register at 0xFFC; SHA asserts and clears interrupt state on completion for both DMA and non-DMA paths; RNG is intentionally narrow (only addr==0 && size==4 returns host entropy). Remaining gaps include DMA error paths, uncommon timing modes, unsupported I2C slave/APB-nonfifo modes, and multi-CPU interrupt routing.
+- Most previously placeholder peripherals have been tightened to board-path-complete behavior: USB Serial/JTAG now supports RX delivery, FIFO-used status reporting, and RX/TX interrupt state; I2C clears and sets DONE bits per-command with deferred completion IRQ delivery; UART derives baud and pulse timing from the active clock configuration (falling back to 40 MHz only when no clock device is linked); PMS now has an explicit source-backed register table for the modeled surface and RAZ/WI behavior elsewhere; SHA asserts and clears interrupt state on completion for both DMA and non-DMA paths; RNG is intentionally narrow with one 32-bit host-backed data register and deterministic ignored writes. Remaining gaps include DMA error paths, uncommon timing modes, unsupported I2C slave/APB-nonfifo modes, and multi-CPU interrupt routing.
 - External memory and cache behavior are functional rather than cycle-accurate. Flash-backed and PSRAM-backed MMU remaps are immediate, invalid translations latch fault metadata, flash writes latch reject metadata, and cache sync/preload/autoload requests now complete through per-operation deferred deadlines that drive `CACHE_STATE` busy/idle reporting. Timing, replacement, contention, and pipeline effects are deliberately not modeled.
 - Some blocks are substituted with generic IP rather than an S3-specific model. Ethernet still uses `open_eth`, but the current tree now makes the QEMU-visible contract explicit: `MIICOMMAND`/MII link polling stays latched correctly, backend link toggles update `MIISTATUS`, and loopback mode can drive descriptor RX from TX for direct regression coverage.
 - SPI1 had an outright correctness bug in the flash transfer loop: the byte loop compared the payload value instead of the loop index, making the transfer path data-dependent. (Now fixed; see Stage 2.)

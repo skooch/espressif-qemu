@@ -4,7 +4,7 @@
 Turn the remaining ESP32-S3 core-SoC quality recommendations into information-gated implementation tracks that improve QEMU accuracy without claiming fidelity beyond the available public and local reference material.
 
 ## Current Phase
-Phase 6
+Phase 7
 
 ## Scope
 This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shims, RTC/reset/sleep, cache/MMU, clocking, interrupt matrix, eFuse, PMS/RNG, Xtensa backend confidence, and documentation. It does not plan unrelated peripheral fidelity.
@@ -112,13 +112,14 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 - **Note:** CPU/APB clock behavior is verified through the modeled CPU-clock propagation contract and UART/APB observable timing. Timer-group and systimer source-sensitive timing are not supported modeled consumers in this phase; they are documented as blocked rather than falsely claimed. Direct qtests prove interrupt-matrix mapping/status/remap behavior, while the existing board-level cache-reject functional test remains the proof that routed matrix outputs are CPU-visible on both cores.
 
 ### Phase 6: eFuse, PMS, And RNG Explicit Contracts
-- [ ] Build an ESP32-S3 eFuse field map from ESP-IDF eFuse tables and register headers, then update `hw/nvram/esp32s3_efuse.c` and `include/hw/nvram/esp32s3_efuse.h` so ESP32-S3-specific behavior is not only a thin subclass.
-- [ ] Add qtests in `tests/qtest/esp32s3-test.c` for ESP32-S3 eFuse read, program, write-protect, read-protect, and reset behavior using synthetic eFuse contents.
-- [ ] Document in `ESP32S3_EMULATION_GAPS.md` that factory-programmed values, chip personalization, and security-sensitive provisioning are synthetic unless supplied through an explicit image.
-- [ ] Update `hw/misc/esp32s3_pms.c` so every modeled PMS register is either source-backed or explicitly RAZ/WI, and add qtests for supported and unsupported PMS offsets.
-- [ ] Keep `hw/misc/esp32s3_rng.c` host-backed, restrict the register surface to the documented data path, and document physical entropy behavior as a compatibility model rather than hardware-faithful RNG.
-- [ ] Add qtests in `tests/qtest/esp32s3-test.c` proving RNG valid read width, unsupported offset behavior, reset behavior, and non-stability across multiple reads without asserting hardware entropy quality.
-- **Status:** pending
+- [x] Build an ESP32-S3 eFuse field map from ESP-IDF eFuse tables and register headers, then update `hw/nvram/esp32s3_efuse.c` and `include/hw/nvram/esp32s3_efuse.h` so ESP32-S3-specific behavior is not only a thin subclass.
+- [x] Add qtests in `tests/qtest/esp32s3-test.c` for ESP32-S3 eFuse read, program, write-protect, read-protect, and reset behavior using synthetic eFuse contents.
+- [x] Document in `ESP32S3_EMULATION_GAPS.md` that factory-programmed values, chip personalization, and security-sensitive provisioning are synthetic unless supplied through an explicit image.
+- [x] Update `hw/misc/esp32s3_pms.c` so every modeled PMS register is either source-backed or explicitly RAZ/WI, and add qtests for supported and unsupported PMS offsets.
+- [x] Keep `hw/misc/esp32s3_rng.c` host-backed, restrict the register surface to the documented data path, and document physical entropy behavior as a compatibility model rather than hardware-faithful RNG.
+- [x] Add qtests in `tests/qtest/esp32s3-test.c` proving RNG valid read width, unsupported offset behavior, reset behavior, and non-stability across multiple reads without asserting hardware entropy quality.
+- **Status:** complete
+- **Note:** eFuse is register-accurate for the synthetic QEMU eFuse image and protection mechanics covered by ESP-IDF tables and direct qtests. PMS is a source-backed register-surface contract only; permission enforcement remains blocked. RNG is a host-backed compatibility model for the single documented `WDEV_RND_REG` data path, not a physical entropy model.
 
 ### Phase 7: Xtensa Backend Verification Gate
 - [ ] Confirm `tests/tcg/xtensa/test_s32c1i_atomctl.S` is built and runnable through the normal Xtensa TCG verification flow; if it is not registered, update `tests/tcg/xtensa/Makefile.target` so the regression runs on this machine.
@@ -165,3 +166,6 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 | Targeted qtest selector matched zero tests. | Ran with `/esp32s3/spi0/mem-register-surface`, but QEMU qtest registration prefixes the target path. | Listed registered tests and reran with `/xtensa/esp32s3/spi0/mem-register-surface`. |
 | Header search failed with `No such file or directory` for an ESP-IDF `register/soc/soc.h` path. | Included a guessed ESP-IDF path in an `rg` command while checking APB_CTRL base definitions. | Used the QEMU local `include/hw/misc/esp32s3_reg.h` base definition and the existing ESP-IDF `apb_ctrl_reg.h` / `syscon_reg.h` headers directly. |
 | Firmware source search failed with `No such file or directory` for a non-existent adjacent `crates` directory. | Included `/Users/skooch/projects/tdeck-pro-rust/tdeck-pro-rust/crates` in a scoped `rg` command. | Reused the successful `src/` hits and did not assume an adjacent `crates/` layout for this firmware repository. |
+| Phase 6 eFuse/PMS/RNG discovery search failed with `No such file or directory` for `include/hw/xtensa/esp32s3.h`. | Included a guessed QEMU header path in a scoped `rg` command. | Used the existing `hw/xtensa/esp32s3.c`, `include/hw/nvram/*efuse.h`, `include/hw/misc/esp32s3_reg.h`, and ESP-IDF `reg_base.h` sources directly instead of assuming that header exists. |
+| Initial Phase 6 eFuse qtest expected programmed block reads to update immediately after a program command. | The model writes successful programs to the persistent mirror and ESP-IDF performs a read command after programming to refresh read registers. | Updated the qtest helper to run an eFuse read command after successful programming before asserting guest-visible read-register contents. |
+| Phase 6 RNG qtest crashed QEMU with signal 11 on a write to the read-only RNG region. | The RNG model had no write handler, so the qtest exposed an unsafe guest-write path instead of deterministic unsupported behavior. | Added an explicit no-op RNG write handler and kept qtest coverage proving writes do not crash and unsupported offsets remain zero. |

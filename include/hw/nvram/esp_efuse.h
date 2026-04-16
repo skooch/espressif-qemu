@@ -190,6 +190,7 @@ struct ESPEfuseRegs {
     uint32_t rd_tim_conf;
     uint32_t wr_tim_conf1;
     uint32_t wr_tim_conf2;
+    uint32_t date;
     uint32_t dbg_erase_all;
 };
 
@@ -222,6 +223,7 @@ typedef struct ESPEfuseClass {
     uint32_t (*get_dis_download_man_encrypt)(ESPEfuseState *s);
     bool     (*get_key)(ESPEfuseState *s, EfuseBlocksIdx efuse_block_num, uint8_t* efuse_key);
     uint32_t (*get_key_purpose)(ESPEfuseState *s, EfuseBlocksIdx efuse_block_num);
+    void     (*apply_reset_defaults)(ESPEfuseState *s);
 } ESPEfuseClass;
 
 
@@ -285,5 +287,7 @@ REG32(EFUSE_RD_TIM_CONF, 0x01EC)
 REG32(EFUSE_WR_TIM_CONF1, 0x01F4)
 
 REG32(EFUSE_WR_TIM_CONF2, 0x01F8)
+
+REG32(EFUSE_DATE, 0x01FC)
 
 REG32(EFUSE_DBG_ERASE_ALL, 0x0200)
