@@ -207,10 +207,8 @@ static void esp32s3_clock_write(void *opaque, hwaddr addr, uint64_t value,
             /* Bit 0 = RUNSTALL for Core 1 */
             bool stall_new = value & 1;
             bool stall_old = old & 1;
-            if (stall_new && !stall_old && s->cpu[1]) {
-                cpu_pause(s->cpu[1]);
-            } else if (!stall_new && stall_old && s->cpu[1]) {
-                cpu_resume(s->cpu[1]);
+            if (stall_new != stall_old && s->core1_runstall) {
+                qemu_set_irq(s->core1_runstall, stall_new);
             }
             break;
         }
@@ -279,6 +277,7 @@ static void esp32s3_clock_reset_hold(Object *obj, ResetType type)
     s->perip_rst_en0 = 0;
     s->perip_rst_en1 = 0;
     s->clock_gate = R_SYSTEM_CLOCK_GATE_CLK_EN_MASK;
+    s->core1_control0 = 0;
 
     esp32s3_clock_propagate_rates(s);
 
@@ -287,6 +286,7 @@ static void esp32s3_clock_reset_hold(Object *obj, ResetType type)
     for (int i = 0 ; i < ESP32S3_SYSTEM_CPU_INTR_COUNT; i++) {
         qemu_irq_lower(s->irqs[i]);
     }
+    qemu_irq_lower(s->core1_runstall);
 }
 
 static void esp32s3_clock_realize(DeviceState *dev, Error **errp)
@@ -308,6 +308,8 @@ static void esp32s3_clock_init(Object *obj)
     for (uint64_t i = 0; i < ESP32S3_SYSTEM_CPU_INTR_COUNT; i++) {
         sysbus_init_irq(sbd, &s->irqs[i]);
     }
+    qdev_init_gpio_out_named(DEVICE(sbd), &s->core1_runstall,
+                             ESP32S3_CLOCK_CORE1_RUNSTALL_GPIO, 1);
 }
 
 static void esp32s3_clock_class_init(ObjectClass *klass, void *data)

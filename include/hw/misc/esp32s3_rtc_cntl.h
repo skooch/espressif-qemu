@@ -22,6 +22,7 @@
 #define ESP32S3_RTC_CPU_RESET_GPIO    "cpu-reset"
 #define ESP32S3_RTC_CPU_STALL_GPIO    "cpu-stall"
 #define ESP32S3_RTC_CLK_UPDATE_GPIO   "clk-update"
+#define ESP32S3_RTC_LIGHT_SLEEP_GPIO  "light-sleep"
 
 typedef enum Esp32s3ResetCause {
     ESP32_POWERON_RESET = 1,
@@ -77,6 +78,7 @@ typedef struct Esp32s3RtcCntlState {
     qemu_irq cpu_reset_req[ESP32S3_CPU_COUNT];
     qemu_irq cpu_stall_req[ESP32S3_CPU_COUNT];
     qemu_irq clk_update;
+    qemu_irq light_sleep_req;
     bool cpu_stall_state[ESP32S3_CPU_COUNT];
 
     uint32_t xtal_apb_freq;

@@ -10,11 +10,39 @@
 
 **Created:** 2026-04-05
 
-**Branch:** `tdeck-peripherals`
+**Branch:** `codex/esp32s3-p0-sleep-clock-reset`
 
-**HEAD:** `2c1e678f3d`
+**HEAD:** `2d3a245e33`
 
 This plan supersedes the old split between `ESP32S3_EMULATION_GAPS.md` and the residual `xtensa-blockers.md` watch queue for active prioritization. The deferred-foundation plan is complete; this is the new clean backlog for follow-on work.
+
+## Active Implementation Slice: P0 Light-Sleep Board Transition
+
+This worktree starts the P0 sleep/clock/reset track with a focused light-sleep transition slice. The first deliverable is not full ESP32-S3 power-domain fidelity; it is a testable board-visible contract that replaces internal-only RTC sleep bookkeeping with an explicit SoC transition.
+
+### File Map
+
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/plan.md` (track P0 slice status and errors)
+- Create: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/progress.md` (session log)
+- Modify: `ESP32S3_EMULATION_GAPS.md` (document the new light-sleep transition boundary and remaining blockers)
+- Modify: `include/hw/misc/esp32s3_rtc_cntl.h` (add RTC light-sleep output GPIO declaration)
+- Modify: `hw/misc/esp32s3_rtc_cntl.c` (emit light-sleep output on sleep enter, wake, reject, and reset)
+- Modify: `include/hw/xtensa/esp32s3_clk.h` (expose SYSTEM core1 RUNSTALL as a named output GPIO)
+- Modify: `hw/xtensa/esp32s3_clk.c` (emit RUNSTALL output instead of pausing/resuming core1 directly)
+- Modify: `hw/xtensa/esp32s3.c` (wire RTC light-sleep output and SYSTEM RUNSTALL into centralized SoC CPU pause/resume state)
+- Modify: `tests/qtest/esp32s3-test.c` (add direct regression coverage for light-sleep output, CPU-stall, and RUNSTALL interaction boundaries)
+
+### P0 Slice Tasks
+
+- [x] Move this plan from `docs/plans/new/esp32s3-tdeck-pro-fidelity/` to `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/` before implementation.
+- [x] Add a named RTC light-sleep output GPIO that is high only while the RTC state machine is in `ESP32S3_RTC_SLEEP_SLEEPING`.
+- [x] Wire the RTC light-sleep output into `hw/xtensa/esp32s3.c` and centralize CPU pause/resume decisions so light sleep, RTC CPU-stall, and SYSTEM core1 RUNSTALL requests do not incorrectly resume each other.
+- [x] Preserve timer, GPIO, EXT1 immediate-wake, and reject semantics while emitting the new board-visible sleep transition.
+- [x] Add qtests proving timer sleep asserts the light-sleep output until wake, reject never asserts the output, RTC CPU-stall still emits independent per-core hold lines, and SYSTEM core1 RUNSTALL now emits its own SoC-owned hold line.
+- [x] Update `ESP32S3_EMULATION_GAPS.md` to describe this as a board-visible light-sleep transition while keeping full power-domain sequencing, peripheral gating, and oscillator timing blocked.
+- [x] Run the ESP32-S3 qtest suite and cache-reject functional test before committing.
+
+**Status:** in_progress; P0 light-sleep transition slice complete, remaining P0 work still tracked below.
 
 ## Evidence Summary
 
@@ -152,3 +180,9 @@ These items remain valid gaps, but they should not displace the higher-pressure 
 - The repo has one active follow-on plan for ESP32-S3 fidelity instead of split residual backlogs.
 - The deferred-foundation plan remains completed and historical.
 - Each remaining gap has a clear priority based on the actual T-Deck Pro firmware target rather than generic completeness.
+
+## Errors
+
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Removing clock CPU references broke `esp32s3_clock_propagate_rates()` because those references are still needed for CPU clock updates. | `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` after converting SYSTEM core1 RUNSTALL to a GPIO output. | Restored `ESP32S3ClockState.cpu[]` for clock-rate propagation only, kept RUNSTALL as a separate named GPIO into the SoC run-state owner, rebuilt successfully, and reran targeted/full verification. |

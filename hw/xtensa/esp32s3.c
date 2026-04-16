@@ -189,6 +189,9 @@ typedef struct Esp32s3SocState {
     SsiPsramState *psram;
 
     uint32_t requested_reset;
+    bool light_sleeping;
+    bool cpu_runstall[ESP32S3_CPU_COUNT];
+    bool cpu_paused_by_soc[ESP32S3_CPU_COUNT];
 
     /* Keyboard input chardev (serial port 3 -> TCA8418 FIFO) */
     TdeckTca8418State *kbd_dev;
@@ -267,6 +270,65 @@ static void esp32s3_soc_reset_peripherals(Esp32s3SocState *s)
     }
 }
 
+static bool esp32s3_soc_cpu_present(int cpu_index)
+{
+    MachineState *ms = MACHINE(qdev_get_machine());
+
+    return cpu_index >= 0 && cpu_index < ms->smp.cpus;
+}
+
+static bool esp32s3_soc_cpu_should_pause(Esp32s3SocState *s, int cpu_index)
+{
+    if (!esp32s3_soc_cpu_present(cpu_index)) {
+        return false;
+    }
+
+    return s->light_sleeping ||
+           s->rtc_cntl.cpu_stall_state[cpu_index] ||
+           s->cpu_runstall[cpu_index];
+}
+
+static void esp32s3_soc_update_cpu_run_state(Esp32s3SocState *s,
+                                             int cpu_index)
+{
+    CPUState *cpu;
+    bool should_pause;
+
+    if (!esp32s3_soc_cpu_present(cpu_index)) {
+        return;
+    }
+
+    cpu = CPU(&s->cpu[cpu_index]);
+    should_pause = esp32s3_soc_cpu_should_pause(s, cpu_index);
+
+    if (should_pause && !s->cpu_paused_by_soc[cpu_index]) {
+        cpu_pause(cpu);
+        s->cpu_paused_by_soc[cpu_index] = true;
+    } else if (!should_pause && s->cpu_paused_by_soc[cpu_index]) {
+        cpu_resume(cpu);
+        s->cpu_paused_by_soc[cpu_index] = false;
+    }
+}
+
+static void esp32s3_soc_update_all_cpu_run_states(Esp32s3SocState *s)
+{
+    for (int i = 0; i < ESP32S3_CPU_COUNT; i++) {
+        esp32s3_soc_update_cpu_run_state(s, i);
+    }
+}
+
+static void esp32s3_soc_release_cpu_pauses(Esp32s3SocState *s)
+{
+    for (int i = 0; i < ESP32S3_CPU_COUNT; i++) {
+        if (esp32s3_soc_cpu_present(i) && s->cpu_paused_by_soc[i]) {
+            cpu_resume(CPU(&s->cpu[i]));
+            s->cpu_paused_by_soc[i] = false;
+        }
+    }
+    s->light_sleeping = false;
+    memset(s->cpu_runstall, 0, sizeof(s->cpu_runstall));
+}
+
 static void esp32s3_soc_reset_cpu(Esp32s3SocState *s, int cpu_index)
 {
     MachineState *ms = MACHINE(qdev_get_machine());
@@ -313,6 +375,8 @@ static void esp32s3_soc_reset(DeviceState *dev)
         s->requested_reset = ESP32S3_SOC_RESET_ALL;
     }
 
+    esp32s3_soc_release_cpu_pauses(s);
+
     if (s->requested_reset == ESP32S3_SOC_RESET_ALL) {
         esp32s3_soc_reset_full_chip(s);
         s->requested_reset = 0;
@@ -337,12 +401,24 @@ static void esp32s3_soc_reset(DeviceState *dev)
 static void esp32s3_cpu_stall(void* opaque, int n, int level)
 {
     Esp32s3SocState *s = (Esp32s3SocState *)opaque;
-    CPUState *cpu = CPU(&s->cpu[n]);
-    if (level) {
-        cpu_pause(cpu);
-    } else {
-        cpu_resume(cpu);
-    }
+
+    esp32s3_soc_update_cpu_run_state(s, n);
+}
+
+static void esp32s3_light_sleep(void *opaque, int n, int level)
+{
+    Esp32s3SocState *s = ESP32S3_SOC(opaque);
+
+    s->light_sleeping = level;
+    esp32s3_soc_update_all_cpu_run_states(s);
+}
+
+static void esp32s3_core1_runstall(void *opaque, int n, int level)
+{
+    Esp32s3SocState *s = ESP32S3_SOC(opaque);
+
+    s->cpu_runstall[1] = level;
+    esp32s3_soc_update_cpu_run_state(s, 1);
 }
 
 static void esp32s3_clk_update(void* opaque, int n, int level)
@@ -535,6 +611,11 @@ static void esp32s3_soc_realize(DeviceState *dev, Error **errp)
                                 qdev_get_gpio_in_named(dev, ESP32S3_RTC_DIG_RESET_GPIO, 0));
     qdev_connect_gpio_out_named(DEVICE(&s->rtc_cntl), ESP32S3_RTC_CLK_UPDATE_GPIO, 0,
                                 qdev_get_gpio_in_named(dev, ESP32S3_RTC_CLK_UPDATE_GPIO, 0));
+    qdev_connect_gpio_out_named(DEVICE(&s->rtc_cntl),
+                                ESP32S3_RTC_LIGHT_SLEEP_GPIO, 0,
+                                qdev_get_gpio_in_named(dev,
+                                                       ESP32S3_RTC_LIGHT_SLEEP_GPIO,
+                                                       0));
     for (int i = 0; i < ms->smp.cpus; ++i) {
         qdev_connect_gpio_out_named(DEVICE(&s->rtc_cntl), ESP32S3_RTC_CPU_RESET_GPIO, i,
                                     qdev_get_gpio_in_named(dev, ESP32S3_RTC_CPU_RESET_GPIO, i));
@@ -845,6 +926,10 @@ static void esp32s3_soc_init(Object *obj)
     qdev_init_gpio_in_named(DEVICE(s), esp32s3_cpu_reset,  ESP32S3_RTC_CPU_RESET_GPIO, ESP32S3_CPU_COUNT);
     qdev_init_gpio_in_named(DEVICE(s), esp32s3_cpu_stall,  ESP32S3_RTC_CPU_STALL_GPIO, ESP32S3_CPU_COUNT);
     qdev_init_gpio_in_named(DEVICE(s), esp32s3_clk_update, ESP32S3_RTC_CLK_UPDATE_GPIO, 1);
+    qdev_init_gpio_in_named(DEVICE(s), esp32s3_light_sleep,
+                            ESP32S3_RTC_LIGHT_SLEEP_GPIO, 1);
+    qdev_init_gpio_in_named(DEVICE(s), esp32s3_core1_runstall,
+                            ESP32S3_CLOCK_CORE1_RUNSTALL_GPIO, 1);
 
     object_initialize_child(obj, "twai", &s->twai, TYPE_ESP32S3_TWAI);
 
@@ -1181,7 +1266,11 @@ static void esp32s3_machine_init(MachineState *machine)
             sysbus_connect_irq(SYS_BUS_DEVICE(&ss->clock), i,
                            qdev_get_gpio_in(intmatrix_dev, ETS_FROM_CPU_INTR0_SOURCE + i));
         }
-        /* Pass CPU references for RUNSTALL support */
+        qdev_connect_gpio_out_named(DEVICE(&ss->clock),
+                                    ESP32S3_CLOCK_CORE1_RUNSTALL_GPIO, 0,
+                                    qdev_get_gpio_in_named(DEVICE(ss),
+                                                           ESP32S3_CLOCK_CORE1_RUNSTALL_GPIO,
+                                                           0));
         ss->clock.cpu[0] = CPU(&ss->cpu[0]);
         ss->clock.cpu[1] = machine->smp.cpus > 1 ? CPU(&ss->cpu[1]) : NULL;
         ss->rtc_cntl.clock = &ss->clock;

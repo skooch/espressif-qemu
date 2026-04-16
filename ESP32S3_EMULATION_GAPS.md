@@ -4,7 +4,7 @@
 
 This document tracks the known fidelity gaps in the `esp32s3` machine model in this fork and the immediate implementation program for closing the highest-value ones first.
 
-The immediate peripheral and deferred-foundation programs described here are now historical records. Active follow-on prioritization for the T-Deck Pro target lives in `docs/plans/new/esp32s3-tdeck-pro-fidelity/plan.md`.
+The immediate peripheral and deferred-foundation programs described here are now historical records. Active follow-on prioritization for the T-Deck Pro target lives in `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/plan.md`.
 
 The current scope is intentionally limited to the previously identified high-impact fixes and easy wins:
 
@@ -132,6 +132,18 @@ The RTC_CNTL fallback store was removed for the sleep/wake register surface. QEM
 
 This is SDK-contract and board-path accurate for the modeled light-sleep wake/reject flows. It is not a full ESP32-S3 power manager. Full internal power-domain sequencing, CPU-retention DMA timing, retention-memory save/restore, brownout interactions, analog reset behavior, RTC watchdog escalation timing, ULP/touch/USB wake behavior, EXT1 status latching, and oscillator/settling delays remain blocked for accuracy without more detailed source evidence or hardware probes.
 
+### P0 Light-Sleep Board Transition Status
+
+The first follow-on P0 sleep/clock/reset slice adds an explicit board-visible light-sleep transition instead of keeping RTC sleep as internal bookkeeping only:
+
+- `RTC_CNTL` emits a named `light-sleep` output only while the modeled RTC state machine is in `ESP32S3_RTC_SLEEP_SLEEPING`.
+- The ESP32-S3 SoC consumes that output and pauses/resumes modeled CPUs through one centralized run-state owner.
+- The same owner also combines RTC per-core CPU-stall requests and SYSTEM core1 RUNSTALL, so clearing one hold source does not resume a CPU that is still held by another modeled source.
+- SYSTEM core1 RUNSTALL is now exposed from the clock block as a named GPIO output instead of directly calling `cpu_pause()` / `cpu_resume()` inside the clock device.
+- Direct qtests cover timer sleep asserting `light-sleep` until wake, GPIO sleep rejection never asserting `light-sleep`, RTC CPU-stall output behavior, and SYSTEM core1 RUNSTALL output behavior.
+
+This is a QEMU-visible SoC transition contract, not hardware proof of full ESP32-S3 low-power behavior. The local sleep reference still identifies broader missing behavior: light sleep should switch away from PLL before entry, stop XTAL/PLL and usually RC_FAST, compensate stopped SYSTIMER time on wake, model power-domain and peripheral gating decisions, and handle CPU retention/power-down variants. Those remain blocked for accuracy until each item is backed by the local TRM/ESP-IDF/esp-hal evidence or a hardware probe.
+
 ### Phase 3 Reset Domain Status
 
 The ESP32-S3 reset path is now split into named helpers for PROCPU reset, APPCPU reset, partial digital peripheral reset, digital reset, and full-chip reset. This makes the current QEMU contract explicit:
@@ -221,7 +233,7 @@ Future Xtensa backend fixes must follow these accuracy rules:
 | GP-SPI + GDMA | Good enough for current EPD, SD, LoRa, and qtest paths | Timing, busy windows, and broader DMA sequencing are still simplified | Medium |
 | GPIO matrix + IO_MUX | Board-path complete for the routed signals in active use | Not a full silicon-complete routing model | Medium |
 | Generic MMIO surface | Instrumented and narrower than before, but still present | Unknown registers can still appear to work via stored readback unless traced and replaced with explicit models | High |
-| Clock / reset / sleep | Explicit narrow SDK contract for CPU/APB/RTC-selected clock propagation plus modeled RTC/reset flows | PLL dynamics, timer clock coupling, source-switch latency, deep power behavior, and wider clock fanout remain incomplete | High |
+| Clock / reset / sleep | Explicit narrow SDK contract for CPU/APB/RTC-selected clock propagation, modeled RTC/reset flows, and board-visible light-sleep CPU hold transitions | PLL dynamics, timer clock coupling, source-switch latency, SYSTIMER sleep compensation, power-domain/peripheral gating, deep power behavior, and wider clock fanout remain incomplete | High |
 | Cache / MMU / external memory | Functional SDK-contract model for MMU, flash, PSRAM, faults, rejects, and maintenance-operation completion | Still not cycle-accurate; no line replacement, contention, stall timing, or flash-controller micro-timing | Medium to High |
 | USB Serial/JTAG, I2C, UART, SHA | Board-path complete with RX, completion semantics, clock-derived timing, and IRQ coverage | DMA error paths, uncommon timing modes, and multi-CPU interrupt routing remain incomplete | Medium |
 | eFuse / PMS / RNG | Explicit synthetic eFuse contract, source-backed PMS register masks, host-backed RNG data path | Factory personalization, security provisioning, PMS enforcement, and physical entropy behavior remain synthetic or blocked | Low to Medium |

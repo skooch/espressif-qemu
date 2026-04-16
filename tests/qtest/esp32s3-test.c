@@ -1472,6 +1472,28 @@ static void test_system_clock_register_contract(void)
     qtest_quit(qts);
 }
 
+static void test_system_core1_runstall_transition(void)
+{
+    QTestState *qts = qts_start();
+
+    qtest_irq_intercept_out_named(qts, "/machine/soc/clock",
+                                  ESP32S3_CLOCK_CORE1_RUNSTALL_GPIO);
+
+    g_assert_false(qtest_get_irq(qts, 0));
+
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_CORE_1_CONTROL_0_REG, 1);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_CORE_1_CONTROL_0_REG),
+                    ==, 1);
+    g_assert_true(qtest_get_irq(qts, 0));
+
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_CORE_1_CONTROL_0_REG, 0);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_CORE_1_CONTROL_0_REG),
+                    ==, 0);
+    g_assert_false(qtest_get_irq(qts, 0));
+
+    qtest_quit(qts);
+}
+
 static void test_intmatrix_mapping_status_reserved(void)
 {
     QTestState *qts = qts_start();
@@ -1584,6 +1606,10 @@ static void test_rtc_timer_wakeup_transition(void)
     uint32_t wakeup_state = 0;
     uint32_t state0 = 0;
 
+    qtest_irq_intercept_out_named(qts, "/machine/soc/rtc_cntl",
+                                  ESP32S3_RTC_LIGHT_SLEEP_GPIO);
+    g_assert_false(qtest_get_irq(qts, 0));
+
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_CLR, UINT32_MAX);
 
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER0, alarm_ticks);
@@ -1599,6 +1625,7 @@ static void test_rtc_timer_wakeup_transition(void)
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0) &
                     R_RTC_CNTL_STATE0_SLEEP_EN_MASK,
                     ==, R_RTC_CNTL_STATE0_SLEEP_EN_MASK);
+    g_assert_true(qtest_get_irq(qts, 0));
 
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
                     R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK, ==, 0);
@@ -1616,6 +1643,7 @@ static void test_rtc_timer_wakeup_transition(void)
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0) &
                     R_RTC_CNTL_STATE0_SLP_WAKEUP_MASK,
                     ==, R_RTC_CNTL_STATE0_SLP_WAKEUP_MASK);
+    g_assert_false(qtest_get_irq(qts, 0));
 
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_CLR,
                  R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK);
@@ -1671,6 +1699,10 @@ static void test_rtc_gpio_low_reject_transition(void)
     uint32_t reject_conf = 0;
     uint32_t state0 = 0;
 
+    qtest_irq_intercept_out_named(qts, "/machine/soc/rtc_cntl",
+                                  ESP32S3_RTC_LIGHT_SLEEP_GPIO);
+    g_assert_false(qtest_get_irq(qts, 0));
+
     set_gpio_input_level(qts, 15, false);
     qtest_writel(qts, GPIO_BASE + GPIO_PIN_REG(15), pin_cfg);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_CLR, UINT32_MAX);
@@ -1694,10 +1726,12 @@ static void test_rtc_gpio_low_reject_transition(void)
                     ==, R_RTC_CNTL_STATE0_SLP_REJECT_MASK);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
                     R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK, ==, 0);
+    g_assert_false(qtest_get_irq(qts, 0));
 
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0,
                  R_RTC_CNTL_STATE0_SLP_REJECT_CAUSE_CLR_MASK);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0), ==, 0);
+    g_assert_false(qtest_get_irq(qts, 0));
 
     qtest_quit(qts);
 }
@@ -2502,6 +2536,8 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/rtc/clk-update", test_rtc_clk_update_propagates_to_system_and_uart);
     qtest_add_func("/esp32s3/system/clock-register-contract",
                    test_system_clock_register_contract);
+    qtest_add_func("/esp32s3/system/core1-runstall",
+                   test_system_core1_runstall_transition);
     qtest_add_func("/esp32s3/intmatrix/mapping-status-reserved",
                    test_intmatrix_mapping_status_reserved);
     qtest_add_func("/esp32s3/rtc/explicit-register-surface",

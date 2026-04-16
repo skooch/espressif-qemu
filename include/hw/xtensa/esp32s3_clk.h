@@ -11,6 +11,7 @@
 
 #include "hw/hw.h"
 #include "hw/sysbus.h"
+#include "hw/irq.h"
 #include "hw/registerfields.h"
 #include "hw/core/cpu.h"
 
@@ -19,6 +20,7 @@
 #define ESP32S3_CLOCK_GET_CLASS(obj) OBJECT_GET_CLASS(ESP32S3ClockClass, obj, TYPE_ESP32S3_CLOCK)
 #define ESP32S3_CLOCK_CLASS(klass) OBJECT_CLASS_CHECK(ESP32S3ClockClass, klass, TYPE_ESP32S3_CLOCK)
 
+#define ESP32S3_CLOCK_CORE1_RUNSTALL_GPIO "core1-runstall"
 
 #define ESP32S3_SYSTEM_CPU_INTR_COUNT   4
 
@@ -66,8 +68,9 @@ typedef struct ESP32S3ClockState {
     
     uint32_t sys_ext_dev_enc_dec_ctrl;
 
-    /* CPU references for RUNSTALL */
-    CPUState *cpu[2];  /* [0]=procpu, [1]=appcpu */
+    /* CPU references for clock-rate propagation only. */
+    CPUState *cpu[2];
+    qemu_irq core1_runstall;
     uint32_t core1_control0;
 } ESP32S3ClockState;
 
