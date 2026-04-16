@@ -44,6 +44,28 @@ This worktree starts the P0 sleep/clock/reset track with a focused light-sleep t
 
 **Status:** in_progress; P0 light-sleep transition slice complete, remaining P0 work still tracked below.
 
+## Active Implementation Slice: P0 Local Reset Dispatch
+
+The second P0 slice removes the guest software-reset dependency on QEMU process-level reset events. RTC_CNTL software reset bits now dispatch explicit ESP32-S3 reset domains locally through the SoC, while host/QMP `system_reset` remains the full-chip reset entrypoint.
+
+### File Map
+
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/plan.md` (track P0 reset slice status and errors)
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/progress.md` (session log)
+- Modify: `ESP32S3_EMULATION_GAPS.md` (document guest-local reset dispatch and remaining reset fidelity limits)
+- Modify: `hw/xtensa/esp32s3.c` (replace guest reset QEMU-global reset requests with local reset-domain dispatch)
+- Modify: `tests/qtest/esp32s3-test.c` (prove PROCPU, APPCPU, and digital reset effects without synthetic QMP RESET events)
+
+### P0 Reset Slice Tasks
+
+- [x] Replace RTC guest software reset callbacks that call `qemu_system_reset_request()` with an explicit local SoC reset-domain dispatcher.
+- [x] Preserve host/QMP full-chip reset through QEMU reset registration, but register it with a typed wrapper instead of a function-pointer cast.
+- [x] Preserve PROCPU/APPCPU reset isolation, digital reset peripheral clearing, RTC scratch retention, and guest-visible reset causes.
+- [x] Extend qtest reset coverage to include APPCPU software reset and to stop relying on QMP `RESET` events for guest software reset bits.
+- [x] Run the full ESP32-S3 qtest suite and cache-reject functional test before committing.
+
+**Status:** complete; reset slice ready to commit.
+
 ## Evidence Summary
 
 - The active hardware target is `../tdeck-pro-rust/`, which is heavily `esp-rs` based rather than an ESP-IDF application. `Cargo.toml` enables `esp-hal` with `esp32s3`, `psram`, and `unstable`, `esp-storage`, `esp-hal-ota`, `esp-radio` with `wifi` and `ble`, `esp-rtos`, and `embassy-net`.

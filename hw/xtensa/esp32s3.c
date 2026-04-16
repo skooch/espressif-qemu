@@ -39,7 +39,6 @@
 #include "sysemu/sysemu.h"
 #include "sysemu/reset.h"
 #include "sysemu/cpus.h"
-#include "sysemu/runstate.h"
 #include "sysemu/blockdev.h"
 #include "sysemu/block-backend.h"
 #include "exec/exec-all.h"
@@ -188,7 +187,6 @@ typedef struct Esp32s3SocState {
     DeviceState *eth;
     SsiPsramState *psram;
 
-    uint32_t requested_reset;
     bool light_sleeping;
     bool cpu_runstall[ESP32S3_CPU_COUNT];
     bool cpu_paused_by_soc[ESP32S3_CPU_COUNT];
@@ -225,32 +223,24 @@ static void remove_cpu_watchpoints(XtensaCPU* xcs)
     }
 }
 
+static void esp32s3_soc_apply_reset(Esp32s3SocState *s, uint32_t reset_domain);
+
 static void esp32s3_dig_reset(void *opaque, int n, int level)
 {
     Esp32s3SocState *s = ESP32S3_SOC(opaque);
+
     if (level) {
-        s->requested_reset = ESP32S3_SOC_RESET_DIG;
-        /*
-         * Compatibility bridge: QEMU still routes guest-visible digital reset
-         * through the process-level reset request, then reconstructs the
-         * requested ESP32-S3 reset domain in esp32s3_soc_reset().
-         */
-        qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
+        esp32s3_soc_apply_reset(s, ESP32S3_SOC_RESET_DIG);
     }
 }
 
 static void esp32s3_cpu_reset(void* opaque, int n, int level)
 {
     Esp32s3SocState *s = ESP32S3_SOC(opaque);
+
     if (level) {
-        s->requested_reset = (n == 0) ? ESP32S3_SOC_RESET_PROCPU : ESP32S3_SOC_RESET_APPCPU;
-        /*
-         * Compatibility bridge: CPU-local resets still use QEMU reset
-         * requests. APP CPU uses a subsystem cause so -no-reboot launches do
-         * not exit for a secondary-core reset.
-         */
-        ShutdownCause cause = (n == 0) ? SHUTDOWN_CAUSE_GUEST_RESET : SHUTDOWN_CAUSE_SUBSYSTEM_RESET;
-        qemu_system_reset_request(cause);
+        esp32s3_soc_apply_reset(s, (n == 0) ? ESP32S3_SOC_RESET_PROCPU :
+                                            ESP32S3_SOC_RESET_APPCPU);
     }
 }
 
@@ -367,35 +357,38 @@ static void esp32s3_soc_reset_full_chip(Esp32s3SocState *s)
     esp32s3_soc_reset_digital(s);
 }
 
+static void esp32s3_soc_apply_reset(Esp32s3SocState *s, uint32_t reset_domain)
+{
+    esp32s3_soc_release_cpu_pauses(s);
+
+    if (reset_domain == ESP32S3_SOC_RESET_ALL) {
+        esp32s3_soc_reset_full_chip(s);
+        return;
+    }
+
+    if (reset_domain & ESP32S3_SOC_RESET_PERIPH) {
+        esp32s3_soc_reset_peripherals(s);
+    }
+
+    if (reset_domain & ESP32S3_SOC_RESET_PROCPU) {
+        esp32s3_soc_reset_cpu(s, 0);
+    }
+
+    if (reset_domain & ESP32S3_SOC_RESET_APPCPU) {
+        esp32s3_soc_reset_cpu(s, 1);
+    }
+}
+
 static void esp32s3_soc_reset(DeviceState *dev)
 {
     Esp32s3SocState *s = ESP32S3_SOC(dev);
 
-    if (s->requested_reset == 0) {
-        s->requested_reset = ESP32S3_SOC_RESET_ALL;
-    }
+    esp32s3_soc_apply_reset(s, ESP32S3_SOC_RESET_ALL);
+}
 
-    esp32s3_soc_release_cpu_pauses(s);
-
-    if (s->requested_reset == ESP32S3_SOC_RESET_ALL) {
-        esp32s3_soc_reset_full_chip(s);
-        s->requested_reset = 0;
-        return;
-    }
-
-    if (s->requested_reset & ESP32S3_SOC_RESET_PERIPH) {
-        esp32s3_soc_reset_peripherals(s);
-    }
-
-    if (s->requested_reset & ESP32S3_SOC_RESET_PROCPU) {
-        esp32s3_soc_reset_cpu(s, 0);
-    }
-
-    if (s->requested_reset & ESP32S3_SOC_RESET_APPCPU) {
-        esp32s3_soc_reset_cpu(s, 1);
-    }
-
-    s->requested_reset = 0;
+static void esp32s3_soc_qemu_reset(void *opaque)
+{
+    esp32s3_soc_reset(DEVICE(opaque));
 }
 
 static void esp32s3_cpu_stall(void* opaque, int n, int level)
@@ -636,7 +629,7 @@ static void esp32s3_soc_realize(DeviceState *dev, Error **errp)
     sysbus_connect_irq(SYS_BUS_DEVICE(&s->sdmmc), 0,
                        qdev_get_gpio_in(intmatrix_dev, ETS_SDIO_HOST_INTR_SOURCE));
 
-    qemu_register_reset((QEMUResetHandler*) esp32s3_soc_reset, dev);
+    qemu_register_reset(esp32s3_soc_qemu_reset, dev);
 
     /* TWAI realization */
     {

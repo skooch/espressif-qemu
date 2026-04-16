@@ -6,3 +6,7 @@
 - 2026-04-16: Implemented RTC light-sleep output and centralized SoC CPU run-state ownership across light sleep, RTC CPU-stall, and SYSTEM core1 RUNSTALL.
 - 2026-04-16: Added direct qtests for RTC light-sleep output assertion/deassertion, reject non-entry behavior, RTC CPU-stall output preservation, and SYSTEM core1 RUNSTALL output.
 - 2026-04-16: Verified `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test`, targeted RTC/RUNSTALL qtests, full `esp32s3-test` qtest suite, and `test_xtensa_esp32s3_cache_reject.py`.
+- 2026-04-16: Started second P0 slice: replace guest software-reset QEMU-global reset requests with explicit local ESP32-S3 reset-domain dispatch.
+- 2026-04-16: Implemented local PROCPU, APPCPU, and digital reset dispatch from RTC_CNTL reset GPIO callbacks while preserving host/QMP full-chip reset through QEMU reset registration.
+- 2026-04-16: Updated reset qtest coverage to validate PROCPU, APPCPU, and digital reset effects without waiting for synthetic QMP `RESET` events; targeted reset qtest passes.
+- 2026-04-16: Verified reset slice with `git diff --check`, `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test`, full `esp32s3-test` qtest suite, and `test_xtensa_esp32s3_cache_reject.py`.

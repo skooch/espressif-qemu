@@ -1891,7 +1891,6 @@ static void test_rtc_reset_transitions(void)
 
     options0 = FIELD_DP32(options0, RTC_CNTL_OPTIONS0, SW_PROCPU_RESET, 1);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
-    qtest_qmp_eventwait(qts, "RESET");
 
     reset_state = qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_RESET_STATE);
     g_assert_cmpuint(FIELD_EX32(reset_state, RTC_CNTL_RESET_STATE,
@@ -1905,9 +1904,23 @@ static void test_rtc_reset_transitions(void)
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STORE0),
                     ==, scratch_value);
 
+    options0 = FIELD_DP32(0, RTC_CNTL_OPTIONS0, SW_APPCPU_RESET, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
+
+    reset_state = qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_RESET_STATE);
+    g_assert_cmpuint(FIELD_EX32(reset_state, RTC_CNTL_RESET_STATE,
+                                RESET_CAUSE_PROCPU), ==, ESP32_SW_CPU_RESET);
+    g_assert_cmpuint(FIELD_EX32(reset_state, RTC_CNTL_RESET_STATE,
+                                RESET_CAUSE_APPCPU), ==, ESP32_SW_CPU_RESET);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0) &
+                    R_RTC_CNTL_OPTIONS0_SW_APPCPU_RESET_MASK, ==, 0);
+    g_assert_cmphex(qtest_readl(qts, UART0_BASE + A_UART_INT_ENA),
+                    ==, uart_int_ena);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STORE0),
+                    ==, scratch_value);
+
     options0 = FIELD_DP32(0, RTC_CNTL_OPTIONS0, SW_SYS_RESET, 1);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
-    qtest_qmp_eventwait(qts, "RESET");
 
     reset_state = qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_RESET_STATE);
     g_assert_cmpuint(FIELD_EX32(reset_state, RTC_CNTL_RESET_STATE,
