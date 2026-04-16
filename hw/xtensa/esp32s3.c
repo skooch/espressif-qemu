@@ -686,14 +686,26 @@ static void esp32s3_soc_realize(DeviceState *dev, Error **errp)
 
 
 /*
- * Generic catch-all I/O region for out-of-scope unimplemented peripherals.
- * Stores writes and returns the stored value on reads, so that firmware
- * write-then-poll patterns don't spin forever on unmodeled registers.
- * In-scope core-SoC hits on this path are fidelity bugs and should be moved
- * to explicit narrow models before being treated as supported behavior.
+ * Generic catch-all I/O region for explicitly classified out-of-scope
+ * peripherals. Stores writes only for documented compatibility ranges so
+ * firmware write-then-poll patterns on deferred peripheral/radio windows do
+ * not spin forever. Any other core-SoC fallthrough is RAZ/WI and still traced.
  */
 #define ESP32S3_IO_REG_COUNT  (0xd1000 / 4)
 static uint32_t esp32s3_io_regs[ESP32S3_IO_REG_COUNT];
+
+typedef struct Esp32s3IoCompatRegion {
+    hwaddr base;
+    hwaddr size;
+} Esp32s3IoCompatRegion;
+
+static const Esp32s3IoCompatRegion esp32s3_io_compat_regions[] = {
+    { DR_REG_FE2_BASE,  0x1000 },
+    { DR_REG_FE_BASE,   0x1000 },
+    { DR_REG_LEDC_BASE, 0x0400 },
+    { DR_REG_NRX_BASE,  0x0400 },
+    { DR_REG_BB_BASE,   0x1000 },
+};
 
 static uint64_t esp32s3_io_guest_pc(void)
 {
@@ -706,6 +718,20 @@ static uint64_t esp32s3_io_guest_pc(void)
     return 0;
 }
 
+static bool esp32s3_io_addr_is_compat(hwaddr phys_addr)
+{
+    for (int i = 0; i < G_N_ELEMENTS(esp32s3_io_compat_regions); i++) {
+        hwaddr start = esp32s3_io_compat_regions[i].base;
+        hwaddr end = start + esp32s3_io_compat_regions[i].size;
+
+        if (phys_addr >= start && phys_addr < end) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static uint64_t esp32s3_io_read(void *opaque, hwaddr addr, unsigned int size)
 {
     uint32_t r = 0;
@@ -714,7 +740,8 @@ static uint64_t esp32s3_io_read(void *opaque, hwaddr addr, unsigned int size)
     warn_report("[ESP32-S3] Unsupported read to $%08" PRIx64 ", size = %i\n",
                 phys_addr, size);
 #endif
-    if (addr / 4 < ESP32S3_IO_REG_COUNT) {
+    if (esp32s3_io_addr_is_compat(phys_addr) &&
+        addr / 4 < ESP32S3_IO_REG_COUNT) {
         r = esp32s3_io_regs[addr / 4];
     }
 
@@ -732,7 +759,8 @@ static void esp32s3_io_write(void *opaque, hwaddr addr, uint64_t value, unsigned
         warn_report("[ESP32-S3] Unsupported write $%08" PRIx64 " = %08" PRIx64 "\n",
                     phys_addr, value);
 #endif
-    if (addr / 4 < ESP32S3_IO_REG_COUNT) {
+    if (esp32s3_io_addr_is_compat(phys_addr) &&
+        addr / 4 < ESP32S3_IO_REG_COUNT) {
         esp32s3_io_regs[addr / 4] = (uint32_t)value;
     }
 

@@ -23,3 +23,6 @@
 - 2026-04-16: Implemented APB_SARADC/SENS MMIO regions with ESP-IDF-backed reset defaults and write masks for the active firmware-touched offsets, while making unsupported offsets RAZ/WI.
 - 2026-04-16: Added qtest coverage for APB_SARADC/SENS reset defaults, write-mask behavior, unsupported-offset RAZ/WI behavior, and reset restoration.
 - 2026-04-16: Verified the APB_SARADC/SENS slice with `git diff --check`, targeted `/xtensa/esp32s3/analog/source-backed-register-shims`, full `esp32s3-test`, `test_xtensa_esp32s3_cache_reject.py`, and `test_xtensa_esp32s3_sleep_wake.py`.
+- 2026-04-16: Started second P1 generic-MMIO burn-down slice: restrict stored-readback fallback behavior to explicitly classified LEDC and FE/FE2/NRX/BB out-of-scope ranges.
+- 2026-04-16: Updated the generic-MMIO qtest to prove deferred out-of-scope ranges still provide compatibility storage while other unmapped core fallthroughs are RAZ/WI.
+- 2026-04-16: Verified the generic-MMIO fallback allowlist slice with `git diff --check`, incremental `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test`, targeted `/xtensa/esp32s3/generic-mmio/compatibility-storage`, full `esp32s3-test`, `test_xtensa_esp32s3_cache_reject.py`, and `test_xtensa_esp32s3_sleep_wake.py`.

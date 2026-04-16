@@ -136,6 +136,27 @@ The first P1 slice removes the remaining source-backed analog-control windows fr
 
 **Status:** complete; APB_SARADC/SENS generic-MMIO burn-down slice ready to commit.
 
+## Active Implementation Slice: P1 Generic-MMIO Fallback Allowlist
+
+The second P1 slice narrows the broad fallback region itself. Instead of storing and echoing every unmapped word in the ESP32-S3 MMIO window, the fallback now preserves compatibility storage only for ranges already classified as out-of-scope for this core-SoC pass.
+
+### File Map
+
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/plan.md` (track second P1 generic-MMIO slice status)
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/progress.md` (session log)
+- Modify: `ESP32S3_EMULATION_GAPS.md` (document fallback storage narrowing and remaining limits)
+- Modify: `hw/xtensa/esp32s3.c` (restrict generic-MMIO stored readback to LEDC plus FE/FE2/NRX/BB compatibility ranges)
+- Modify: `tests/qtest/esp32s3-test.c` (prove compatibility storage remains only for out-of-scope ranges while other core fallthroughs are RAZ/WI)
+
+### P1 Fallback Allowlist Tasks
+
+- [x] Add an explicit compatibility allowlist for `DR_REG_LEDC_BASE`, `DR_REG_FE2_BASE`, `DR_REG_FE_BASE`, `DR_REG_NRX_BASE`, and `DR_REG_BB_BASE` fallback storage.
+- [x] Make any other unmapped core-SoC fallthrough deterministic RAZ/WI while preserving existing trace events.
+- [x] Update the generic-MMIO qtest so it checks both allowed out-of-scope storage and disallowed WCL fallthrough RAZ/WI behavior.
+- [x] Run the ESP32-S3 qtest suite plus cache-reject and sleep-wake functional tests before committing.
+
+**Status:** complete; generic-MMIO fallback allowlist slice ready to commit.
+
 ## Evidence Summary
 
 - The active hardware target is `../tdeck-pro-rust/`, which is heavily `esp-rs` based rather than an ESP-IDF application. `Cargo.toml` enables `esp-hal` with `esp32s3`, `psram`, and `unstable`, `esp-storage`, `esp-hal-ota`, `esp-radio` with `wifi` and `ble`, `esp-rtos`, and `embassy-net`.
@@ -175,7 +196,7 @@ First slices:
 
 - [x] Inventory the firmware-touched offsets that still land in the generic MMIO echo region during the active T-Deck Pro path.
 - [x] Replace the first boot-critical and sleep-critical offsets with narrow models or explicit RAZ/WI behavior instead of stored readback.
-- [ ] Keep the fallback region only for truly out-of-scope addresses and make the remaining active-path hits visible in tests or logs.
+- [x] Keep the fallback region only for truly out-of-scope addresses and make the remaining active-path hits visible in tests or logs.
 - [x] Add direct regressions for each register group moved out of the catch-all path.
 
 ### P1: Cache, MMU, PSRAM, and Flash Contract Hardening

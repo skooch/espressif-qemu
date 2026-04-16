@@ -87,12 +87,12 @@ The Xtensa atomctl TCG regression is registered by `tests/tcg/xtensa/Makefile.so
 
 ### Phase 1 Generic MMIO Status
 
-The catch-all ESP32-S3 MMIO path is now observable through QEMU trace events without changing its compatibility behavior:
+The catch-all ESP32-S3 MMIO path is now observable through QEMU trace events:
 
 - `esp32s3_unimplemented_io_read`: physical address, access size, returned value, and guest PC.
 - `esp32s3_unimplemented_io_write`: physical address, access size, written value, and guest PC.
 
-The qtest `/xtensa/esp32s3/generic-mmio/compatibility-storage` pins the current unsupported-register compatibility behavior at `DR_REG_WCL_BASE + 0xf00`: writes are stored by word offset and reads return the stored value, with adjacent words remaining independent. This is not a hardware-fidelity claim. It is a regression guard so future replacement of catch-all offsets with explicit models is deliberate and reviewable.
+The qtest `/xtensa/esp32s3/generic-mmio/compatibility-storage` pins the remaining compatibility behavior. Stored readback is now restricted to explicitly classified out-of-scope LEDC and FE/FE2/NRX/BB radio/internal windows, with adjacent words remaining independent. Other unmapped fallthrough addresses such as `DR_REG_WCL_BASE + 0xf0` are deterministic read-as-zero/write-ignore while still emitting the trace events above. This is not a hardware-fidelity claim. It is a regression guard so future replacement of catch-all offsets with explicit models is deliberate and reviewable.
 
 Phase 1 closure used guest/firmware traces with these events enabled to classify active catch-all hits by owner and source availability. Boot-critical SPI0/SPI_MEM hits and core-debug ASSIST_DEBUG hits were replaced with explicit narrow models. Active catch-all use after Phase 1 is restricted to analog/peripheral/radio/internal windows outside this core-SoC pass; any future trace hit in an in-scope core boot, reset, sleep, cache, clock, interrupt, eFuse, PMS, RNG, or Xtensa-backend path should be treated as a new fidelity bug rather than accepted as generic storage behavior.
 
@@ -111,6 +111,8 @@ Remaining active catch-all hits from the final Phase 1 trace are classified as:
 | FE2, FE, NRX, BB radio/internal windows | `0x600050f0`, `0x60006090`, `0x6001ccd4`, `0x6001d054` | No public local register header found | Blocked for accuracy without exact radio-internal references; out of current core-SoC scope |
 
 The first follow-on P1 slice moves APB_SARADC and SENS out of the catch-all path. The modeled APB_SARADC surface covers offsets `0x00`, `0x04`, `0x18`, `0x28`, `0x38`, `0x3c`, and `0x70` with ESP-IDF-backed reset defaults and writable masks. The modeled SENS surface covers offsets `0x10`, `0x34`, and `0x3c` with source-backed writable masks. Unsupported offsets in both windows are deterministic read-as-zero/write-ignore rather than stored readback. This prevents generic-MMIO echo behavior from hiding missing analog-control modeling, but it does not claim ADC data-path fidelity.
+
+The second follow-on P1 slice removes broad stored-readback behavior from the fallback itself. Only deferred LEDC and blocked radio/internal ranges keep compatibility storage. Any other unmodeled core-SoC fallthrough is now RAZ/WI, so new active hits remain visible through trace logs and tests instead of being masked by generic echo state.
 
 ### Phase 2 APB_CTRL And ANA Status
 
@@ -248,7 +250,7 @@ Future Xtensa backend fixes must follow these accuracy rules:
 
 ## Current Gaps
 
-- Unimplemented MMIO is often papered over instead of modeled. There is a giant catch-all register window that stores writes and echoes them back on reads; this path is now traceable through `esp32s3_unimplemented_io_read` and `esp32s3_unimplemented_io_write`. Phase 1 classified the active catch-all hits and replaced the boot-critical SPI0/SPI_MEM and core-debug ASSIST_DEBUG hits with explicit narrow models, Phase 2 replaced the APB_CTRL RAM island with an explicit narrow model, and the first P1 slice replaced APB_SARADC/SENS active offsets with source-backed register-surface shims. The catch-all still remains for out-of-scope peripheral and radio/internal windows. The ANA PLL-ready behavior remains a named compatibility shim that forces firmware-visible ready bits high so polling loops keep moving. RMT remains explicitly mapped as an unimplemented device.
+- Unimplemented MMIO is now much less likely to be papered over accidentally. The remaining catch-all register window stores writes and echoes reads only for explicitly classified out-of-scope LEDC and FE/FE2/NRX/BB radio/internal ranges; other unmapped fallthrough addresses are RAZ/WI while still traceable through `esp32s3_unimplemented_io_read` and `esp32s3_unimplemented_io_write`. Phase 1 classified the active catch-all hits and replaced the boot-critical SPI0/SPI_MEM and core-debug ASSIST_DEBUG hits with explicit narrow models, Phase 2 replaced the APB_CTRL RAM island with an explicit narrow model, and P1 follow-on work replaced APB_SARADC/SENS active offsets with source-backed register-surface shims before limiting fallback storage to the deferred out-of-scope ranges. The ANA PLL-ready behavior remains a named compatibility shim that forces firmware-visible ready bits high so polling loops keep moving. RMT remains explicitly mapped as an unimplemented device.
 - GP-SPI now reads chip-select and DC signals through the routed-signal layer (`esp32s3_gpio_get_routed_signal_level`) rather than hard-coded GPIO numbers. However, the default signal-to-pin assignments (EPD_CS→GPIO34, EPD_DC→GPIO35, SD_CS→GPIO48, LoRa_CS→GPIO3) are still hardwired in GPIO reset state rather than being derived from firmware-written routing registers.
 - SPI2/SPI3 were intentionally a minimum-function stub. Transfers complete instantly, `USR` clears immediately, and `TRANS_DONE` is raised right away instead of following a more realistic controller state progression.
 - Clock, reset, and sleep/power behavior are only partially modeled. The `SYSTEM` block handles a small subset of registers, RTC sleep/wake logic is tailored to current timer/GPIO/EXT1 paths, and reset now uses local guest software reset dispatch but still lacks full silicon reset-tree, analog, and retention sequencing.
