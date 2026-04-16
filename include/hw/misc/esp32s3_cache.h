@@ -87,7 +87,7 @@ _Static_assert(sizeof(ESP32S3MMUEntry) == sizeof(uint32_t), "MMU Entry size must
  * up to 0x100.
  */
 #define ESP32S3_CACHE_REG_COUNT (0x200 / sizeof(uint32_t))
-#define ESP32S3_CACHE_DEFERRED_OP_COUNT 6
+#define ESP32S3_CACHE_DEFERRED_OP_COUNT 8
 
 /**
  * Convert a register address to its index in the registers array

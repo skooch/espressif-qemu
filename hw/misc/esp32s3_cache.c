@@ -42,6 +42,7 @@ typedef struct ESP32S3CacheDeferredOp {
     uint32_t ena_mask;
     uint32_t done_mask;
     bool dcache;
+    bool freeze;
 } ESP32S3CacheDeferredOp;
 
 static const ESP32S3CacheDeferredOp esp32s3_cache_deferred_ops[] = {
@@ -83,6 +84,20 @@ static const ESP32S3CacheDeferredOp esp32s3_cache_deferred_ops[] = {
         .done_mask = R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_DONE_MASK,
         .dcache = false,
     },
+    {
+        .addr = A_EXTMEM_DCACHE_FREEZE,
+        .ena_mask = R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK,
+        .done_mask = R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK,
+        .dcache = true,
+        .freeze = true,
+    },
+    {
+        .addr = A_EXTMEM_ICACHE_FREEZE,
+        .ena_mask = R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_ENA_MASK,
+        .done_mask = R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_DONE_MASK,
+        .dcache = false,
+        .freeze = true,
+    },
 };
 
 G_STATIC_ASSERT(ARRAY_SIZE(esp32s3_cache_deferred_ops) ==
@@ -121,6 +136,10 @@ static bool esp32s3_cache_domain_busy(ESP32S3CacheState *s, bool dcache)
     for (size_t i = 0; i < ARRAY_SIZE(esp32s3_cache_deferred_ops); i++) {
         const ESP32S3CacheDeferredOp *op = &esp32s3_cache_deferred_ops[i];
 
+        if (op->freeze) {
+            continue;
+        }
+
         if (op->dcache == dcache &&
             esp32s3_cache_deferred_op_active(s, i)) {
             return true;
@@ -128,6 +147,18 @@ static bool esp32s3_cache_domain_busy(ESP32S3CacheState *s, bool dcache)
     }
 
     return false;
+}
+
+static bool esp32s3_cache_domain_freeze_active(ESP32S3CacheState *s,
+                                               bool dcache)
+{
+    const hwaddr freeze_addr = dcache ? A_EXTMEM_DCACHE_FREEZE
+                                      : A_EXTMEM_ICACHE_FREEZE;
+    const uint32_t ena_mask = dcache
+        ? R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK
+        : R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_ENA_MASK;
+
+    return (s->regs[ESP32S3_CACHE_REG_IDX(freeze_addr)] & ena_mask) != 0;
 }
 
 static const hwaddr esp32s3_cache_access_ena_addrs[ESP32S3_CACHE_CPU_COUNT] = {
@@ -363,6 +394,35 @@ static void esp32s3_cache_complete_deferred_ops(void *opaque)
             continue;
         }
 
+        if (op->freeze) {
+            /*
+             * Hardware FREEZE_DONE asserts only after the domain drains any
+             * in-flight SYNC/PRELOAD/AUTOLOAD. The ROM `Cache_Suspend_DCache()`
+             * helper polls EXTMEM_CACHE_STATE via `Cache_Wait_Idle(0)` before
+             * relying on suspend, so defer DONE until the non-freeze ops in
+             * the same domain are idle. Keep ENA programmed (it latches the
+             * suspend state) and re-arm the deadline while the domain stays
+             * busy so the next non-freeze completion also re-checks here.
+             */
+            if (deadline > now) {
+                if (deadline < next_deadline) {
+                    next_deadline = deadline;
+                }
+                continue;
+            }
+            if (esp32s3_cache_domain_busy(s, op->dcache)) {
+                const int64_t rearm = now + CACHE_OP_DELAY_NS;
+                s->completion_deadline_ns[i] = rearm;
+                if (rearm < next_deadline) {
+                    next_deadline = rearm;
+                }
+                continue;
+            }
+            s->regs[index] |= op->done_mask;
+            s->completion_deadline_ns[i] = ESP32S3_CACHE_DEADLINE_NONE;
+            continue;
+        }
+
         if (deadline <= now) {
             s->regs[index] &= ~op->ena_mask;
             s->regs[index] |= op->done_mask;
@@ -410,7 +470,13 @@ static void esp32s3_cache_write_deferred_op(ESP32S3CacheState *s,
         s->completion_deadline_ns[op_index] =
             qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + CACHE_OP_DELAY_NS;
     } else {
-        if (!esp32s3_cache_deferred_op_active(s, op_index)) {
+        /*
+         * FREEZE is a latched suspend, not a one-shot command: clearing ENA
+         * releases the suspend and must drop DONE immediately. SYNC/PRELOAD/
+         * AUTOLOAD are one-shots where DONE persists until ENA is re-toggled.
+         */
+        if (!op->freeze &&
+            !esp32s3_cache_deferred_op_active(s, op_index)) {
             new_value |= s->regs[reg_index] & op->done_mask;
         }
         s->regs[reg_index] = new_value;
@@ -522,8 +588,25 @@ static inline void esp32s3_write_mmu_value(ESP32S3CacheState *s, hwaddr reg_addr
         const uint32_t physical_address = e.page_number * ESP32S3_PAGE_SIZE;
         const uint32_t former_physaddr = former.page_number * ESP32S3_PAGE_SIZE;
         const uint32_t virtaddr = index * ESP32S3_PAGE_SIZE;
+        const bool was_psram = former.type == ESP32S3_MMU_TYPE_PSRAM;
+        const bool is_psram_now = !e.invalid && e.type == ESP32S3_MMU_TYPE_PSRAM;
+
+        /*
+         * esp-hal and the ROM `Cache_Suspend_DCache()` contract require the
+         * DBUS cache to be frozen before DBUS-visible MMU entries change.
+         * Hardware does not latch a fault for the unsuspended case, so keep
+         * parity with silicon by logging (not faulting) when the guest
+         * deviates. Documented in ESP32S3_EMULATION_GAPS.md.
+         */
+        if ((was_psram || is_psram_now) &&
+            !esp32s3_cache_domain_freeze_active(s, true)) {
+            info_report("[CACHE] DBUS MMU entry %u rewritten without DCACHE "
+                        "suspend (was_psram=%d is_psram=%d, virt=0x%08x)",
+                        index, was_psram, is_psram_now, virtaddr);
+        }
+
         /* Invalidate the former mapping and clear the MR if and only if this is an "invalidate" operation */
-        esp32s3_mmu_invalidate_page(s, virtaddr, former_physaddr, former.type == ESP32S3_MMU_TYPE_PSRAM, e.invalid);
+        esp32s3_mmu_invalidate_page(s, virtaddr, former_physaddr, was_psram, e.invalid);
 
         if (!e.invalid) {
             if (e.type == ESP32S3_MMU_TYPE_FLASH && s->flash_blk != NULL) {
@@ -689,24 +772,6 @@ static void esp32s3_cache_write(void *opaque, hwaddr addr, uint64_t value,
                 break;
             case A_EXTMEM_CORE1_ACS_CACHE_INT_CLR:
                 esp32s3_cache_clear_access_status(s, 1, value);
-                break;
-            case A_EXTMEM_ICACHE_FREEZE:
-                if (value & R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_ENA_MASK) {
-                    /* Enable freeze, set DONE bit */
-                    s->regs[index] |= R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_DONE_MASK;
-                } else {
-                    /* Disable freeze, clear DONE bit */
-                    s->regs[index] &= ~R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_DONE_MASK;
-                }
-                break;
-            case A_EXTMEM_DCACHE_FREEZE:
-                if (value & R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK) {
-                    /* Enable freeze, set DONE bit */
-                    s->regs[index] |= R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK;
-                } else {
-                    /* Disable freeze, clear DONE bit */
-                    s->regs[index] &= ~R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK;
-                }
                 break;
             default:
                 {

@@ -561,11 +561,36 @@ static void test_cache_deferred_completion_semantics(void)
                                          cases[i].idle_mask);
     }
 
+    /*
+     * DCACHE_FREEZE is a latched suspend, not an instantaneous command.
+     * Hardware asserts FREEZE_DONE only after the domain drains in-flight
+     * ops; with no pending ops it still takes CACHE_OP_DELAY_NS to confirm.
+     * Clearing ENA releases the suspend and must drop DONE in the same write.
+     */
     qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE,
                  R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK);
     g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE) &
+                    (R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK |
+                     R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK),
+                    ==, R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK);
+
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS - 1);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE) &
                     R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK,
-                    ==, R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK);
+                    ==, 0);
+
+    qtest_clock_step(qts, 1);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE) &
+                    (R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK |
+                     R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK),
+                    ==, R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK |
+                        R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK);
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE) &
+                    (R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK |
+                     R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK),
+                    ==, 0);
 
     qtest_quit(qts);
 }
@@ -633,6 +658,108 @@ static void test_cache_deferred_ordering_and_clear(void)
                     (R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK |
                      R_EXTMEM_DCACHE_PRELOAD_CTRL_PRELOAD_DONE_MASK),
                     ==, 0);
+
+    qtest_quit(qts);
+}
+
+static void test_cache_freeze_waits_on_domain_drain(void)
+{
+    QTestState *qts = qts_start();
+    const uint32_t dcache_idle =
+        1u << R_EXTMEM_CACHE_STATE_DCACHE_STATE_SHIFT;
+    const uint32_t icache_idle =
+        1u << R_EXTMEM_CACHE_STATE_ICACHE_STATE_SHIFT;
+    uint32_t freeze;
+    uint32_t state;
+
+    /*
+     * Mirror the ROM `Cache_Suspend_DCache()` sequence: kick off a DCACHE
+     * SYNC and, before it drains, program DCACHE_FREEZE_ENA. Hardware keeps
+     * FREEZE_DONE deasserted until the in-flight SYNC finishes because the
+     * DBUS is still actively serving the drain. Stepping the clock in two
+     * halves lets the qtest observe the deferral between issue and drain.
+     */
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_SYNC_CTRL,
+                 R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE,
+                 R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK);
+    state = qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_STATE);
+    g_assert_cmphex(state & dcache_idle, ==, 0);
+    g_assert_cmphex(state & icache_idle, ==, icache_idle);
+    freeze = qtest_readl(qts,
+                         DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE);
+    g_assert_cmphex(freeze &
+                    R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK,
+                    ==, R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK);
+    g_assert_cmphex(freeze &
+                    R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK,
+                    ==, 0);
+
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS - 1);
+    freeze = qtest_readl(qts,
+                         DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE);
+    g_assert_cmphex(freeze &
+                    R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK,
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts,
+                                DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_DCACHE_SYNC_CTRL) &
+                    R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK,
+                    ==, 0);
+
+    /* SYNC drains on this tick; FREEZE_DONE observes the domain idle next. */
+    qtest_clock_step(qts, 1);
+    g_assert_cmphex(qtest_readl(qts,
+                                DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_DCACHE_SYNC_CTRL) &
+                    R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK,
+                    ==, R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK);
+    state = qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_CACHE_STATE);
+    g_assert_cmphex(state & dcache_idle, ==, dcache_idle);
+
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS);
+    freeze = qtest_readl(qts,
+                         DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE);
+    g_assert_cmphex(freeze &
+                    (R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK |
+                     R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK),
+                    ==,
+                    R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK |
+                    R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK);
+
+    /* Disable suspend: ENA and DONE must drop in the same write. */
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE, 0);
+    freeze = qtest_readl(qts,
+                         DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_FREEZE);
+    g_assert_cmphex(freeze &
+                    (R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_ENA_MASK |
+                     R_EXTMEM_DCACHE_FREEZE_DCACHE_FREEZE_DONE_MASK),
+                    ==, 0);
+
+    /*
+     * Cross-domain independence: an outstanding DCACHE SYNC must not hold up
+     * ICACHE FREEZE (and vice versa) because each suspend only covers its
+     * own cache domain.
+     */
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_SYNC_CTRL,
+                 R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_FREEZE,
+                 R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_ENA_MASK);
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS);
+    freeze = qtest_readl(qts,
+                         DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_FREEZE);
+    g_assert_cmphex(freeze &
+                    (R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_ENA_MASK |
+                     R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_DONE_MASK),
+                    ==,
+                    R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_ENA_MASK |
+                    R_EXTMEM_ICACHE_FREEZE_ICACHE_FREEZE_DONE_MASK);
+    g_assert_cmphex(qtest_readl(qts,
+                                DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_DCACHE_SYNC_CTRL) &
+                    R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK,
+                    ==, R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_FREEZE, 0);
 
     qtest_quit(qts);
 }
@@ -2719,6 +2846,8 @@ int main(int argc, char **argv)
                    test_cache_deferred_completion_semantics);
     qtest_add_func("/esp32s3/cache/deferred-ordering-clear",
                    test_cache_deferred_ordering_and_clear);
+    qtest_add_func("/esp32s3/cache/freeze-waits-on-drain",
+                   test_cache_freeze_waits_on_domain_drain);
     qtest_add_func("/esp32s3/cache/fault-preserved-deferred",
                    test_cache_fault_preserved_across_deferred_ops);
     qtest_add_func("/esp32s3/cache/invalid-mmu-fault-irq",
