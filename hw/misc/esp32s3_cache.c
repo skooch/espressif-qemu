@@ -600,9 +600,10 @@ static inline void esp32s3_write_mmu_value(ESP32S3CacheState *s, hwaddr reg_addr
          */
         if ((was_psram || is_psram_now) &&
             !esp32s3_cache_domain_freeze_active(s, true)) {
-            info_report("[CACHE] DBUS MMU entry %u rewritten without DCACHE "
-                        "suspend (was_psram=%d is_psram=%d, virt=0x%08x)",
-                        index, was_psram, is_psram_now, virtaddr);
+            qemu_log_mask(LOG_GUEST_ERROR,
+                          "[CACHE] DBUS MMU entry %u rewritten without DCACHE "
+                          "suspend (was_psram=%d is_psram=%d, virt=0x%08x)\n",
+                          index, was_psram, is_psram_now, virtaddr);
         }
 
         /* Invalidate the former mapping and clear the MR if and only if this is an "invalidate" operation */
