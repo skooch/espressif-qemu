@@ -219,6 +219,7 @@ tests_x86_64_system_thorough = [
 tests_xtensa_system_thorough = [
   'xtensa_lx60',
   'xtensa_esp32s3_cache_reject',
+  'xtensa_esp32s3_multicore_park_flash',
   'xtensa_esp32s3_sleep_wake',
 ]
 

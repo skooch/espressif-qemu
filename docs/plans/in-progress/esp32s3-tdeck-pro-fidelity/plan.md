@@ -201,6 +201,28 @@ The second P1 cache/MMU hardening slice closes a coherency gap exposed by a cont
 
 **Status:** complete; SPI1 mapped flash refresh slice committed as `ae274a4452`.
 
+## Active Implementation Slice: P1 Multicore-Park Flash Coherency Board Regression
+
+The third P1 cache/MMU hardening slice promotes the direct-MMIO SPI1 mapped-flash coherency qtest (`ae274a4452`) into a guest-driven board regression that exercises the full `FlashStorage::multicore_auto_park()` contract local firmware uses. The test boots an ESP32-S3 ROM ELF via `-bios` with `-smp 2`, brings up the APP core with a shared-DRAM counter, parks the APP core through the exact `esp-hal` primitives (`SYSTEM.CORE_1_CONTROL_0` clkgate/runstall and RTC_CNTL `OPTIONS0`+`SW_CPU_STALL` magic stall), confirms the APP core is paused via the counter, mutates flash through SPI1 page program and sector erase from the still-running PRO core, validates the mapped EXTMEM alias reflects the new flash contents at each phase, unparks the APP core, and confirms it resumes before exiting through semihosting.
+
+### File Map
+
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/plan.md` (track third P1 cache/MMU slice status)
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/progress.md` (session log)
+- Modify: `ESP32S3_EMULATION_GAPS.md` (document multicore-park flash coherency board-path coverage)
+- Modify: `tests/functional/meson.build` (register new functional test)
+- Add: `tests/functional/test_xtensa_esp32s3_flash_multicore_park.py` (board-path regression for `FlashStorage::multicore_auto_park()` flash coherency contract)
+
+### P1 Multicore-Park Flash Coherency Board Regression Tasks
+
+- [x] Build a two-core ROM ELF that clears EXTMEM ICACHE core0-bus-shut, installs an MMU entry mapping flash page 0 into the ICACHE alias, brings up the APP core on a shared-DRAM counter loop, and parks it through RTC_CNTL `OPTIONS0`+`SW_CPU_STALL` stall-magic (the same primitive `esp-hal` `park_other_core()` uses; the `SYSTEM.CORE_1_CONTROL_0` clkgate/runstall path is redundant here and omitted to keep the ROM minimal).
+- [x] From the still-running PRO core, mutate the mapped flash page via SPI1 WREN + page program and validate the ICACHE alias reflects the new payload; then erase the sector via SPI1 WREN + SE and validate the alias reflects `0xffffffff`.
+- [x] Confirm the APP-core counter is frozen across both mutations and resumes advancing after unparking; exit through semihosting with a deterministic pass/fail code.
+- [x] Embed the ROM as zlib+base64 in a new functional test modelled on `test_xtensa_esp32s3_sleep_wake.py` and register it in `tests/functional/meson.build`. The test also creates a pre-erased 2 MiB `-drive if=mtd` backing image so the guest's SPI1 page-program sees NOR-erased cells, matching the `create_erased_flash_image()` pattern in `tests/qtest/esp32s3-test.c`.
+- [x] Run the verification gate before committing: `git diff --check`, incremental `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test`, the new functional test, the `flash-spi-updates-mapped-alias` / `ctrl1-flash-ibus-gate` / `ctrl1-psram-dbus-gate` qtests, the full `esp32s3-test` qtest suite, and `test_xtensa_esp32s3_cache_reject.py` and `test_xtensa_esp32s3_sleep_wake.py`.
+
+**Status:** complete; the multicore-park flash coherency board regression lands as `tests/functional/test_xtensa_esp32s3_multicore_park_flash.py`. The embedded ROM parks the APP core through the RTC_CNTL stall-magic, mutates flash via SPI1 WREN+PP and WREN+SE with the APP-core counter frozen, verifies the EXTMEM ICACHE alias reflects each mutation, unparks the APP core, and confirms its counter resumes before a semihosted simcall exits with code 0. One open item worth noting: the reset-vector boot-stub installer in `esp32s3_load_bios()` fans out to all CPUs, but the `-kernel` path in `esp32s3_machine_init` only installs the stub on cpu[0]; the new board regression therefore uses `-bios` rather than `-kernel`, matching the existing cache-reject/sleep-wake tests.
+
 ## Evidence Summary
 
 - The active hardware target is `../tdeck-pro-rust/`, which is heavily `esp-rs` based rather than an ESP-IDF application. `Cargo.toml` enables `esp-hal` with `esp32s3`, `psram`, and `unstable`, `esp-storage`, `esp-hal-ota`, `esp-radio` with `wifi` and `ble`, `esp-rtos`, and `embassy-net`.
@@ -253,7 +275,7 @@ Why this stays high:
 
 First slices:
 
-- [ ] Re-check the flash-write and erase sequence against `FlashStorage::multicore_auto_park()` so cache, park, and unpark behavior stay guest-visible in the same places the libraries expect. (Partial: SPI1 mapped flash refresh slice landed; multicore-park board-path evidence still pending.)
+- [x] Re-check the flash-write and erase sequence against `FlashStorage::multicore_auto_park()` so cache, park, and unpark behavior stay guest-visible in the same places the libraries expect. (Direct qtest for mapped-alias coherency landed as `flash-spi-updates-mapped-alias`; board-path multicore-park regression landed as `test_xtensa_esp32s3_multicore_park_flash.py`.)
 - [ ] Tighten the PSRAM bring-up contract around DBUS MMU programming, `EXTMEM_DCACHE_CTRL1`, and cache suspend/resume so the active `esp-hal` path is explicit rather than incidental. (Partial: EXTMEM cache bus gating slice landed; cache suspend/resume depth still pending.)
 - [ ] Keep the already-landed reject and fault paths as the baseline, and only widen the remaining `CORE0/1_ACS_CACHE_INT_*` surface if the guest starts reading those bits.
 - [ ] Add the next regression at the same layer as the blocker: qtest for direct MMIO contract, or a board-path guest repro if the library-visible behavior only appears there.
@@ -263,7 +285,8 @@ Current P1 cache/MMU progress:
 - 2026-04-16: The EXTMEM cache model now resets `DCACHE_CTRL1`/`ICACHE_CTRL1` to the ESP-IDF documented per-core bus-shut defaults and the MMU alias translation now refuses core0 accesses until the relevant bus bit is cleared.
 - 2026-04-16: Direct qtests now cover the active `esp-hal`-style contract for flash/PSRAM alias accesses: MMU mapping alone is not sufficient, and the guest must clear the relevant `CTRL1` shut bit before the mapped window becomes usable.
 - 2026-04-16: SPI1 flash program and sector erase operations now refresh any mapped flash pages in the EXTMEM mirror, so a guest that parks the other core and mutates flash through SPI1 sees the updated contents through the cache alias without forcing an MMU remap.
-- 2026-04-16: Remaining work in this track is any additional board-path evidence around `multicore_auto_park()` sequencing itself and any ROM-internal cache suspend/resume depth that turns out to be guest-visible beyond the now-explicit `CTRL1` gate and flash-mirror refresh.
+- 2026-04-16: A board-path functional regression now exercises the full `FlashStorage::multicore_auto_park()` contract from a guest ROM: the APP core runs a shared-DRAM counter, the PRO core parks it through RTC_CNTL stall-magic, mutates flash via SPI1 WREN+PP and WREN+SE while the counter is frozen, verifies the ICACHE alias reflects each mutation, then unparks the APP core and confirms its counter resumes before semihosted exit.
+- 2026-04-16: Remaining work in this track is ROM-internal cache suspend/resume depth if it turns out to be guest-visible beyond the now-explicit `CTRL1` gate, the SPI1 mapped-flash refresh, and the multicore-park board regression.
 
 ### P2: Xtensa Backend Residual Queue
 
