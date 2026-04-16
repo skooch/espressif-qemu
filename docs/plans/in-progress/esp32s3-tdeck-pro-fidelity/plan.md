@@ -157,6 +157,50 @@ The second P1 slice narrows the broad fallback region itself. Instead of storing
 
 **Status:** complete; generic-MMIO fallback allowlist slice ready to commit.
 
+## Active Implementation Slice: P1 EXTMEM Cache Bus Gating
+
+The first P1 cache/MMU hardening slice makes the `esp-hal` PSRAM and flash bring-up contract explicit by honoring per-core bus-shut bits in the EXTMEM cache control registers. MMU alias translation now refuses core0 accesses until the relevant `EXTMEM_DCACHE_CTRL1`/`EXTMEM_ICACHE_CTRL1` bus bit is cleared, matching the documented esp-hal sequence rather than treating the alias as immediately usable after MMU mapping.
+
+### File Map
+
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/plan.md` (track P1 cache/MMU slice status)
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/progress.md` (session log)
+- Modify: `ESP32S3_EMULATION_GAPS.md` (document the explicit cache bus gate and the now-active esp-hal contract)
+- Modify: `hw/misc/esp32s3_cache.c` (use ESP-IDF-backed CTRL1 field names, reset defaults, MMU alias gating)
+- Modify: `include/hw/misc/esp32s3_cache.h` (CTRL1 field declarations and reset defaults)
+- Modify: `tests/qtest/esp32s3-test.c` (direct qtests for flash/PSRAM aliases blocked until CTRL1 bus bit is cleared)
+
+### P1 EXTMEM Cache Bus Gating Tasks
+
+- [x] Use ESP-IDF-backed per-core `CTRL1` field names and reset defaults in the cache model.
+- [x] Refuse core0 alias translation until the relevant bus bit is cleared.
+- [x] Cover flash-IBUS and PSRAM-DBUS gating with direct qtests (`/xtensa/esp32s3/cache/ctrl1-flash-ibus-gate`, `/xtensa/esp32s3/cache/ctrl1-psram-dbus-gate`).
+- [x] Run the ESP32-S3 qtest suite plus cache-reject and sleep-wake functional tests before committing.
+
+**Status:** complete; EXTMEM cache bus gating slice committed as `121ab7e03f`.
+
+## Active Implementation Slice: P1 SPI1 Mapped Flash Refresh
+
+The second P1 cache/MMU hardening slice closes a coherency gap exposed by a controlled qtest repro: SPI1 page program updated the flash backend, but the mapped EXTMEM alias stayed stale until remap. SPI1 flash-mutating commands now refresh affected mapped flash pages so guests that park the other core and mutate flash through SPI1 see the updated contents through the cache alias without a forced MMU remap. This is the direct-MMIO half of the `FlashStorage::multicore_auto_park()` contract; board-path evidence for the multicore-park sequence itself is still pending.
+
+### File Map
+
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/plan.md` (track second P1 cache/MMU slice status)
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/progress.md` (session log)
+- Modify: `ESP32S3_EMULATION_GAPS.md` (document SPI1 mapped flash refresh and remaining limits)
+- Modify: `hw/ssi/esp32s3_spi.c` and `include/hw/ssi/esp32s3_spi.h` (notify EXTMEM cache on flash-mutating SPI1 commands)
+- Modify: `hw/misc/esp32s3_cache.c` and `include/hw/misc/esp32s3_cache.h` (refresh affected mapped flash pages on program/erase notifications)
+- Modify: `hw/xtensa/esp32s3.c` (wire SPI1 cache notifications into the SoC cache model)
+- Modify: `tests/qtest/esp32s3-test.c` (direct qtest proving SPI1 reads and mapped cache alias stay coherent across program and sector erase)
+
+### P1 SPI1 Mapped Flash Refresh Tasks
+
+- [x] Wire SPI1 flash-mutating commands into the EXTMEM cache model so page-program and erase refresh affected mapped flash pages.
+- [x] Add a direct qtest (`/xtensa/esp32s3/cache/flash-spi-updates-mapped-alias`) that proves SPI1 reads and the mapped cache alias stay coherent across program and sector erase.
+- [x] Run the ESP32-S3 qtest suite plus cache-reject and sleep-wake functional tests before committing.
+
+**Status:** complete; SPI1 mapped flash refresh slice committed as `ae274a4452`.
+
 ## Evidence Summary
 
 - The active hardware target is `../tdeck-pro-rust/`, which is heavily `esp-rs` based rather than an ESP-IDF application. `Cargo.toml` enables `esp-hal` with `esp32s3`, `psram`, and `unstable`, `esp-storage`, `esp-hal-ota`, `esp-radio` with `wifi` and `ble`, `esp-rtos`, and `embassy-net`.
@@ -209,8 +253,8 @@ Why this stays high:
 
 First slices:
 
-- [ ] Re-check the flash-write and erase sequence against `FlashStorage::multicore_auto_park()` so cache, park, and unpark behavior stay guest-visible in the same places the libraries expect.
-- [ ] Tighten the PSRAM bring-up contract around DBUS MMU programming, `EXTMEM_DCACHE_CTRL1`, and cache suspend/resume so the active `esp-hal` path is explicit rather than incidental.
+- [ ] Re-check the flash-write and erase sequence against `FlashStorage::multicore_auto_park()` so cache, park, and unpark behavior stay guest-visible in the same places the libraries expect. (Partial: SPI1 mapped flash refresh slice landed; multicore-park board-path evidence still pending.)
+- [ ] Tighten the PSRAM bring-up contract around DBUS MMU programming, `EXTMEM_DCACHE_CTRL1`, and cache suspend/resume so the active `esp-hal` path is explicit rather than incidental. (Partial: EXTMEM cache bus gating slice landed; cache suspend/resume depth still pending.)
 - [ ] Keep the already-landed reject and fault paths as the baseline, and only widen the remaining `CORE0/1_ACS_CACHE_INT_*` surface if the guest starts reading those bits.
 - [ ] Add the next regression at the same layer as the blocker: qtest for direct MMIO contract, or a board-path guest repro if the library-visible behavior only appears there.
 
