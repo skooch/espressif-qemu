@@ -66,7 +66,7 @@ Every implementation phase in `docs/plans/in-progress/esp32s3-core-soc-fidelity/
 - `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test`
 - `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py`
 
-After the Xtensa atomctl TCG regression is registered in the normal local build flow, that regression becomes part of the verification floor for backend-related phases.
+The Xtensa atomctl TCG regression is registered by `tests/tcg/xtensa/Makefile.softmmu-target` through the normal Xtensa softmmu wildcard test list. On this machine, the local build tree does not expose a Ninja TCG test target and GNU make is unavailable, so backend-related phases must run the atomctl regression through the documented local fallback path until a full TCG harness runner is available.
 
 ### Phase 1 Generic MMIO Status
 
@@ -183,6 +183,20 @@ The RNG contract remains intentionally compatibility-oriented:
 
 Factory-programmed eFuse values, MAC/chip personalization, security provisioning, eFuse coding-error repair behavior, physical eFuse burn voltage/timing, PMS enforcement, and physical RNG behavior remain synthetic or blocked for accuracy unless an explicit eFuse image, hardware probe, or stronger vendor reference is added.
 
+### Phase 7 Xtensa Backend Verification Gate
+
+`tests/tcg/xtensa/test_s32c1i_atomctl.S` is now the explicit guard for the ESP32-S3 `S32C1I`/`ATOMCTL` local-memory distinction that affects broader firmware coverage. It is part of the normal Xtensa softmmu TCG test set because `tests/tcg/xtensa/Makefile.softmmu-target` wildcard-registers usable `*.S` tests. No `Makefile.target` registration change was needed.
+
+Local execution of the normal TCG harness remains environment-gated on this machine because no Ninja TCG target is exposed in the current build tree and `gmake` is not installed. The regression was therefore verified through the project-documented fallback path: build `linker.ld`, `crt.o`, `vectors.o`, and `test_s32c1i_atomctl` with the installed Xtensa ESP32-S3 cross-compiler, then run the resulting ELF under `build/qemu-system-xtensa -M sim -cpu esp32s3 -semihosting -icount 6`. That path exits successfully and is sufficient for this phase's backend gate.
+
+Future Xtensa backend fixes must follow these accuracy rules:
+
+- Base Xtensa ISA fixes may use the local Xtensa ISA manual under `/Users/skooch/projects/tdeck-pro-rust/tdeck-pro-rust/docs/xtensa`, provided the exact instruction semantics are cited in the implementation or test rationale.
+- ESP32-S3 configured-core, TIE, or SIMD changes require either an exact ESP32-S3 configured-extension reference or a reproduced guest opcode failure with a bounded expected behavior. Broad translation expansion from guesswork is blocked for accuracy.
+- `target/xtensa/translate_tie_esp32s3.c` must not grow proactive instruction support unless the instruction is backed by exact semantics or by a failing guest binary whose intended behavior can be independently established.
+- Every backend fix needs proof at the correct level: an existing TCG test, a new focused TCG test, or a minimal board ROM probe when the behavior cannot be isolated in the TCG harness.
+- Broad ESP32-S3 extension completeness remains blocked for accuracy until the exact ESP32-S3 configured-core and TIE option references are supplied.
+
 ### Current Fidelity / Risk Table
 
 | Subsystem | Current state | Gap vs real hardware | Likely real-usage risk |
@@ -197,7 +211,7 @@ Factory-programmed eFuse values, MAC/chip personalization, security provisioning
 | eFuse / PMS / RNG | Explicit synthetic eFuse contract, source-backed PMS register masks, host-backed RNG data path | Factory personalization, security provisioning, PMS enforcement, and physical entropy behavior remain synthetic or blocked | Low to Medium |
 | Ethernet | Generic `open_eth` stand-in with direct link/MII and descriptor loopback regression coverage | Still not an ESP32-S3-specific EMAC model or full PHY implementation | Low for the current workload, Medium to High if future firmware depends on deeper EMAC details |
 | RMT | Unimplemented | Entire block still absent | High if firmware depends on it |
-| Xtensa backend | Sufficient for current guest path | Architectural edge cases and local-memory exclusion remain incomplete | High for broader firmware coverage |
+| Xtensa backend | Current guest path plus the `S32C1I`/`ATOMCTL` local-memory distinction are covered by focused regression gates | Architectural edge cases and broad configured-core/TIE/SIMD completeness remain blocked without exact extension references or reproduced opcode failures | High for broader firmware coverage |
 
 ## Current Gaps
 

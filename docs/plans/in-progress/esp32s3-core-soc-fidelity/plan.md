@@ -4,7 +4,7 @@
 Turn the remaining ESP32-S3 core-SoC quality recommendations into information-gated implementation tracks that improve QEMU accuracy without claiming fidelity beyond the available public and local reference material.
 
 ## Current Phase
-Phase 7
+Phase 8
 
 ## Scope
 This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shims, RTC/reset/sleep, cache/MMU, clocking, interrupt matrix, eFuse, PMS/RNG, Xtensa backend confidence, and documentation. It does not plan unrelated peripheral fidelity.
@@ -53,8 +53,8 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 - Modify: `target/xtensa/translate_tie_esp32s3.c` (TIE translation only for confirmed guest or manual-backed instructions)
 - Modify: `tests/qtest/esp32s3-test.c` (direct core-SoC regression coverage)
 - Modify: `tests/functional/test_xtensa_esp32s3_cache_reject.py` (board-level cache reject probes if widened)
-- Modify: `tests/tcg/xtensa/test_s32c1i_atomctl.S` (Xtensa atomctl coverage if integrated into normal verification)
-- Modify: `tests/tcg/xtensa/Makefile.target` (TCG test registration if missing from build)
+- Modify: `tests/tcg/xtensa/test_s32c1i_atomctl.S` (Xtensa atomctl coverage if integration changes are needed)
+- Modify: `tests/tcg/xtensa/Makefile.softmmu-target` (TCG test registration if missing from build)
 - Modify: `CLAUDE.md` (document new required verification or command failures if discovered)
 - Create: `docs/plans/in-progress/esp32s3-core-soc-fidelity/findings.md` (trace classification and information-gating findings)
 
@@ -122,18 +122,20 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 - **Note:** eFuse is register-accurate for the synthetic QEMU eFuse image and protection mechanics covered by ESP-IDF tables and direct qtests. PMS is a source-backed register-surface contract only; permission enforcement remains blocked. RNG is a host-backed compatibility model for the single documented `WDEV_RND_REG` data path, not a physical entropy model.
 
 ### Phase 7: Xtensa Backend Verification Gate
-- [ ] Confirm `tests/tcg/xtensa/test_s32c1i_atomctl.S` is built and runnable through the normal Xtensa TCG verification flow; if it is not registered, update `tests/tcg/xtensa/Makefile.target` so the regression runs on this machine.
-- [ ] Add `ESP32S3_EMULATION_GAPS.md` guidance that base Xtensa ISA fixes may use the Xtensa ISA manual, while ESP32-S3 TIE/SIMD fixes require either an exact extension reference or a reproduced guest opcode failure.
-- [ ] Keep `target/xtensa/translate_tie_esp32s3.c` changes gated behind a failing guest binary or exact manual-backed instruction semantics; no proactive translation expansion without one of those inputs.
-- [ ] Add a minimal board ROM probe or TCG test for every backend fix that cannot be proven by an existing TCG test.
-- [ ] Mark broad ESP32-S3 extension completeness as `blocked for accuracy` unless the exact ESP32-S3 configured-core and TIE option references are supplied.
-- **Status:** pending
+- [x] Confirm `tests/tcg/xtensa/test_s32c1i_atomctl.S` is registered by the normal Xtensa TCG verification makefile; no registration update is needed because `tests/tcg/xtensa/Makefile.softmmu-target` wildcard-adds every usable `*.S` test.
+- [x] Confirm `tests/tcg/xtensa/test_s32c1i_atomctl.S` builds and runs on this machine through the documented local fallback path using the installed Xtensa ESP32-S3 cross-compiler and `build/qemu-system-xtensa -M sim -cpu esp32s3`.
+- [x] Add `ESP32S3_EMULATION_GAPS.md` guidance that base Xtensa ISA fixes may use the Xtensa ISA manual, while ESP32-S3 TIE/SIMD fixes require either an exact extension reference or a reproduced guest opcode failure.
+- [x] Keep `target/xtensa/translate_tie_esp32s3.c` changes gated behind a failing guest binary or exact manual-backed instruction semantics; no proactive translation expansion without one of those inputs.
+- [x] Add a minimal board ROM probe or TCG test for every backend fix that cannot be proven by an existing TCG test.
+- [x] Mark broad ESP32-S3 extension completeness as `blocked for accuracy` unless the exact ESP32-S3 configured-core and TIE option references are supplied.
+- **Status:** complete
+- **Note:** The local build tree currently does not expose a Ninja target for Xtensa TCG tests and this machine still lacks `gmake`, so Phase 7 used the repo-documented local fallback compile/run path. Registration in the normal TCG makefile is confirmed by source inspection, but full local TCG harness execution remains environment-gated until GNU make or an equivalent configured TCG runner is available.
 
 ### Phase 8: Documentation, Verification, And Plan Exit
 - [ ] Update `ESP32S3_EMULATION_GAPS.md` so each subsystem has a final status: `register-accurate`, `SDK-contract accurate`, `board-path accurate`, `compatibility shim`, or `blocked for accuracy`.
 - [ ] Run `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` and record the result in the implementation progress for the active phase.
 - [ ] Run `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` and record the result in the implementation progress for the active phase.
-- [ ] Run the Xtensa TCG atomctl regression after Phase 7 registers it in the normal build flow, and record the exact command and result in the implementation progress.
+- [ ] Run the Xtensa TCG atomctl regression using the Phase 7-confirmed registration or documented local fallback path, and record the exact command and result in the implementation progress.
 - [ ] Move this plan from `docs/plans/in-progress/esp32s3-core-soc-fidelity/plan.md` to `docs/plans/implemented/esp32s3-core-soc-fidelity/plan.md` only after all required verification steps have passed or documented blockers have been accepted.
 - **Status:** pending
 
@@ -169,3 +171,4 @@ This plan covers core SoC behavior only: generic MMIO removal, ANA/APB boot shim
 | Phase 6 eFuse/PMS/RNG discovery search failed with `No such file or directory` for `include/hw/xtensa/esp32s3.h`. | Included a guessed QEMU header path in a scoped `rg` command. | Used the existing `hw/xtensa/esp32s3.c`, `include/hw/nvram/*efuse.h`, `include/hw/misc/esp32s3_reg.h`, and ESP-IDF `reg_base.h` sources directly instead of assuming that header exists. |
 | Initial Phase 6 eFuse qtest expected programmed block reads to update immediately after a program command. | The model writes successful programs to the persistent mirror and ESP-IDF performs a read command after programming to refresh read registers. | Updated the qtest helper to run an eFuse read command after successful programming before asserting guest-visible read-register contents. |
 | Phase 6 RNG qtest crashed QEMU with signal 11 on a write to the read-only RNG region. | The RNG model had no write handler, so the qtest exposed an unsafe guest-write path instead of deterministic unsupported behavior. | Added an explicit no-op RNG write handler and kept qtest coverage proving writes do not crash and unsupported offsets remain zero. |
+| Phase 7 plan referenced non-existent `tests/tcg/xtensa/Makefile.target`. | Tried to inspect the named file while confirming atomctl registration. | Corrected the plan to reference `tests/tcg/xtensa/Makefile.softmmu-target`, which wildcard-registers `test_s32c1i_atomctl.S`; no makefile edit was required. |
