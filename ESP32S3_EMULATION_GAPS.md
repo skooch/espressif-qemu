@@ -65,6 +65,7 @@ Every future implementation phase that changes this core-SoC surface must keep t
 
 - `QTEST_QEMU_BINARY=build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test`
 - `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py`
+- `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_sleep_wake.py`
 
 The Xtensa atomctl TCG regression is registered by `tests/tcg/xtensa/Makefile.softmmu-target` through the normal Xtensa softmmu wildcard test list. On this machine, the local build tree does not expose a Ninja TCG test target and GNU make is unavailable, so backend-related phases must run the atomctl regression through the documented local fallback path until a full TCG harness runner is available.
 
@@ -75,7 +76,7 @@ The Xtensa atomctl TCG regression is registered by `tests/tcg/xtensa/Makefile.so
 | Generic MMIO burn-down | Register-accurate for replaced SPI0/SPI_MEM and ASSIST_DEBUG active offsets; compatibility shim for remaining out-of-scope catch-all windows | Remaining APB_SARADC, SENS, LEDC, and radio/internal catch-all hits are deferred to their owning analog/peripheral/radio phases |
 | APB_CTRL date/revision | Register-accurate for ESP32-S3 date; compatibility shim for QEMU-origin and legacy ECO marker words | Broader APB_CTRL/SYSCON behavior remains source-gated to future owning phases |
 | ANA / PLL ready | Compatibility shim | Analog PLL calibration, lock timing, jitter, and failure modes remain blocked for accuracy |
-| RTC, reset, sleep, wake | SDK-contract accurate and board-path accurate for modeled light-sleep wake/reject and reset-domain flows | Full power-domain sequencing, retention timing, brownout interactions, ULP/touch/USB wake, and analog reset behavior remain blocked for accuracy |
+| RTC, reset, sleep, wake | SDK-contract accurate and board-path accurate for modeled light-sleep wake/reject, guest timer wake recovery, and reset-domain flows | Full power-domain sequencing, retention timing, brownout interactions, ULP/touch/USB wake, and analog reset behavior remain blocked for accuracy |
 | Cache, MMU, flash, PSRAM | SDK-contract accurate for MMU entries, flash/PSRAM mappings, invalid-entry faults, per-core rejects, and cache-maintenance busy/done/cancel behavior | Cache cycle timing, replacement policy, contention, pipeline stalls, and flash-controller micro-timing remain blocked for accuracy |
 | Clock tree | SDK-contract accurate for XTAL, RC_FAST, PLL-selected CPU rates, APB derivation, RTC/SYSTEM-driven source updates, UART timing, and TIMG APB/XTAL counter rates | Analog PLL dynamics, oscillator startup, jitter, DFS/source-switch latency, SYSTIMER sleep compensation, and broader peripheral fanout remain blocked for accuracy |
 | Interrupt matrix | Register-accurate for source mapping, per-core status windows, output routing, remap behavior, and documented reserved-source suppression policy | The reserved-source suppression itself is a QEMU compatibility policy, not proven hardware behavior |
@@ -141,8 +142,9 @@ The first follow-on P0 sleep/clock/reset slice adds an explicit board-visible li
 - The same owner also combines RTC per-core CPU-stall requests and SYSTEM core1 RUNSTALL, so clearing one hold source does not resume a CPU that is still held by another modeled source.
 - SYSTEM core1 RUNSTALL is now exposed from the clock block as a named GPIO output instead of directly calling `cpu_pause()` / `cpu_resume()` inside the clock device.
 - Direct qtests cover timer sleep asserting `light-sleep` until wake, GPIO sleep rejection never asserting `light-sleep`, RTC CPU-stall output behavior, and SYSTEM core1 RUNSTALL output behavior.
+- The functional test `test_xtensa_esp32s3_sleep_wake.py` boots a ROM ELF through the ESP32-S3 board `-bios` path, programs RTC timer wake from guest code, enters light sleep, resumes after the modeled wake, and validates guest-visible wake status before semihosting exit.
 
-This is a QEMU-visible SoC transition contract, not hardware proof of full ESP32-S3 low-power behavior. The local sleep reference still identifies broader missing behavior: light sleep should switch away from PLL before entry, stop XTAL/PLL and usually RC_FAST, compensate stopped SYSTIMER time on wake, model power-domain and peripheral gating decisions, and handle CPU retention/power-down variants. Those remain blocked for accuracy until each item is backed by the local TRM/ESP-IDF/esp-hal evidence or a hardware probe.
+This is a QEMU-visible SoC transition contract and a guest-level recovery regression, not hardware proof of full ESP32-S3 low-power behavior. The local sleep reference still identifies broader missing behavior: light sleep should switch away from PLL before entry, stop XTAL/PLL and usually RC_FAST, compensate stopped SYSTIMER time on wake, model power-domain and peripheral gating decisions, and handle CPU retention/power-down variants. Those remain blocked for accuracy until each item is backed by the local TRM/ESP-IDF/esp-hal evidence or a hardware probe.
 
 ### Phase 3 Reset Domain Status
 
@@ -253,7 +255,7 @@ Future Xtensa backend fixes must follow these accuracy rules:
 - Some blocks are substituted with generic IP rather than an S3-specific model. Ethernet still uses `open_eth`, but the current tree now makes the QEMU-visible contract explicit: `MIICOMMAND`/MII link polling stays latched correctly, backend link toggles update `MIISTATUS`, and loopback mode can drive descriptor RX from TX for direct regression coverage.
 - SPI1 had an outright correctness bug in the flash transfer loop: the byte loop compared the payload value instead of the loop index, making the transfer path data-dependent. (Now fixed; see Stage 2.)
 - The generic Xtensa backend still has known accuracy gaps such as remaining reject-surface coverage gaps and unimplemented opcode paths.
-- Real `esp32s3` board guest probing is no longer blocked by ROM handoff. The board now loads custom ROM ELFs through `-bios` into each CPU address space correctly, and the tree now has checked-in functional regressions for recoverable cache-alias reject handling on both CPU0 and CPU1. The remaining gap is only the broader reject surface beyond the active board path.
+- Real `esp32s3` board guest probing is no longer blocked by ROM handoff. The board now loads custom ROM ELFs through `-bios` into each CPU address space correctly, and the tree now has checked-in functional regressions for recoverable cache-alias reject handling on both CPU0 and CPU1 plus guest RTC timer light-sleep wake recovery. The remaining cache-specific gap is only the broader reject surface beyond the active board path.
 
 ### Task 1 Shortcut Inventory (2026-04-04)
 

@@ -42,7 +42,7 @@ This worktree starts the P0 sleep/clock/reset track with a focused light-sleep t
 - [x] Update `ESP32S3_EMULATION_GAPS.md` to describe this as a board-visible light-sleep transition while keeping full power-domain sequencing, peripheral gating, and oscillator timing blocked.
 - [x] Run the ESP32-S3 qtest suite and cache-reject functional test before committing.
 
-**Status:** in_progress; P0 light-sleep transition slice complete, remaining P0 work still tracked below.
+**Status:** complete; P0 light-sleep transition slice committed.
 
 ## Active Implementation Slice: P0 Local Reset Dispatch
 
@@ -92,6 +92,27 @@ The third P0 slice expands clock-rate fanout from CPU/UART-only behavior into ti
 
 **Status:** complete; TIMG clock fanout slice ready to commit.
 
+## Active Implementation Slice: P0 Sleep/Wake Board Regression
+
+The fourth P0 slice adds a guest-level regression for the modeled light-sleep path. A minimal ESP32-S3 ROM ELF is loaded through the board `-bios` path, programs RTC timer wake, enters light sleep, resumes after wake, validates the guest-visible wake cause/state, and exits through semihosting.
+
+### File Map
+
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/plan.md` (track P0 board regression status)
+- Modify: `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/progress.md` (session log)
+- Modify: `ESP32S3_EMULATION_GAPS.md` (document sleep/wake board regression coverage and limits)
+- Modify: `tests/functional/meson.build` (register the new Xtensa functional test)
+- Add: `tests/functional/test_xtensa_esp32s3_sleep_wake.py` (embedded ROM ELF board-path sleep/wake probe)
+
+### P0 Board Regression Tasks
+
+- [x] Add an ESP32-S3 ROM functional probe that enters RTC timer light sleep through guest MMIO instead of qtest host MMIO.
+- [x] Validate after guest resume that `RTC_CNTL_INT_RAW.SLP_WAKEUP`, `RTC_CNTL_SLP_WAKEUP_CAUSE.TIMER`, and `RTC_CNTL_STATE0.SLP_WAKEUP` are guest-visible.
+- [x] Register the regression in the Xtensa functional-test list.
+- [x] Run the new sleep/wake functional test, full ESP32-S3 qtest suite, and cache-reject functional test before committing.
+
+**Status:** complete; board-path sleep/wake regression ready to commit.
+
 ## Evidence Summary
 
 - The active hardware target is `../tdeck-pro-rust/`, which is heavily `esp-rs` based rather than an ESP-IDF application. `Cargo.toml` enables `esp-hal` with `esp32s3`, `psram`, and `unstable`, `esp-storage`, `esp-hal-ota`, `esp-radio` with `wifi` and `ble`, `esp-rtos`, and `embassy-net`.
@@ -114,10 +135,10 @@ Why this is first:
 
 First slices:
 
-- [ ] Replace bookkeeping-only light sleep with an explicit board-visible transition that pauses the right CPUs and suppresses the right peripheral activity for the current firmware path.
-- [ ] Replace the QEMU-global reset shim with an explicit ESP32-S3-local reset path and documented reset-domain defaults for the currently exercised surface.
-- [ ] Expand clock-rate fanout beyond UART timing to the APB-sensitive peripherals and timer paths the current firmware actually observes during sleep, wake, and boot.
-- [ ] Add at least one board-path regression that proves a guest sleep or wake sequence is recoverable for the active workload instead of only checking direct MMIO state.
+- [x] Replace bookkeeping-only light sleep with an explicit board-visible transition that pauses the right CPUs and suppresses the right peripheral activity for the current firmware path.
+- [x] Replace the QEMU-global reset shim with an explicit ESP32-S3-local reset path and documented reset-domain defaults for the currently exercised surface.
+- [x] Expand clock-rate fanout beyond UART timing to the APB-sensitive peripherals and timer paths the current firmware actually observes during sleep, wake, and boot.
+- [x] Add at least one board-path regression that proves a guest sleep or wake sequence is recoverable for the active workload instead of only checking direct MMIO state.
 
 ### P1: Burn Down Generic-MMIO Dependence
 

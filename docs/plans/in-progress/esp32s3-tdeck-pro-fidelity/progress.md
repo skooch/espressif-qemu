@@ -14,3 +14,6 @@
 - 2026-04-16: Implemented SYSTEM clock-update output, SoC TIMG clock fanout, and dynamic APB/XTAL TIMG counter/watchdog rates.
 - 2026-04-16: Added targeted TIMG qtest proving APB counter timing follows SYSTEM SOC clock selection; targeted TIMG/RTC/UART clock qtests pass.
 - 2026-04-16: Verified TIMG clock fanout slice with `git diff --check`, `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test`, full `esp32s3-test` qtest suite, and `test_xtensa_esp32s3_cache_reject.py`.
+- 2026-04-16: Started fourth P0 slice: add a board-path ROM functional regression for recoverable RTC timer light-sleep wake.
+- 2026-04-16: Added `test_xtensa_esp32s3_sleep_wake.py`, which boots an ESP32-S3 ROM ELF via `-bios`, enters RTC timer light sleep, resumes, validates wake cause/state, and exits through semihosting.
+- 2026-04-16: Verified board-path sleep/wake slice with `test_xtensa_esp32s3_sleep_wake.py`, `git diff --check`, `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test`, full `esp32s3-test` qtest suite, and `test_xtensa_esp32s3_cache_reject.py`.
