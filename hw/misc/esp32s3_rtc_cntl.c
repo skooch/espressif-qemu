@@ -25,6 +25,85 @@
 static void esp32s3_rtc_update_cpu_stall(Esp32s3RtcCntlState* s);
 static void esp32s3_rtc_update_clk(Esp32s3RtcCntlState* s);
 
+#define RTC_CNTL_OPTIONS0_FORCE_MASK \
+    (R_RTC_CNTL_OPTIONS0_XTL_FORCE_PU_MASK | \
+     R_RTC_CNTL_OPTIONS0_BBPLL_FORCE_PU_MASK | \
+     R_RTC_CNTL_OPTIONS0_BBPLL_I2C_FORCE_PU_MASK | \
+     R_RTC_CNTL_OPTIONS0_BB_I2C_FORCE_PU_MASK)
+
+#define RTC_CNTL_OPTIONS0_RW_MASK \
+    (RTC_CNTL_OPTIONS0_FORCE_MASK | \
+     R_RTC_CNTL_OPTIONS0_SW_PROCPU_RESET_MASK | \
+     R_RTC_CNTL_OPTIONS0_SW_APPCPU_RESET_MASK | \
+     R_RTC_CNTL_OPTIONS0_SW_STALL_PROCPU_C0_MASK | \
+     R_RTC_CNTL_OPTIONS0_SW_STALL_APPCPU_C0_MASK)
+
+#define RTC_CNTL_TIMER2_RW_MASK \
+    R_RTC_CNTL_TIMER2_ULPCP_TOUCH_START_WAIT_MASK
+
+#define RTC_CNTL_RTC_RW_MASK \
+    R_RTC_CNTL_RTC_REGULATOR_FORCE_PU_MASK
+
+#define RTC_CNTL_PWC_RW_MASK \
+    (R_RTC_CNTL_PWC_PAD_FORCE_HOLD_MASK | \
+     R_RTC_CNTL_PWC_PD_EN_MASK | \
+     R_RTC_CNTL_PWC_FORCE_PU_MASK | \
+     R_RTC_CNTL_PWC_FORCE_PD_MASK | \
+     R_RTC_CNTL_PWC_SLOWMEM_FORCE_LPU_MASK | \
+     R_RTC_CNTL_PWC_FASTMEM_FORCE_LPU_MASK)
+
+#define RTC_CNTL_BIAS_CONF_RW_MASK \
+    (R_RTC_CNTL_BIAS_CONF_DBG_ATTEN_WAKEUP_MASK | \
+     R_RTC_CNTL_BIAS_CONF_DBG_ATTEN_MONITOR_MASK | \
+     R_RTC_CNTL_BIAS_CONF_DBG_ATTEN_DEEP_SLP_MASK | \
+     R_RTC_CNTL_BIAS_CONF_BIAS_SLEEP_MONITOR_MASK | \
+     R_RTC_CNTL_BIAS_CONF_BIAS_SLEEP_DEEP_SLP_MASK | \
+     R_RTC_CNTL_BIAS_CONF_PD_CUR_MONITOR_MASK | \
+     R_RTC_CNTL_BIAS_CONF_PD_CUR_DEEP_SLP_MASK)
+
+#define RTC_CNTL_REGULATOR_DRV_CTRL_RW_MASK \
+    R_RTC_CNTL_REGULATOR_DRV_CTRL_DG_VDD_DRV_B_SLP_MASK
+
+#define RTC_CNTL_DIG_PWC_RW_MASK \
+    (R_RTC_CNTL_DIG_PWC_DG_WRAP_PD_EN_MASK | \
+     R_RTC_CNTL_DIG_PWC_WIFI_PD_EN_MASK | \
+     R_RTC_CNTL_DIG_PWC_CPU_TOP_PD_EN_MASK | \
+     R_RTC_CNTL_DIG_PWC_DG_PERI_PD_EN_MASK | \
+     R_RTC_CNTL_DIG_PWC_WIFI_FORCE_PU_MASK | \
+     R_RTC_CNTL_DIG_PWC_LSLP_MEM_FORCE_PU_MASK)
+
+static uint32_t esp32s3_rtc_options0_default(void)
+{
+    return R_RTC_CNTL_OPTIONS0_XTL_FORCE_PU_MASK;
+}
+
+static uint32_t esp32s3_rtc_timer2_default(void)
+{
+    return FIELD_DP32(0, RTC_CNTL_TIMER2, ULPCP_TOUCH_START_WAIT, 0x10);
+}
+
+static uint32_t esp32s3_rtc_reg_default(void)
+{
+    return R_RTC_CNTL_RTC_REGULATOR_FORCE_PU_MASK;
+}
+
+static uint32_t esp32s3_rtc_pwc_default(void)
+{
+    return R_RTC_CNTL_PWC_SLOWMEM_FORCE_LPU_MASK |
+           R_RTC_CNTL_PWC_FASTMEM_FORCE_LPU_MASK;
+}
+
+static uint32_t esp32s3_rtc_bias_conf_default(void)
+{
+    return R_RTC_CNTL_BIAS_CONF_BIAS_SLEEP_DEEP_SLP_MASK;
+}
+
+static uint32_t esp32s3_rtc_dig_pwc_default(void)
+{
+    return R_RTC_CNTL_DIG_PWC_WIFI_FORCE_PU_MASK |
+           R_RTC_CNTL_DIG_PWC_LSLP_MEM_FORCE_PU_MASK;
+}
+
 static uint64_t esp32s3_rtc_get_time(Esp32s3RtcCntlState *s)
 {
     return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - s->time_base_ns,
@@ -46,11 +125,17 @@ static void esp32s3_rtc_capture_time_if(Esp32s3RtcCntlState *s, bool enabled)
 
 static void esp32s3_rtc_cntl_reset_modeled_surface(Esp32s3RtcCntlState *s)
 {
-    s->options0_reg = 0;
+    s->options0_reg = esp32s3_rtc_options0_default();
     s->time_update_reg = 0;
     s->time_reg[0] = 0;
     s->time_reg[1] = 0;
     s->sw_cpu_stall_reg = 0;
+    s->timer2_reg = esp32s3_rtc_timer2_default();
+    s->rtc_reg = esp32s3_rtc_reg_default();
+    s->pwc_reg = esp32s3_rtc_pwc_default();
+    s->bias_conf_reg = esp32s3_rtc_bias_conf_default();
+    s->regulator_drv_ctrl_reg = 0;
+    s->dig_pwc_reg = esp32s3_rtc_dig_pwc_default();
 
     s->sleep_state = ESP32S3_RTC_SLEEP_AWAKE;
     s->slp_timer0 = 0;
@@ -269,6 +354,9 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
     case A_RTC_CNTL_OPTIONS0:
         r = s->options0_reg;
         break;
+    case A_RTC_CNTL_TIMER2:
+        r = s->timer2_reg;
+        break;
     case A_RTC_CNTL_TIME_UPDATE:
         r = s->time_update_reg | R_RTC_CNTL_TIME_UPDATE_VALID_MASK;
         break;
@@ -321,6 +409,26 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
         r = FIELD_DP32(r, RTC_CNTL_CLK_CONF, SOC_CLK_SEL, s->soc_clk);
         r = FIELD_DP32(r, RTC_CNTL_CLK_CONF, FAST_CLK_RTC_SEL, s->rtc_fastclk);
         r = FIELD_DP32(r, RTC_CNTL_CLK_CONF, ANA_CLK_RTC_SEL, s->rtc_slowclk);
+        break;
+
+    case A_RTC_CNTL_RTC:
+        r = s->rtc_reg;
+        break;
+
+    case A_RTC_CNTL_PWC:
+        r = s->pwc_reg;
+        break;
+
+    case A_RTC_CNTL_BIAS_CONF:
+        r = s->bias_conf_reg;
+        break;
+
+    case A_RTC_CNTL_REGULATOR_DRV_CTRL:
+        r = s->regulator_drv_ctrl_reg;
+        break;
+
+    case A_RTC_CNTL_DIG_PWC:
+        r = s->dig_pwc_reg;
         break;
 
     case A_RTC_CNTL_SW_CPU_STALL:
@@ -407,8 +515,12 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
             qemu_irq_pulse(s->cpu_reset_req[0]);
             value &= ~(R_RTC_CNTL_OPTIONS0_SW_PROCPU_RESET_MASK);
         }
-        s->options0_reg = value;
+        s->options0_reg = (uint32_t)value & RTC_CNTL_OPTIONS0_RW_MASK;
         esp32s3_rtc_update_cpu_stall(s);
+        break;
+
+    case A_RTC_CNTL_TIMER2:
+        s->timer2_reg = (uint32_t)value & RTC_CNTL_TIMER2_RW_MASK;
         break;
 
     case A_RTC_CNTL_TIME_UPDATE:
@@ -471,8 +583,29 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
         esp32s3_rtc_update_clk(s);
         break;
 
+    case A_RTC_CNTL_RTC:
+        s->rtc_reg = (uint32_t)value & RTC_CNTL_RTC_RW_MASK;
+        break;
+
+    case A_RTC_CNTL_PWC:
+        s->pwc_reg = (uint32_t)value & RTC_CNTL_PWC_RW_MASK;
+        break;
+
+    case A_RTC_CNTL_BIAS_CONF:
+        s->bias_conf_reg = (uint32_t)value & RTC_CNTL_BIAS_CONF_RW_MASK;
+        break;
+
+    case A_RTC_CNTL_REGULATOR_DRV_CTRL:
+        s->regulator_drv_ctrl_reg =
+            (uint32_t)value & RTC_CNTL_REGULATOR_DRV_CTRL_RW_MASK;
+        break;
+
+    case A_RTC_CNTL_DIG_PWC:
+        s->dig_pwc_reg = (uint32_t)value & RTC_CNTL_DIG_PWC_RW_MASK;
+        break;
+
     case A_RTC_CNTL_SW_CPU_STALL:
-        s->sw_cpu_stall_reg = value;
+        s->sw_cpu_stall_reg = (uint32_t)value;
         esp32s3_rtc_update_cpu_stall(s);
         break;
 

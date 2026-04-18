@@ -4,7 +4,7 @@
 
 This document tracks the known fidelity gaps in the `esp32s3` machine model in this fork and the current follow-on program for closing the highest-value gaps for the active T-Deck Pro workload.
 
-The immediate peripheral, deferred-foundation, core-SoC, first T-Deck prioritization plan, the 2026-04-18 follow-on clock/reset/sleep cleanup plan, the 2026-04-18 reset-fanout phase, and the 2026-04-18 RTC time-trigger phase are historical records under `docs/plans/implemented/`. There is no separate active `docs/plans/in-progress/` ESP32-S3 fidelity plan right now; the remaining guest-triggered queues are tracked directly in this document.
+The immediate peripheral, deferred-foundation, core-SoC, first T-Deck prioritization plan, the 2026-04-18 follow-on clock/reset/sleep cleanup plan, the 2026-04-18 reset-fanout phase, the 2026-04-18 RTC time-trigger phase, and the 2026-04-18 RTC light-sleep configuration phase are historical records under `docs/plans/implemented/`. There is no separate active `docs/plans/in-progress/` ESP32-S3 fidelity plan right now; the remaining guest-triggered queues are tracked directly in this document.
 
 The current scope is intentionally limited to the remaining high-risk follow-on work:
 
@@ -127,12 +127,12 @@ The ANA PLL-ready bit remains a compatibility shim. QEMU returns the firmware-vi
 
 ### Phase 3 RTC Sleep/Wake Register Status
 
-The RTC_CNTL fallback store was removed for the sleep/wake register surface. QEMU now exposes explicit fields for the ESP-IDF and local sleep-document contract used by timer, GPIO, EXT1, watchdog-write-protect, pad-hold, and date/version flows:
+The RTC_CNTL fallback store was removed for the sleep/wake register surface. QEMU now exposes explicit fields for the ESP-IDF and local sleep-document contract used by timer, GPIO, EXT1, watchdog-write-protect, pad-hold, date/version, and the adjacent firmware's light-sleep configuration flows:
 
-- Supported RTC_CNTL offsets: `0x000`, `0x004`, `0x008`, `0x00c`, `0x010`, `0x014`, `0x018`, `0x038`, `0x03c`, `0x044`, `0x04c`, `0x050`-`0x05c`, `0x064`, `0x068`, `0x074`, `0x0b0`, `0x0b4`, `0x0b8`, `0x0bc`, `0x0c0`-`0x0cc`, `0x0d8`, `0x0dc`, `0x0e0`, `0x130`, and `0x1fc`.
-- Source-backed write masks are enforced for `SLP_TIMER1`, `WAKEUP_STATE`, `EXT_WAKEUP_CONF`, `SLP_REJECT_CONF`, `SWD_CONF`, `PAD_HOLD`, `EXT_WAKEUP1`, and `DATE`. Write-only bits such as `MAIN_TIMER_ALARM_EN`, `SWD_FEED`, and `EXT_WAKEUP1_STATUS_CLR` no longer appear as generic readback.
+- Supported RTC_CNTL offsets: `0x000`, `0x004`, `0x008`, `0x00c`, `0x010`, `0x014`, `0x018`, `0x020`, `0x038`, `0x03c`, `0x044`, `0x04c`, `0x050`-`0x05c`, `0x064`, `0x068`, `0x074`, `0x080`, `0x084`, `0x088`, `0x08c`, `0x090`, `0x0b0`, `0x0b4`, `0x0b8`, `0x0bc`, `0x0c0`-`0x0cc`, `0x0d8`, `0x0dc`, `0x0e0`, `0x130`, and `0x1fc`.
+- Source-backed write masks are enforced for `OPTIONS0`, `TIMER2`, `SLP_TIMER1`, `WAKEUP_STATE`, `EXT_WAKEUP_CONF`, `SLP_REJECT_CONF`, `RTC`, `PWC`, `BIAS_CONF`, `REGULATOR_DRV_CTRL`, `DIG_PWC`, `SWD_CONF`, `PAD_HOLD`, `EXT_WAKEUP1`, and `DATE`. Write-only bits such as `MAIN_TIMER_ALARM_EN`, `SWD_FEED`, and `EXT_WAKEUP1_STATUS_CLR` no longer appear as generic readback.
 - `RTC_CNTL_STATE0` now reports explicit QEMU sleep states: awake, sleep-requested, sleeping, rejected, and woke. The qtest suite covers timer wake, GPIO low wake, GPIO reject, EXT1 low wake, EXT1 high wake, immediate EXT1 wake, stale hardware-bit writes, and reject-cause clear.
-- Source-known but unmodeled RTC_CNTL offsets are deterministic unsupported behavior: reads return zero and writes are ignored. This includes `0x01c`-`0x034`, `0x040`, `0x048`, `0x060`, `0x06c`-`0x070`, `0x078`-`0x0ac`, `0x0d0`-`0x0d4`, `0x0e4`-`0x12c`, `0x134`-`0x154`, and any undefined gap up to `0x1f8`. The qtest suite pins `RETENTION_CTRL` at `0x140` as the unsupported-register sentinel for this RTC pass.
+- Source-known but unmodeled RTC_CNTL offsets are deterministic unsupported behavior: reads return zero and writes are ignored. This includes `0x01c`, `0x024`-`0x034`, `0x040`, `0x048`, `0x060`, `0x06c`-`0x070`, `0x078`-`0x07c`, `0x094`-`0x0ac`, `0x0d0`-`0x0d4`, `0x0e4`-`0x12c`, `0x134`-`0x154`, and any undefined gap up to `0x1f8`. The qtest suite pins `RETENTION_CTRL` at `0x140` as the unsupported-register sentinel for this RTC pass.
 
 This is SDK-contract and board-path accurate for the modeled light-sleep wake/reject flows. It is not a full ESP32-S3 power manager. Full internal power-domain sequencing, CPU-retention DMA timing, retention-memory save/restore, brownout interactions, analog reset behavior, RTC watchdog escalation timing, ULP/touch/USB wake behavior, EXT1 status latching, and oscillator/settling delays remain blocked for accuracy without more detailed source evidence or hardware probes.
 
@@ -281,6 +281,7 @@ The original 2026-04-04 shortcut inventory is now historical. The archived P0 sl
 The remaining follow-on items in this area are:
 
 - The RTC timer surface now models the source-backed `TIME_UPDATE` trigger bits for system stall, XTAL-off/light-sleep transitions, and software reset completion, and exposes both current and previous trigger captures through `RTC_TIME_LOW0/HIGH0` and `RTC_TIME_LOW1/HIGH1`. Broader oscillator stop/start timing and power-domain sequencing are still incomplete.
+- The adjacent firmware's RTC light-sleep configuration registers now have explicit masks and reset defaults for the source-backed `OPTIONS0`, `TIMER2`, `RTC`, `PWC`, `BIAS_CONF`, `REGULATOR_DRV_CTRL`, and `DIG_PWC` surface. The ambiguous RTC clock-gating and SDIO fields remain deferred until their ownership is reconciled against the existing RTC-to-system clock contract.
 - The active light-sleep path now freezes SYSTIMER and resumes it on wake, while the adjacent firmware remains responsible for compensating elapsed RTC time after wake. Broader oscillator stop/start timing and peripheral-gating realism remain incomplete.
 - Digital-reset fanout now covers the currently owned digital subset with direct regression coverage. Broader reset-tree sequencing, LP/analog domains, and any future owned peripherals remain deferred until a guest or source-backed need appears.
 - The RTC-to-clock handoff now has one explicit owner: the RTC block updates only its local clock-selection bookkeeping, and the SoC callback remains the single place that applies those selections into the modeled system clock tree.

@@ -328,6 +328,100 @@ static uint32_t rtc_default_clk_conf(void)
     return rtc_clk_conf;
 }
 
+static uint32_t rtc_default_options0(void)
+{
+    return R_RTC_CNTL_OPTIONS0_XTL_FORCE_PU_MASK;
+}
+
+static uint32_t rtc_default_timer2(void)
+{
+    return FIELD_DP32(0, RTC_CNTL_TIMER2, ULPCP_TOUCH_START_WAIT, 0x10);
+}
+
+static uint32_t rtc_default_rtc_reg(void)
+{
+    return R_RTC_CNTL_RTC_REGULATOR_FORCE_PU_MASK;
+}
+
+static uint32_t rtc_default_pwc(void)
+{
+    return R_RTC_CNTL_PWC_SLOWMEM_FORCE_LPU_MASK |
+           R_RTC_CNTL_PWC_FASTMEM_FORCE_LPU_MASK;
+}
+
+static uint32_t rtc_default_bias_conf(void)
+{
+    return R_RTC_CNTL_BIAS_CONF_BIAS_SLEEP_DEEP_SLP_MASK;
+}
+
+static uint32_t rtc_default_dig_pwc(void)
+{
+    return R_RTC_CNTL_DIG_PWC_WIFI_FORCE_PU_MASK |
+           R_RTC_CNTL_DIG_PWC_LSLP_MEM_FORCE_PU_MASK;
+}
+
+static void dirty_rtc_light_sleep_config_surface(QTestState *qts)
+{
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0,
+                 R_RTC_CNTL_OPTIONS0_BBPLL_FORCE_PU_MASK |
+                 R_RTC_CNTL_OPTIONS0_BBPLL_I2C_FORCE_PU_MASK |
+                 R_RTC_CNTL_OPTIONS0_BB_I2C_FORCE_PU_MASK);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIMER2, 0);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_RTC, 0);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_PWC, UINT32_MAX);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_BIAS_CONF, UINT32_MAX);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_REGULATOR_DRV_CTRL, UINT32_MAX);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_DIG_PWC, 0);
+}
+
+static void assert_rtc_light_sleep_config_surface_is_dirty(QTestState *qts)
+{
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0),
+                    ==, R_RTC_CNTL_OPTIONS0_BBPLL_FORCE_PU_MASK |
+                        R_RTC_CNTL_OPTIONS0_BBPLL_I2C_FORCE_PU_MASK |
+                        R_RTC_CNTL_OPTIONS0_BB_I2C_FORCE_PU_MASK);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIMER2), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_RTC), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_PWC),
+                    ==, R_RTC_CNTL_PWC_PAD_FORCE_HOLD_MASK |
+                        R_RTC_CNTL_PWC_PD_EN_MASK |
+                        R_RTC_CNTL_PWC_FORCE_PU_MASK |
+                        R_RTC_CNTL_PWC_FORCE_PD_MASK |
+                        R_RTC_CNTL_PWC_SLOWMEM_FORCE_LPU_MASK |
+                        R_RTC_CNTL_PWC_FASTMEM_FORCE_LPU_MASK);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_BIAS_CONF),
+                    ==, R_RTC_CNTL_BIAS_CONF_DBG_ATTEN_WAKEUP_MASK |
+                        R_RTC_CNTL_BIAS_CONF_DBG_ATTEN_MONITOR_MASK |
+                        R_RTC_CNTL_BIAS_CONF_DBG_ATTEN_DEEP_SLP_MASK |
+                        R_RTC_CNTL_BIAS_CONF_BIAS_SLEEP_MONITOR_MASK |
+                        R_RTC_CNTL_BIAS_CONF_BIAS_SLEEP_DEEP_SLP_MASK |
+                        R_RTC_CNTL_BIAS_CONF_PD_CUR_MONITOR_MASK |
+                        R_RTC_CNTL_BIAS_CONF_PD_CUR_DEEP_SLP_MASK);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE +
+                                A_RTC_CNTL_REGULATOR_DRV_CTRL),
+                    ==, R_RTC_CNTL_REGULATOR_DRV_CTRL_DG_VDD_DRV_B_SLP_MASK);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_DIG_PWC), ==, 0);
+}
+
+static void assert_rtc_light_sleep_config_defaults(QTestState *qts)
+{
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0),
+                    ==, rtc_default_options0());
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIMER2),
+                    ==, rtc_default_timer2());
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_RTC),
+                    ==, rtc_default_rtc_reg());
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_PWC),
+                    ==, rtc_default_pwc());
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_BIAS_CONF),
+                    ==, rtc_default_bias_conf());
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE +
+                                A_RTC_CNTL_REGULATOR_DRV_CTRL),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_DIG_PWC),
+                    ==, rtc_default_dig_pwc());
+}
+
 static uint32_t system_default_cpu_per_conf(void)
 {
     uint32_t cpu_per_conf = 0;
@@ -2071,9 +2165,27 @@ static void test_intmatrix_mapping_status_reserved(void)
 static void test_rtc_explicit_register_surface(void)
 {
     QTestState *qts = qts_start();
+    uint32_t options0 = UINT32_MAX &
+                        ~(R_RTC_CNTL_OPTIONS0_SW_SYS_RESET_MASK |
+                          R_RTC_CNTL_OPTIONS0_SW_PROCPU_RESET_MASK |
+                          R_RTC_CNTL_OPTIONS0_SW_APPCPU_RESET_MASK);
 
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_DATE),
                     ==, ESP32S3_RTC_CNTL_DATE_RESET);
+    assert_rtc_light_sleep_config_defaults(qts);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0),
+                    ==, R_RTC_CNTL_OPTIONS0_XTL_FORCE_PU_MASK |
+                        R_RTC_CNTL_OPTIONS0_BBPLL_FORCE_PU_MASK |
+                        R_RTC_CNTL_OPTIONS0_BBPLL_I2C_FORCE_PU_MASK |
+                        R_RTC_CNTL_OPTIONS0_BB_I2C_FORCE_PU_MASK |
+                        R_RTC_CNTL_OPTIONS0_SW_STALL_PROCPU_C0_MASK |
+                        R_RTC_CNTL_OPTIONS0_SW_STALL_APPCPU_C0_MASK);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIMER2, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIMER2),
+                    ==, R_RTC_CNTL_TIMER2_ULPCP_TOUCH_START_WAIT_MASK);
 
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER0, 0x89abcdef);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER0),
@@ -2098,6 +2210,42 @@ static void test_rtc_explicit_register_surface(void)
                     ==, R_RTC_CNTL_SLP_REJECT_CONF_DEEP_SLP_REJECT_EN_MASK |
                         R_RTC_CNTL_SLP_REJECT_CONF_LIGHT_SLP_REJECT_EN_MASK |
                         R_RTC_CNTL_SLP_REJECT_CONF_SLEEP_REJECT_ENA_MASK);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_RTC, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_RTC), ==, 0);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_PWC, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_PWC),
+                    ==, R_RTC_CNTL_PWC_PAD_FORCE_HOLD_MASK |
+                        R_RTC_CNTL_PWC_PD_EN_MASK |
+                        R_RTC_CNTL_PWC_FORCE_PU_MASK |
+                        R_RTC_CNTL_PWC_FORCE_PD_MASK |
+                        R_RTC_CNTL_PWC_SLOWMEM_FORCE_LPU_MASK |
+                        R_RTC_CNTL_PWC_FASTMEM_FORCE_LPU_MASK);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_BIAS_CONF, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_BIAS_CONF),
+                    ==, R_RTC_CNTL_BIAS_CONF_DBG_ATTEN_WAKEUP_MASK |
+                        R_RTC_CNTL_BIAS_CONF_DBG_ATTEN_MONITOR_MASK |
+                        R_RTC_CNTL_BIAS_CONF_DBG_ATTEN_DEEP_SLP_MASK |
+                        R_RTC_CNTL_BIAS_CONF_BIAS_SLEEP_MONITOR_MASK |
+                        R_RTC_CNTL_BIAS_CONF_BIAS_SLEEP_DEEP_SLP_MASK |
+                        R_RTC_CNTL_BIAS_CONF_PD_CUR_MONITOR_MASK |
+                        R_RTC_CNTL_BIAS_CONF_PD_CUR_DEEP_SLP_MASK);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_REGULATOR_DRV_CTRL, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE +
+                                A_RTC_CNTL_REGULATOR_DRV_CTRL),
+                    ==, R_RTC_CNTL_REGULATOR_DRV_CTRL_DG_VDD_DRV_B_SLP_MASK);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_DIG_PWC, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_DIG_PWC),
+                    ==, R_RTC_CNTL_DIG_PWC_DG_WRAP_PD_EN_MASK |
+                        R_RTC_CNTL_DIG_PWC_WIFI_PD_EN_MASK |
+                        R_RTC_CNTL_DIG_PWC_CPU_TOP_PD_EN_MASK |
+                        R_RTC_CNTL_DIG_PWC_DG_PERI_PD_EN_MASK |
+                        R_RTC_CNTL_DIG_PWC_WIFI_FORCE_PU_MASK |
+                        R_RTC_CNTL_DIG_PWC_LSLP_MEM_FORCE_PU_MASK);
 
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WDTWPROTECT, 0x50d83aa1);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_WDTWPROTECT),
@@ -2649,14 +2797,17 @@ static void test_rtc_reset_transitions(void)
     rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, SOC_CLK_SEL,
                               ESP32_SOC_CLK_PLL);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_CLK_CONF, rtc_clk_conf);
+    dirty_rtc_light_sleep_config_surface(qts);
+    assert_rtc_light_sleep_config_surface_is_dirty(qts);
     dirty_owned_digital_reset_surface(qts);
     qtest_writel(qts, UART0_BASE + A_UART_INT_ENA, uart_int_ena);
     esp32s3_qmp_system_reset(qts);
 
     g_assert_cmphex(qtest_readl(qts, UART0_BASE + A_UART_INT_ENA), ==, 0);
     assert_owned_digital_reset_surface_defaults(qts, ESP32S3_CLK_SEL_PLL);
+    assert_rtc_light_sleep_config_defaults(qts);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0),
-                    ==, 0);
+                    ==, rtc_default_options0());
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SW_CPU_STALL),
                     ==, 0);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_WAKEUP_STATE),
