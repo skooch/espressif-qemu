@@ -31,6 +31,10 @@
  * @brief Update the value of a counter according the QEMU virtual timer.
  */
 static void esp_systimer_update_counter(ESPSysTimerCounter *counter) {
+    if (counter->sleep_suspended) {
+        return;
+    }
+
     const int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     const int64_t elapsed_ns = now - counter->base;
     const int64_t ticks = (elapsed_ns * (ESP_SYSTIMER_CNT_CLK / 1000000)) / 1000;
@@ -114,7 +118,7 @@ static void esp_systimer_comparator_reprogram(ESPSysTimerComp* comparator)
     esp_systimer_update_counter(counter);
 
     /* If the counter we have to compare it to is not enabled, do not program any timer */
-    if (!counter->enabled) {
+    if (!counter->enabled || counter->sleep_suspended) {
         /* "Disable" the timer */
         timer_del(&comparator->qtimer);
         return;
@@ -161,6 +165,51 @@ static void esp_systimer_comparator_reprogram_all(ESPSysTimerState* s) {
             esp_systimer_comparator_reprogram(&s->comparators[i]);
         }
     }
+}
+
+static void esp_systimer_suspend_counters(ESPSysTimerState *s, int64_t now)
+{
+    for (int i = 0; i < ESP_SYSTIMER_COUNTER_COUNT; i++) {
+        ESPSysTimerCounter *counter = &s->counter[i];
+
+        if (counter->enabled) {
+            esp_systimer_update_counter(counter);
+        }
+
+        counter->sleep_suspended = true;
+        counter->base = now;
+    }
+}
+
+static void esp_systimer_resume_counters(ESPSysTimerState *s, int64_t now)
+{
+    for (int i = 0; i < ESP_SYSTIMER_COUNTER_COUNT; i++) {
+        s->counter[i].sleep_suspended = false;
+        s->counter[i].base = now;
+    }
+}
+
+void esp_systimer_set_light_sleep(ESPSysTimerState *s, bool light_sleeping)
+{
+    const int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+
+    if (s->light_sleeping == light_sleeping) {
+        return;
+    }
+
+    s->light_sleeping = light_sleeping;
+
+    if (light_sleeping) {
+        esp_systimer_suspend_counters(s, now);
+
+        for (int i = 0; i < ESP_SYSTIMER_COMP_COUNT; i++) {
+            timer_del(&s->comparators[i].qtimer);
+        }
+        return;
+    }
+
+    esp_systimer_resume_counters(s, now);
+    esp_systimer_comparator_reprogram_all(s);
 }
 
 
@@ -604,8 +653,10 @@ static void esp_systimer_reset_hold(Object *obj, ResetType type)
         s->counter[i].base = now;
         s->counter[i].flushed = 0;
         s->counter[i].toload = 0;
+        s->counter[i].sleep_suspended = false;
     }
 
+    s->light_sleeping = false;
     esp_systimer_default_conf(s);
 }
 

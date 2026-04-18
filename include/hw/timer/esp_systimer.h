@@ -71,6 +71,7 @@ typedef struct {
     /* Enabled on CPU stall */
     bool core0_stall_en;
     bool core1_stall_en;
+    bool sleep_suspended;
     uint64_t value;   // Internal counter that should be updated as often as possible
     uint64_t toload;  // Counter that can be loaded by the guest program
     uint64_t flushed; // Mirror of the internal counter that can be seen by the guest program
@@ -111,6 +112,7 @@ struct ESPSysTimerState {
     /* Mirror of the comparators and counters state, only used to speed up
      * reading of A_SYSTIMER_CONF register  */
     uint32_t conf;
+    bool light_sleeping;
     ESPSysTimerCounter counter[ESP_SYSTIMER_COUNTER_COUNT];
     ESPSysTimerComp comparators[ESP_SYSTIMER_COMP_COUNT];
 };
@@ -123,6 +125,8 @@ typedef struct ESPSysTimerClass {
     MemoryRegionOps systimer_ops;
     void (*comparators_reprogram)(ESPSysTimerState* s);
 } ESPSysTimerClass;
+
+void esp_systimer_set_light_sleep(ESPSysTimerState *s, bool light_sleeping);
 
 
 REG32(SYSTIMER_CONF, 0x0000)

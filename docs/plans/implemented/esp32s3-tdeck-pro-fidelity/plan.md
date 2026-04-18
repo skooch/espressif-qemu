@@ -16,6 +16,8 @@
 
 This plan supersedes the old split between `ESP32S3_EMULATION_GAPS.md` and the residual `xtensa-blockers.md` watch queue for active prioritization. The deferred-foundation plan is complete; this is the new clean backlog for follow-on work. The P0 branch has been merged to `tdeck-peripherals`; active implementation has moved to the P1 generic-MMIO burn-down branch.
 
+This plan is archived. References below to `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/*` are retained as execution-history paths from the time the work ran. The current active successor plan is `docs/plans/in-progress/esp32s3-fidelity-follow-on/plan.md`.
+
 ## Active Implementation Slice: P0 Light-Sleep Board Transition
 
 This worktree starts the P0 sleep/clock/reset track with a focused light-sleep transition slice. The first deliverable is not full ESP32-S3 power-domain fidelity; it is a testable board-visible contract that replaces internal-only RTC sleep bookkeeping with an explicit SoC transition.

@@ -35,6 +35,7 @@
 #include "hw/nvram/esp32s3_efuse.h"
 #include "hw/ssi/esp32s3_gpspi.h"
 #include "hw/ssi/esp32s3_spi.h"
+#include "hw/timer/esp_systimer.h"
 #include "hw/timer/esp_timg.h"
 #include "hw/xtensa/esp32s3_clk.h"
 #include "hw/xtensa/esp32s3_clk_defs.h"
@@ -58,6 +59,7 @@
 #define APB_SARADC_BASE         DR_REG_APB_SARADC_BASE
 #define SENS_BASE               DR_REG_SENS_BASE
 #define RTC_CNTL_BASE           DR_REG_RTCCNTL_BASE
+#define SYSTIMER_BASE           DR_REG_SYSTIMER_BASE
 #define EFUSE_BASE              DR_REG_EFUSE_BASE
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
 #define ASSIST_DEBUG_BASE       DR_REG_ASSIST_DEBUG_BASE
@@ -289,6 +291,19 @@ static void set_gpio_input_level(QTestState *qts, int gpio_num, bool level)
 {
     qtest_set_irq_in(qts, "/machine/soc/gpio", ESP32S3_GPIO_INPUT_GPIO,
                      gpio_num, level);
+}
+
+static uint64_t read_systimer_unit0(QTestState *qts)
+{
+    const uint64_t hi_mask = R_SYSTIMER_UNIT0_VALUE_HI_TIMER_HI_MASK;
+    uint64_t hi;
+    uint64_t lo;
+
+    qtest_writel(qts, SYSTIMER_BASE + A_SYSTIMER_UNIT0_OP,
+                 R_SYSTIMER_UNIT0_OP_UPDATE_MASK);
+    hi = qtest_readl(qts, SYSTIMER_BASE + A_SYSTIMER_UNIT0_VALUE_HI) & hi_mask;
+    lo = qtest_readl(qts, SYSTIMER_BASE + A_SYSTIMER_UNIT0_VALUE_LO);
+    return (hi << 32) | lo;
 }
 
 #ifndef _WIN32
@@ -1971,6 +1986,65 @@ static void test_rtc_timer_wakeup_transition(void)
     qtest_quit(qts);
 }
 
+static void test_rtc_timer_light_sleep_stops_systimer(void)
+{
+    QTestState *qts = qts_start();
+    const uint32_t alarm_ticks = 30;
+    uint32_t timer1 = 0;
+    uint32_t wakeup_state = 0;
+    uint32_t state0 = 0;
+    uint64_t initial = read_systimer_unit0(qts);
+    uint64_t running = 0;
+    uint64_t sleep_entry = 0;
+    uint64_t sleep_mid = 0;
+    uint64_t sleep_late = 0;
+    uint64_t sleep_exit = 0;
+    uint64_t resumed = 0;
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_CLR, UINT32_MAX);
+
+    qtest_clock_step(qts, 64000);
+    running = read_systimer_unit0(qts);
+    g_assert_true(running > initial);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER0, alarm_ticks);
+    timer1 = FIELD_DP32(timer1, RTC_CNTL_SLP_TIMER1, MAIN_TIMER_ALARM_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER1, timer1);
+
+    wakeup_state = FIELD_DP32(wakeup_state, RTC_CNTL_WAKEUP_STATE,
+                              TIMER_WAKEUP_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WAKEUP_STATE, wakeup_state);
+
+    state0 = FIELD_DP32(state0, RTC_CNTL_STATE0, SLEEP_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0, state0);
+    sleep_entry = read_systimer_unit0(qts);
+
+    qtest_clock_step(qts, 150000);
+    sleep_mid = read_systimer_unit0(qts);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
+                    R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK, ==, 0);
+    g_assert_cmphex(sleep_mid, ==, sleep_entry);
+
+    qtest_clock_step(qts, 30000);
+    sleep_late = read_systimer_unit0(qts);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
+                    R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK, ==, 0);
+    g_assert_cmphex(sleep_late, ==, sleep_entry);
+
+    qtest_clock_step(qts, 30000);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
+                    R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK,
+                    ==, R_RTC_CNTL_INT_RAW_SLP_WAKEUP_MASK);
+    sleep_exit = read_systimer_unit0(qts);
+    g_assert_true(sleep_exit >= sleep_entry);
+
+    qtest_clock_step(qts, 64000);
+    resumed = read_systimer_unit0(qts);
+    g_assert_true(resumed > sleep_exit);
+
+    qtest_quit(qts);
+}
+
 static void test_rtc_gpio_low_wakeup_transition(void)
 {
     QTestState *qts = qts_start();
@@ -2882,6 +2956,8 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/rtc/explicit-register-surface",
                    test_rtc_explicit_register_surface);
     qtest_add_func("/esp32s3/rtc/timer-wakeup", test_rtc_timer_wakeup_transition);
+    qtest_add_func("/esp32s3/rtc/light-sleep-stops-systimer",
+                   test_rtc_timer_light_sleep_stops_systimer);
     qtest_add_func("/esp32s3/rtc/gpio-wakeup", test_rtc_gpio_low_wakeup_transition);
     qtest_add_func("/esp32s3/rtc/gpio-reject", test_rtc_gpio_low_reject_transition);
     qtest_add_func("/esp32s3/rtc/ext1-wakeup", test_rtc_ext1_low_wakeup_transition);
