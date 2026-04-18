@@ -24,6 +24,7 @@
 
 static void esp32s3_rtc_update_cpu_stall(Esp32s3RtcCntlState* s);
 static void esp32s3_rtc_update_clk(Esp32s3RtcCntlState* s);
+static void esp32s3_rtc_sync_clk_conf_sources(Esp32s3RtcCntlState *s);
 
 #define RTC_CNTL_OPTIONS0_FORCE_MASK \
     (R_RTC_CNTL_OPTIONS0_XTL_FORCE_PU_MASK | \
@@ -40,6 +41,27 @@ static void esp32s3_rtc_update_clk(Esp32s3RtcCntlState* s);
 
 #define RTC_CNTL_TIMER2_RW_MASK \
     R_RTC_CNTL_TIMER2_ULPCP_TOUCH_START_WAIT_MASK
+
+#define RTC_CNTL_CLK_CONF_RW_MASK \
+    (R_RTC_CNTL_CLK_CONF_ANA_CLK_RTC_SEL_MASK | \
+     R_RTC_CNTL_CLK_CONF_FAST_CLK_RTC_SEL_MASK | \
+     R_RTC_CNTL_CLK_CONF_XTAL_GLOBAL_FORCE_NOGATING_MASK | \
+     R_RTC_CNTL_CLK_CONF_XTAL_GLOBAL_FORCE_GATING_MASK | \
+     R_RTC_CNTL_CLK_CONF_CK8M_FORCE_PU_MASK | \
+     R_RTC_CNTL_CLK_CONF_CK8M_FORCE_PD_MASK | \
+     R_RTC_CNTL_CLK_CONF_CK8M_DFREQ_MASK | \
+     R_RTC_CNTL_CLK_CONF_CK8M_FORCE_NOGATING_MASK | \
+     R_RTC_CNTL_CLK_CONF_XTAL_FORCE_NOGATING_MASK | \
+     R_RTC_CNTL_CLK_CONF_CK8M_DIV_SEL_MASK | \
+     R_RTC_CNTL_CLK_CONF_DIG_CLK8M_EN_MASK | \
+     R_RTC_CNTL_CLK_CONF_DIG_CLK8M_D256_EN_MASK | \
+     R_RTC_CNTL_CLK_CONF_DIG_XTAL32K_EN_MASK | \
+     R_RTC_CNTL_CLK_CONF_ENB_CK8M_DIV_MASK | \
+     R_RTC_CNTL_CLK_CONF_ENB_CK8M_MASK | \
+     R_RTC_CNTL_CLK_CONF_CK8M_DIV_MASK | \
+     R_RTC_CNTL_CLK_CONF_CK8M_DIV_SEL_VLD_MASK | \
+     R_RTC_CNTL_CLK_CONF_EFUSE_CLK_FORCE_NOGATING_MASK | \
+     R_RTC_CNTL_CLK_CONF_EFUSE_CLK_FORCE_GATING_MASK)
 
 #define RTC_CNTL_SDIO_CONF_RW_MASK \
     (R_RTC_CNTL_SDIO_CONF_XPD_SDIO_REG_MASK | \
@@ -118,6 +140,27 @@ static uint32_t esp32s3_rtc_sdio_conf_default(void)
     return sdio_conf;
 }
 
+static uint32_t esp32s3_rtc_clk_conf_default(void)
+{
+    uint32_t clk_conf = 0;
+
+    clk_conf = FIELD_DP32(clk_conf, RTC_CNTL_CLK_CONF, ANA_CLK_RTC_SEL,
+                          ESP32_SLOW_CLK_RC);
+    clk_conf = FIELD_DP32(clk_conf, RTC_CNTL_CLK_CONF, FAST_CLK_RTC_SEL,
+                          ESP32_FAST_CLK_XTALD4);
+    clk_conf = FIELD_DP32(clk_conf, RTC_CNTL_CLK_CONF,
+                          XTAL_GLOBAL_FORCE_NOGATING, 1);
+    clk_conf = FIELD_DP32(clk_conf, RTC_CNTL_CLK_CONF, CK8M_DFREQ, 172);
+    clk_conf = FIELD_DP32(clk_conf, RTC_CNTL_CLK_CONF, CK8M_DIV_SEL, 3);
+    clk_conf = FIELD_DP32(clk_conf, RTC_CNTL_CLK_CONF, DIG_CLK8M_D256_EN, 1);
+    clk_conf = FIELD_DP32(clk_conf, RTC_CNTL_CLK_CONF, CK8M_DIV, 1);
+    clk_conf = FIELD_DP32(clk_conf, RTC_CNTL_CLK_CONF, CK8M_DIV_SEL_VLD, 1);
+    clk_conf = FIELD_DP32(clk_conf, RTC_CNTL_CLK_CONF,
+                          EFUSE_CLK_FORCE_NOGATING, 1);
+
+    return clk_conf;
+}
+
 static uint32_t esp32s3_rtc_reg_default(void)
 {
     return R_RTC_CNTL_RTC_REGULATOR_FORCE_PU_MASK;
@@ -167,6 +210,7 @@ static void esp32s3_rtc_cntl_reset_modeled_surface(Esp32s3RtcCntlState *s)
     s->time_reg[1] = 0;
     s->sw_cpu_stall_reg = 0;
     s->timer2_reg = esp32s3_rtc_timer2_default();
+    s->clk_conf_reg = esp32s3_rtc_clk_conf_default();
     s->sdio_conf_reg = esp32s3_rtc_sdio_conf_default();
     s->rtc_reg = esp32s3_rtc_reg_default();
     s->pwc_reg = esp32s3_rtc_pwc_default();
@@ -189,10 +233,6 @@ static void esp32s3_rtc_cntl_reset_modeled_surface(Esp32s3RtcCntlState *s)
     s->pad_hold = 0;
     s->dig_pad_hold = 0;
     s->date_reg = ESP32S3_RTC_CNTL_DATE_RESET;
-
-    s->rtc_slowclk = ESP32_SLOW_CLK_RC;
-    s->rtc_fastclk = ESP32_FAST_CLK_8M;
-    s->soc_clk = ESP32_SOC_CLK_XTAL;
 }
 
 /* wakeup_ena bits (at [31:15] of WAKEUP_STATE, so trigger bit N = reg bit N+15) */
@@ -446,9 +486,7 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
         break;
 
     case A_RTC_CNTL_CLK_CONF:
-        r = FIELD_DP32(r, RTC_CNTL_CLK_CONF, SOC_CLK_SEL, s->soc_clk);
-        r = FIELD_DP32(r, RTC_CNTL_CLK_CONF, FAST_CLK_RTC_SEL, s->rtc_fastclk);
-        r = FIELD_DP32(r, RTC_CNTL_CLK_CONF, ANA_CLK_RTC_SEL, s->rtc_slowclk);
+        r = s->clk_conf_reg;
         break;
 
     case A_RTC_CNTL_RTC:
@@ -621,9 +659,8 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
         break;
 
     case A_RTC_CNTL_CLK_CONF:
-        s->soc_clk = FIELD_EX32(value, RTC_CNTL_CLK_CONF, SOC_CLK_SEL);
-        s->rtc_fastclk = FIELD_EX32(value, RTC_CNTL_CLK_CONF, FAST_CLK_RTC_SEL);
-        s->rtc_slowclk = FIELD_EX32(value, RTC_CNTL_CLK_CONF, ANA_CLK_RTC_SEL);
+        s->clk_conf_reg = (uint32_t)value & RTC_CNTL_CLK_CONF_RW_MASK;
+        esp32s3_rtc_sync_clk_conf_sources(s);
         esp32s3_rtc_update_clk(s);
         break;
 
@@ -744,10 +781,17 @@ static void esp32s3_rtc_update_clk(Esp32s3RtcCntlState* s)
 {
     const uint32_t slowclk_freq[] = {150000, 32768, 8000000/256};
     const uint32_t fastclk_freq[] = {s->xtal_apb_freq / 4, 8000000};
+
     s->rtc_slowclk_freq = slowclk_freq[s->rtc_slowclk];
     s->rtc_fastclk_freq = fastclk_freq[s->rtc_fastclk];
+}
 
-    qemu_irq_pulse(s->clk_update);
+static void esp32s3_rtc_sync_clk_conf_sources(Esp32s3RtcCntlState *s)
+{
+    s->rtc_fastclk = FIELD_EX32(s->clk_conf_reg, RTC_CNTL_CLK_CONF,
+                                FAST_CLK_RTC_SEL);
+    s->rtc_slowclk = FIELD_EX32(s->clk_conf_reg, RTC_CNTL_CLK_CONF,
+                                ANA_CLK_RTC_SEL);
 }
 
 void esp32s3_rtc_notify_system_reset(Esp32s3RtcCntlState *s)
@@ -770,6 +814,7 @@ static void esp32s3_rtc_cntl_reset_hold(Object *obj, ResetType type)
     s->time_base_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     timer_del(&s->slp_timer);
     esp32s3_rtc_update_cpu_stall(s);
+    esp32s3_rtc_sync_clk_conf_sources(s);
     esp32s3_rtc_update_clk(s);
 }
 
@@ -789,7 +834,6 @@ static void esp32s3_rtc_cntl_init(Object *obj)
     qdev_init_gpio_out_named(DEVICE(sbd), &s->dig_reset_req, ESP32S3_RTC_DIG_RESET_GPIO, 1);
     qdev_init_gpio_out_named(DEVICE(sbd), &s->cpu_reset_req[0], ESP32S3_RTC_CPU_RESET_GPIO, ESP32S3_CPU_COUNT);
     qdev_init_gpio_out_named(DEVICE(sbd), &s->cpu_stall_req[0], ESP32S3_RTC_CPU_STALL_GPIO, ESP32S3_CPU_COUNT);
-    qdev_init_gpio_out_named(DEVICE(sbd), &s->clk_update, ESP32S3_RTC_CLK_UPDATE_GPIO, 1);
     qdev_init_gpio_out_named(DEVICE(sbd), &s->light_sleep_req,
                              ESP32S3_RTC_LIGHT_SLEEP_GPIO, 1);
 
@@ -802,6 +846,7 @@ static void esp32s3_rtc_cntl_init(Object *obj)
     s->pll_apb_freq = 80000000;
     esp32s3_rtc_cntl_reset_modeled_surface(s);
     esp32s3_rtc_update_cpu_stall(s);
+    esp32s3_rtc_sync_clk_conf_sources(s);
     esp32s3_rtc_update_clk(s);
 
     timer_init_ns(&s->slp_timer, QEMU_CLOCK_VIRTUAL,

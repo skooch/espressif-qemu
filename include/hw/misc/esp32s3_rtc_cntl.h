@@ -21,7 +21,6 @@
 #define ESP32S3_RTC_DIG_RESET_GPIO    "dig-reset"
 #define ESP32S3_RTC_CPU_RESET_GPIO    "cpu-reset"
 #define ESP32S3_RTC_CPU_STALL_GPIO    "cpu-stall"
-#define ESP32S3_RTC_CLK_UPDATE_GPIO   "clk-update"
 #define ESP32S3_RTC_LIGHT_SLEEP_GPIO  "light-sleep"
 
 typedef enum Esp32s3ResetCause {
@@ -40,13 +39,6 @@ typedef enum Esp32s3ResetCause {
     ESP32_RTCWDT_BROWN_OUT_RESET = 15,
     ESP32_RTCWDT_RTC_RESET = 16
 } Esp32s3ResetCause;
-
-typedef enum Esp32s3SocClkSel {
-    ESP32_SOC_CLK_XTAL = 0,
-    ESP32_SOC_CLK_PLL = 1,
-    ESP32_SOC_CLK_8M = 2,
-    ESP32_SOC_CLK_APLL = 3
-} Esp32s3SocClkSel;
 
 typedef enum Esp32s3FastClkSel {
     ESP32_FAST_CLK_XTALD4 = 0,
@@ -75,13 +67,11 @@ typedef struct Esp32s3RtcCntlState {
     qemu_irq dig_reset_req;
     qemu_irq cpu_reset_req[ESP32S3_CPU_COUNT];
     qemu_irq cpu_stall_req[ESP32S3_CPU_COUNT];
-    qemu_irq clk_update;
     qemu_irq light_sleep_req;
     bool cpu_stall_state[ESP32S3_CPU_COUNT];
 
     uint32_t xtal_apb_freq;
     uint32_t pll_apb_freq;
-    Esp32s3SocClkSel soc_clk;
     Esp32s3FastClkSel rtc_fastclk;
     uint32_t rtc_fastclk_freq;
     Esp32s3SlowClkSel rtc_slowclk;
@@ -93,6 +83,7 @@ typedef struct Esp32s3RtcCntlState {
     uint64_t time_reg[2];
     uint32_t sw_cpu_stall_reg;
     uint32_t timer2_reg;
+    uint32_t clk_conf_reg;
     uint32_t sdio_conf_reg;
     uint32_t rtc_reg;
     uint32_t pwc_reg;
@@ -166,7 +157,23 @@ REG32(RTC_CNTL_STORE3, 0x5c)
 REG32(RTC_CNTL_CLK_CONF, 0x74)
     FIELD(RTC_CNTL_CLK_CONF, ANA_CLK_RTC_SEL, 30, 2)
     FIELD(RTC_CNTL_CLK_CONF, FAST_CLK_RTC_SEL, 29, 1)
-    FIELD(RTC_CNTL_CLK_CONF, SOC_CLK_SEL, 27, 2)
+    FIELD(RTC_CNTL_CLK_CONF, XTAL_GLOBAL_FORCE_NOGATING, 28, 1)
+    FIELD(RTC_CNTL_CLK_CONF, XTAL_GLOBAL_FORCE_GATING, 27, 1)
+    FIELD(RTC_CNTL_CLK_CONF, CK8M_FORCE_PU, 26, 1)
+    FIELD(RTC_CNTL_CLK_CONF, CK8M_FORCE_PD, 25, 1)
+    FIELD(RTC_CNTL_CLK_CONF, CK8M_DFREQ, 17, 8)
+    FIELD(RTC_CNTL_CLK_CONF, CK8M_FORCE_NOGATING, 16, 1)
+    FIELD(RTC_CNTL_CLK_CONF, XTAL_FORCE_NOGATING, 15, 1)
+    FIELD(RTC_CNTL_CLK_CONF, CK8M_DIV_SEL, 12, 3)
+    FIELD(RTC_CNTL_CLK_CONF, DIG_CLK8M_EN, 10, 1)
+    FIELD(RTC_CNTL_CLK_CONF, DIG_CLK8M_D256_EN, 9, 1)
+    FIELD(RTC_CNTL_CLK_CONF, DIG_XTAL32K_EN, 8, 1)
+    FIELD(RTC_CNTL_CLK_CONF, ENB_CK8M_DIV, 7, 1)
+    FIELD(RTC_CNTL_CLK_CONF, ENB_CK8M, 6, 1)
+    FIELD(RTC_CNTL_CLK_CONF, CK8M_DIV, 4, 2)
+    FIELD(RTC_CNTL_CLK_CONF, CK8M_DIV_SEL_VLD, 3, 1)
+    FIELD(RTC_CNTL_CLK_CONF, EFUSE_CLK_FORCE_NOGATING, 2, 1)
+    FIELD(RTC_CNTL_CLK_CONF, EFUSE_CLK_FORCE_GATING, 1, 1)
 
 REG32(RTC_CNTL_SDIO_CONF, 0x7c)
     FIELD(RTC_CNTL_SDIO_CONF, XPD_SDIO_REG, 31, 1)

@@ -304,17 +304,6 @@ static void esp32s3_soc_reset_owned_digital_peripherals(Esp32s3SocState *s)
     esp32s3_soc_reset_analog_register_shims(s);
 }
 
-static void esp32s3_soc_reapply_rtc_clock_state(Esp32s3SocState *s)
-{
-    /*
-     * Digital reset leaves RTC bookkeeping retained, so the SoC remains the
-     * single owner that reapplies the retained RTC clock selection to the
-     * freshly reset SYSTEM clock block.
-     */
-    esp32s3_clock_apply_rtc_soc_clk(&s->clock, s->rtc_cntl.soc_clk,
-                                    s->rtc_cntl.xtal_apb_freq);
-}
-
 static bool esp32s3_soc_cpu_present(int cpu_index)
 {
     MachineState *ms = MACHINE(qdev_get_machine());
@@ -418,7 +407,6 @@ static void esp32s3_soc_apply_reset(Esp32s3SocState *s, uint32_t reset_domain)
 
     if (reset_domain & ESP32S3_SOC_RESET_PERIPH) {
         esp32s3_soc_reset_owned_digital_peripherals(s);
-        esp32s3_soc_reapply_rtc_clock_state(s);
         esp32s3_rtc_notify_system_reset(&s->rtc_cntl);
     }
 
@@ -485,18 +473,6 @@ static void esp32s3_system_clock_update(void *opaque, int n, int level)
     if (level) {
         esp32s3_update_clock_consumers(s);
     }
-}
-
-static void esp32s3_clk_update(void* opaque, int n, int level)
-{
-    Esp32s3SocState *s = ESP32S3_SOC(opaque);
-
-    if (!level) {
-        return;
-    }
-
-    esp32s3_clock_apply_rtc_soc_clk(&s->clock, s->rtc_cntl.soc_clk,
-                                    s->rtc_cntl.xtal_apb_freq);
 }
 
 static void esp32s3_soc_add_periph_device(MemoryRegion *dest, void* dev, hwaddr dport_base_addr)
@@ -675,8 +651,6 @@ static void esp32s3_soc_realize(DeviceState *dev, Error **errp)
 
     qdev_connect_gpio_out_named(DEVICE(&s->rtc_cntl), ESP32S3_RTC_DIG_RESET_GPIO, 0,
                                 qdev_get_gpio_in_named(dev, ESP32S3_RTC_DIG_RESET_GPIO, 0));
-    qdev_connect_gpio_out_named(DEVICE(&s->rtc_cntl), ESP32S3_RTC_CLK_UPDATE_GPIO, 0,
-                                qdev_get_gpio_in_named(dev, ESP32S3_RTC_CLK_UPDATE_GPIO, 0));
     qdev_connect_gpio_out_named(DEVICE(&s->rtc_cntl),
                                 ESP32S3_RTC_LIGHT_SLEEP_GPIO, 0,
                                 qdev_get_gpio_in_named(dev,
@@ -1115,7 +1089,6 @@ static void esp32s3_soc_init(Object *obj)
     qdev_init_gpio_in_named(DEVICE(s), esp32s3_dig_reset,  ESP32S3_RTC_DIG_RESET_GPIO, 1);
     qdev_init_gpio_in_named(DEVICE(s), esp32s3_cpu_reset,  ESP32S3_RTC_CPU_RESET_GPIO, ESP32S3_CPU_COUNT);
     qdev_init_gpio_in_named(DEVICE(s), esp32s3_cpu_stall,  ESP32S3_RTC_CPU_STALL_GPIO, ESP32S3_CPU_COUNT);
-    qdev_init_gpio_in_named(DEVICE(s), esp32s3_clk_update, ESP32S3_RTC_CLK_UPDATE_GPIO, 1);
     qdev_init_gpio_in_named(DEVICE(s), esp32s3_light_sleep,
                             ESP32S3_RTC_LIGHT_SLEEP_GPIO, 1);
     qdev_init_gpio_in_named(DEVICE(s), esp32s3_core1_runstall,

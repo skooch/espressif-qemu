@@ -82,23 +82,6 @@ static void esp32s3_clock_emit_update(ESP32S3ClockState *s)
     qemu_irq_pulse(s->clock_update);
 }
 
-void esp32s3_clock_apply_rtc_soc_clk(ESP32S3ClockState *s,
-                                     uint32_t soc_clk_sel,
-                                     uint32_t xtal_freq_hz)
-{
-    uint32_t xtal_mhz = xtal_freq_hz ? (xtal_freq_hz / 1000000u) : 40;
-
-    if (xtal_mhz == 0) {
-        xtal_mhz = 40;
-    }
-
-    s->sysclk = FIELD_DP32(s->sysclk, SYSTEM_SYSCLK_CONF, SOC_CLK_SEL,
-                           soc_clk_sel);
-    s->sysclk = FIELD_DP32(s->sysclk, SYSTEM_SYSCLK_CONF, CLK_XTAL_FREQ,
-                           xtal_mhz);
-    esp32s3_clock_emit_update(s);
-}
-
 uint32_t esp32s3_clock_get_xtal_freq(ESP32S3ClockState *s)
 {
     uint32_t mhz = FIELD_EX32(s->sysclk, SYSTEM_SYSCLK_CONF, CLK_XTAL_FREQ);

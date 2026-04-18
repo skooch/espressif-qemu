@@ -184,10 +184,10 @@ The supported SYSTEM clock contract is narrow and SDK-contract oriented:
 
 - CPU clock source selection follows the ESP-IDF `SOC_CPU_CLK_SRC_*` values exposed through `SYSTEM_SYSCLK_CONF.SOC_CLK_SEL`: XTAL uses the modeled XTAL frequency, RC_FAST uses the ESP-IDF approximate `17.5 MHz`, and PLL selection uses the modeled `SYSTEM_CPU_PER_CONF.CPUPERIOD_SEL` values currently needed by the guest path.
 - APB frequency is derived as `min(cpu_hz, 80 MHz)`, matching the ESP-IDF clock-tree rule that APB/AHB is fixed at 80 MHz when CPU clock is sourced from PLL and otherwise follows lower CPU sources.
-- RTC writes to `RTC_CNTL_CLK_CONF.SOC_CLK_SEL` continue to propagate into `SYSTEM_SYSCLK_CONF` and the supported consumers. The qtest suite pins RTC-driven XTAL selection and UART timing changes.
+- `RTC_CNTL_CLK_CONF` is now the RTC-owned register surface from ESP-IDF `rtc_cntl_reg.h`: RTC fast/slow source selection, CK8M divider fields, and clock force/gating bits are explicit, masked, and reset to source-backed defaults. `RTC_CNTL_CLK_CONF` no longer owns or aliases CPU/system `SOC_CLK_SEL`.
 - The supported modeled consumers are Xtensa CPU clock inputs, UART timing/autobaud behavior, and ESP32-S3 timer-group APB/XTAL counter and watchdog rates. Other APB users are not yet connected to the clock model and must not be treated as source-sensitive.
 - `SYSTEM_CPU_PER_CONF` and `SYSTEM_SYSCLK_CONF` now mask guest writes to the source-backed fields present in ESP-IDF `system_reg.h`. Peripheral clock-enable/reset registers and `SYSTEM_CLOCK_GATE` are explicit deterministic register state, but individual peripheral clock gating and reset side effects are still owned by their device-specific phases.
-- SYSTEM clock changes now emit a SoC-level clock update so direct SYSTEM writes and RTC-driven clock source changes update TIMG consumers consistently. The qtest suite pins TIMG APB counter timing at 80 ticks/us under PLL/APB=80 MHz and 40 ticks/us after switching SOC clock to XTAL/APB=40 MHz.
+- SYSTEM clock changes now emit a SoC-level clock update so direct `SYSTEM_SYSCLK_CONF` writes update TIMG consumers consistently. The qtest suite pins that ownership boundary: SYSTEM clock writes still change UART/TIMG timing, while RTC `CLK_CONF` writes do not.
 
 The interrupt matrix contract is also narrow but explicit:
 

@@ -322,9 +322,18 @@ static uint32_t rtc_default_clk_conf(void)
     rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, ANA_CLK_RTC_SEL,
                               ESP32_SLOW_CLK_RC);
     rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, FAST_CLK_RTC_SEL,
-                              ESP32_FAST_CLK_8M);
-    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, SOC_CLK_SEL,
-                              ESP32_SOC_CLK_XTAL);
+                              ESP32_FAST_CLK_XTALD4);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF,
+                              XTAL_GLOBAL_FORCE_NOGATING, 1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, CK8M_DFREQ, 172);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, CK8M_DIV_SEL, 3);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, DIG_CLK8M_D256_EN,
+                              1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, CK8M_DIV, 1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF,
+                              CK8M_DIV_SEL_VLD, 1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF,
+                              EFUSE_CLK_FORCE_NOGATING, 1);
     return rtc_clk_conf;
 }
 
@@ -2034,24 +2043,51 @@ static void test_uart_clock_dependent_timing(void)
     qtest_quit(qts);
 }
 
-static void test_rtc_clk_update_propagates_to_system_and_uart(void)
+static void test_rtc_clk_conf_register_contract(void)
 {
     QTestState *qts = qts_start();
     uint32_t default_pulse = qtest_readl(qts, UART0_BASE + A_UART_LOWPULSE);
+    uint32_t default_sysclk = qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF);
+    uint32_t default_rxd_cnt;
     uint32_t rtc_clk_conf = 0;
-    uint32_t sysclk_conf;
-
-    rtc_clk_conf = rtc_default_clk_conf();
-    qtest_writel(qts, DR_REG_RTCCNTL_BASE + A_RTC_CNTL_CLK_CONF, rtc_clk_conf);
-
-    sysclk_conf = qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF);
-    g_assert_cmpuint(FIELD_EX32(sysclk_conf, SYSTEM_SYSCLK_CONF, SOC_CLK_SEL),
-                     ==, ESP32S3_CLK_SEL_XTAL);
-    g_assert_cmpuint(qtest_readl(qts, UART0_BASE + A_UART_LOWPULSE), <, default_pulse);
 
     qtest_writel(qts, UART0_BASE + A_UART_AUTOBAUD,
                  FIELD_DP32(0, UART_AUTOBAUD, EN, 1));
-    g_assert_cmpuint(qtest_readl(qts, UART0_BASE + A_UART_RXD_CNT), ==, 400);
+    default_rxd_cnt = qtest_readl(qts, UART0_BASE + A_UART_RXD_CNT);
+
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, ANA_CLK_RTC_SEL,
+                              ESP32_SLOW_CLK_8MD256);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, FAST_CLK_RTC_SEL,
+                              ESP32_FAST_CLK_8M);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF,
+                              XTAL_GLOBAL_FORCE_GATING, 1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, CK8M_FORCE_PU, 1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, CK8M_DFREQ, 0x55);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF,
+                              CK8M_FORCE_NOGATING, 1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF,
+                              XTAL_FORCE_NOGATING, 1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, CK8M_DIV_SEL, 2);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, DIG_CLK8M_EN, 1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, DIG_XTAL32K_EN,
+                              1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, ENB_CK8M_DIV, 1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, ENB_CK8M, 1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, CK8M_DIV, 2);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF,
+                              EFUSE_CLK_FORCE_GATING, 1);
+    qtest_writel(qts, DR_REG_RTCCNTL_BASE + A_RTC_CNTL_CLK_CONF, rtc_clk_conf);
+
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_CLK_CONF),
+                    ==, rtc_clk_conf);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF),
+                    ==, default_sysclk);
+    g_assert_cmpuint(qtest_readl(qts, UART0_BASE + A_UART_LOWPULSE), ==,
+                     default_pulse);
+    qtest_writel(qts, UART0_BASE + A_UART_AUTOBAUD,
+                 FIELD_DP32(0, UART_AUTOBAUD, EN, 1));
+    g_assert_cmpuint(qtest_readl(qts, UART0_BASE + A_UART_RXD_CNT), ==,
+                     default_rxd_cnt);
 
     qtest_quit(qts);
 }
@@ -2228,6 +2264,28 @@ static void test_rtc_explicit_register_surface(void)
                         R_RTC_CNTL_SDIO_CONF_SDIO_DCAP_MASK |
                         R_RTC_CNTL_SDIO_CONF_SDIO_DTHDRV_MASK |
                         R_RTC_CNTL_SDIO_CONF_SDIO_TIMER_TARGET_MASK);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_CLK_CONF, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_CLK_CONF),
+                    ==, R_RTC_CNTL_CLK_CONF_ANA_CLK_RTC_SEL_MASK |
+                        R_RTC_CNTL_CLK_CONF_FAST_CLK_RTC_SEL_MASK |
+                        R_RTC_CNTL_CLK_CONF_XTAL_GLOBAL_FORCE_NOGATING_MASK |
+                        R_RTC_CNTL_CLK_CONF_XTAL_GLOBAL_FORCE_GATING_MASK |
+                        R_RTC_CNTL_CLK_CONF_CK8M_FORCE_PU_MASK |
+                        R_RTC_CNTL_CLK_CONF_CK8M_FORCE_PD_MASK |
+                        R_RTC_CNTL_CLK_CONF_CK8M_DFREQ_MASK |
+                        R_RTC_CNTL_CLK_CONF_CK8M_FORCE_NOGATING_MASK |
+                        R_RTC_CNTL_CLK_CONF_XTAL_FORCE_NOGATING_MASK |
+                        R_RTC_CNTL_CLK_CONF_CK8M_DIV_SEL_MASK |
+                        R_RTC_CNTL_CLK_CONF_DIG_CLK8M_EN_MASK |
+                        R_RTC_CNTL_CLK_CONF_DIG_CLK8M_D256_EN_MASK |
+                        R_RTC_CNTL_CLK_CONF_DIG_XTAL32K_EN_MASK |
+                        R_RTC_CNTL_CLK_CONF_ENB_CK8M_DIV_MASK |
+                        R_RTC_CNTL_CLK_CONF_ENB_CK8M_MASK |
+                        R_RTC_CNTL_CLK_CONF_CK8M_DIV_MASK |
+                        R_RTC_CNTL_CLK_CONF_CK8M_DIV_SEL_VLD_MASK |
+                        R_RTC_CNTL_CLK_CONF_EFUSE_CLK_FORCE_NOGATING_MASK |
+                        R_RTC_CNTL_CLK_CONF_EFUSE_CLK_FORCE_GATING_MASK);
 
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER0, 0x89abcdef);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER0),
@@ -2816,7 +2874,7 @@ static void test_rtc_reset_transitions(void)
     g_assert_cmphex(qtest_readl(qts, UART0_BASE + A_UART_INT_ENA), ==, 0);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STORE0),
                     ==, scratch_value);
-    assert_owned_digital_reset_surface_defaults(qts, ESP32S3_CLK_SEL_XTAL);
+    assert_owned_digital_reset_surface_defaults(qts, ESP32S3_CLK_SEL_PLL);
 
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WAKEUP_STATE, UINT32_MAX);
     qtest_writel(qts, RTC_EXT_WAKEUP_CONF_REG, UINT32_MAX);
@@ -2836,8 +2894,10 @@ static void test_rtc_reset_transitions(void)
                               ESP32_SLOW_CLK_32KXTAL);
     rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, FAST_CLK_RTC_SEL,
                               ESP32_FAST_CLK_XTALD4);
-    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, SOC_CLK_SEL,
-                              ESP32_SOC_CLK_PLL);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF,
+                              XTAL_GLOBAL_FORCE_GATING, 1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, CK8M_FORCE_PU, 1);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, CK8M_DFREQ, 0x33);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_CLK_CONF, rtc_clk_conf);
     dirty_rtc_light_sleep_config_surface(qts);
     assert_rtc_light_sleep_config_surface_is_dirty(qts);
@@ -3497,7 +3557,8 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/i2c/done-ack", test_i2c_done_and_ack_semantics);
     qtest_add_func("/esp32s3/i2c/read-path-deferred", test_i2c_read_path_and_deferred_complete);
     qtest_add_func("/esp32s3/i2c/unsupported-modes", test_i2c_unsupported_modes);
-    qtest_add_func("/esp32s3/rtc/clk-update", test_rtc_clk_update_propagates_to_system_and_uart);
+    qtest_add_func("/esp32s3/rtc/clk-conf-register-contract",
+                   test_rtc_clk_conf_register_contract);
     qtest_add_func("/esp32s3/system/clock-register-contract",
                    test_system_clock_register_contract);
     qtest_add_func("/esp32s3/system/core1-runstall",
