@@ -215,41 +215,64 @@ static void qtest_check_status(QTestState *s)
 #endif
 }
 
+static bool qtest_wait_qemu_terminated(QTestState *s, int timeout_seconds)
+{
+    if (s->qemu_pid == -1) {
+        qtest_check_status(s);
+        return true;
+    }
+
+#ifndef _WIN32
+    pid_t pid;
+    uint64_t end;
+
+    end = g_get_monotonic_time() + timeout_seconds * G_TIME_SPAN_SECOND;
+
+    do {
+        pid = waitpid(s->qemu_pid, &s->wstatus, WNOHANG);
+        if (pid != 0) {
+            break;
+        }
+        g_usleep(100 * 1000);
+    } while (g_get_monotonic_time() < end);
+
+    if (pid != s->qemu_pid) {
+        return false;
+    }
+#else
+    DWORD ret;
+
+    ret = WaitForSingleObject((HANDLE)s->qemu_pid,
+                              timeout_seconds * 1000);
+    if (ret != WAIT_OBJECT_0) {
+        return false;
+    }
+
+    GetExitCodeProcess((HANDLE)s->qemu_pid, &s->exit_code);
+    CloseHandle((HANDLE)s->qemu_pid);
+#endif
+
+    s->qemu_pid = -1;
+    qtest_remove_abrt_handler(s);
+    qtest_check_status(s);
+    return true;
+}
+
 void qtest_wait_qemu(QTestState *s)
 {
     if (s->qemu_pid != -1) {
 #ifndef _WIN32
-        pid_t pid;
-        uint64_t end;
-
-        /* poll for a while until sending SIGKILL */
-        end = g_get_monotonic_time() + WAITPID_TIMEOUT * G_TIME_SPAN_SECOND;
-
-        do {
-            pid = waitpid(s->qemu_pid, &s->wstatus, WNOHANG);
-            if (pid != 0) {
-                break;
-            }
-            g_usleep(100 * 1000);
-        } while (g_get_monotonic_time() < end);
-
-        if (pid == 0) {
+        if (!qtest_wait_qemu_terminated(s, WAITPID_TIMEOUT)) {
             kill(s->qemu_pid, SIGKILL);
-            pid = RETRY_ON_EINTR(waitpid(s->qemu_pid, &s->wstatus, 0));
+            (void)qtest_wait_qemu_terminated(s, WAITPID_TIMEOUT);
         }
-
-        assert(pid == s->qemu_pid);
 #else
-        DWORD ret;
-
-        ret = WaitForSingleObject((HANDLE)s->qemu_pid, INFINITE);
-        assert(ret == WAIT_OBJECT_0);
-        GetExitCodeProcess((HANDLE)s->qemu_pid, &s->exit_code);
-        CloseHandle((HANDLE)s->qemu_pid);
+        if (!qtest_wait_qemu_terminated(s, WAITPID_TIMEOUT)) {
+            TerminateProcess((HANDLE)s->qemu_pid, s->expected_status);
+            (void)qtest_wait_qemu_terminated(s, WAITPID_TIMEOUT);
+        }
 #endif
-
-        s->qemu_pid = -1;
-        qtest_remove_abrt_handler(s);
+        return;
     }
     qtest_check_status(s);
 }
@@ -258,6 +281,12 @@ void qtest_kill_qemu(QTestState *s)
 {
     /* Skip wait if qtest_probe_child() already reaped */
     if (s->qemu_pid != -1) {
+        if (s->qmp_fd >= 0) {
+            qtest_qmp_send(s, "{ 'execute': 'quit' }");
+            if (qtest_wait_qemu_terminated(s, WAITPID_TIMEOUT)) {
+                return;
+            }
+        }
 #ifndef _WIN32
         kill(s->qemu_pid, SIGTERM);
 #else
