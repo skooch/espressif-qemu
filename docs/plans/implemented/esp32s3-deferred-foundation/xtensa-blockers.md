@@ -5,7 +5,7 @@ Updated: 2026-04-05
 This queue keeps the ESP32-S3 architectural/backend work separate from the peripheral backlog and ties each item to observed or likely guest behavior.
 
 Task 4 is complete for the currently confirmed blockers. This file now serves as a residual watch list and implementation record rather than an active sprint backlog.
-Its remaining items are now ranked against the broader hardware-target backlog in `docs/plans/new/esp32s3-tdeck-pro-fidelity/plan.md`.
+Its remaining items are now ranked against the broader hardware-target backlog in `docs/plans/in-progress/esp32s3-fidelity-follow-on/plan.md`.
 
 ## Current scope choice
 

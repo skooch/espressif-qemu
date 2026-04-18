@@ -2,19 +2,18 @@
 
 ## Overview
 
-This document tracks the known fidelity gaps in the `esp32s3` machine model in this fork and the immediate implementation program for closing the highest-value ones first.
+This document tracks the known fidelity gaps in the `esp32s3` machine model in this fork and the current follow-on program for closing the highest-value gaps for the active T-Deck Pro workload.
 
-The immediate peripheral and deferred-foundation programs described here are now historical records. Active follow-on prioritization for the T-Deck Pro target lives in `docs/plans/in-progress/esp32s3-tdeck-pro-fidelity/plan.md`.
+The immediate peripheral, deferred-foundation, core-SoC, and first T-Deck prioritization plans are historical records under `docs/plans/implemented/`. Active follow-on execution now lives in `docs/plans/in-progress/esp32s3-fidelity-follow-on/plan.md`.
 
-The current scope is intentionally limited to the previously identified high-impact fixes and easy wins:
+The current scope is intentionally limited to the remaining high-risk follow-on work:
 
-- SPI1 transfer correctness
-- GP-SPI completion semantics
-- routed GPIO / IO_MUX plumbing used by the current board path
-- removal of boot-critical dependence on the generic MMIO echo region
-- tighter USB Serial/JTAG, I2C, UART, PMS, RNG, and SHA behavior
+- clock/reset/sleep phase 2 cleanup after the archived P0/P1 slices
+- documenting the landed SYSTIMER light-sleep contract and the broader clock/sleep work that still remains
+- wider doc and plan-state normalization so the active backlog is unambiguous
+- trigger-based cache/MMU and Xtensa follow-ons only when guest evidence demands them
 
-Deferred items such as deep clock/reset rework, cache/MMU timing realism beyond the current packet/link contract, a full ESP32-S3-specific EMAC replacement, and broader Xtensa backend fidelity remain out of scope for this immediate program.
+Broader silicon-completeness work such as analog PLL dynamics, full cache microarchitecture realism, a full ESP32-S3-specific EMAC replacement, and speculative Xtensa configured-core/TIE coverage remain source-gated and out of scope unless the active workload or stronger references promote them.
 
 ## Current State Snapshot
 
@@ -24,6 +23,7 @@ As of 2026-04-03, the target is materially stronger than a "boots-only" model, b
 - The current board path is in much better shape than before: SPI1, GP-SPI, routed GPIO/IO_MUX, USB Serial/JTAG, I2C, UART, PMS, RNG, and SHA now have direct regression coverage for the currently exercised surface.
 - The recent EPD black-screen regression was traced to incorrect GDMA descriptor-address reconstruction. The runtime path now uses ESP32-S3 DMA RAM addressing semantics, the simulator renders again, and the qtests were aligned to the corrected hardware contract.
 - The target is best understood as "board-path complete for the active firmware path, selectively modeled elsewhere". Many subsystems still behave functionally rather than faithfully.
+- The active light-sleep path now freezes SYSTIMER in hardware and leaves elapsed-time compensation to the adjacent firmware wake path, matching the current T-Deck contract more closely than the earlier always-counting model.
 
 ## Core SoC Fidelity Guardrails (2026-04-15)
 
@@ -264,7 +264,7 @@ Future Xtensa backend fixes must follow these accuracy rules:
 - The generic Xtensa backend still has known accuracy gaps such as remaining reject-surface coverage gaps and unimplemented opcode paths.
 - Real `esp32s3` board guest probing is no longer blocked by ROM handoff. The board now loads custom ROM ELFs through `-bios` into each CPU address space correctly, and the tree now has checked-in functional regressions for recoverable cache-alias reject handling on both CPU0 and CPU1 plus guest RTC timer light-sleep wake recovery. The remaining cache-specific gap is only the broader reject surface beyond the active board path.
 
-### Task 1 Shortcut Inventory (2026-04-04)
+### Clock/Reset/Sleep Follow-On Inventory (2026-04-18)
 
 Background commits reviewed for the current board-control path:
 
@@ -276,15 +276,15 @@ Background commits reviewed for the current board-control path:
 - `a7d95fc530` made RTC clock-source writes update the modeled SoC clock state.
 - `767ea45d46` added direct qtests for timer wakeup, reset transitions, and CPU stall.
 
-Remaining shortcuts that still mask real state transitions:
+The original 2026-04-04 shortcut inventory is now historical. The archived P0 slices closed several of those items: guest software reset now dispatches through the local SoC reset path, light sleep is a board-visible CPU-hold transition instead of internal bookkeeping, and TIMG consumers now follow modeled APB/XTAL clock changes.
 
-- Reset requests still travel through a QEMU-global shim instead of an explicit ESP32-S3 reset tree. `RTC_CNTL` pulses GPIO lines, the SoC translates them into `qemu_system_reset_request(...)`, and `esp32s3_soc_reset()` reconstructs the intended local effect afterwards.
-- Digital-reset fanout is still selective and implicit. `esp32s3_soc_reset()` only cold-resets the interrupt matrix, UARTs, and I2C controllers, while the rest of the digital surface keeps whatever state it had unless some other path resets it.
-- Light sleep is still bookkeeping rather than a board-wide power transition. Entering sleep sets `sleeping`, arms the timer, and records wake/reject causes, but it does not gate clocks, pause CPUs, or suspend peripheral activity.
-- Clock switching is collapsed to an immediate register rewrite. RTC clock updates directly rewrite `SYSTEM_SYSCLK_CONF` and recompute CPU/APB rates without modeling oscillator enable, PLL lock, divider settling, or source-switch latency.
-- Clock-rate fanout is still narrow. The active modeled rate only propagates into CPU clocks and UART timing; most APB-frequency-sensitive peripherals and timers still behave as if their local timing is fixed.
-- The RTC-to-clock handoff still exists in two places. The RTC block now updates the clock model directly and also emits the older `clk-update` pulse, so the SoC callback remains as a compatibility shim rather than a single explicit ownership path.
-- RTC reset behavior is still shallow. The reset hook re-bases the RTC time counter, but it does not yet rebuild a domain-aware reset/default state for the wider RTC register surface.
+The remaining follow-on items in this area are:
+
+- The active light-sleep path now freezes SYSTIMER and resumes it on wake, while the adjacent firmware remains responsible for compensating elapsed RTC time after wake. Broader oscillator stop/start timing and peripheral-gating realism remain incomplete.
+- Digital-reset fanout is still selective. The SoC reset path now owns guest software reset dispatch, but only the currently-owned digital subset is explicitly reset.
+- The RTC-to-clock handoff still has duplicated ownership: the RTC block applies clock changes directly and also emits the older `clk-update` pulse through the SoC callback.
+- Clock and sleep fanout are still narrow compared to real hardware. TIMG and UART follow the modeled clock path, but wider peripheral fanout, oscillator stop/start timing, and peripheral/power-domain gating remain incomplete.
+- RTC reset remains explicit only for the currently modeled contract. A wider domain-aware reset/default reconstruction for the RTC surface is still pending.
 
 ### Task 2 Cache/MMU Dependency Inventory (2026-04-04)
 
