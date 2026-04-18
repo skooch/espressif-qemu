@@ -4,7 +4,7 @@
 
 This document tracks the known fidelity gaps in the `esp32s3` machine model in this fork and the current follow-on program for closing the highest-value gaps for the active T-Deck Pro workload.
 
-The immediate peripheral, deferred-foundation, core-SoC, first T-Deck prioritization plan, the 2026-04-18 follow-on clock/reset/sleep cleanup plan, the 2026-04-18 reset-fanout phase, the 2026-04-18 RTC time-trigger phase, the 2026-04-18 RTC light-sleep configuration phase, and the 2026-04-18 RTC SDIO config phase are historical records under `docs/plans/implemented/`. There is no separate active `docs/plans/in-progress/` ESP32-S3 fidelity plan right now; the remaining guest-triggered queues are tracked directly in this document.
+The immediate peripheral, deferred-foundation, core-SoC, first T-Deck prioritization plan, the 2026-04-18 follow-on clock/reset/sleep cleanup plan, the 2026-04-18 reset-fanout phase, the 2026-04-18 RTC time-trigger phase, the 2026-04-18 RTC light-sleep configuration phase, and the 2026-04-18 RTC SDIO config phase are historical records under `docs/plans/implemented/`. There is still no active `docs/plans/in-progress/` ESP32-S3 fidelity plan right now, but the remaining backlog is no longer only implicit in this document: each queue now has an explicit `docs/plans/new/` plan record that should be promoted to `in-progress` before execution starts.
 
 The current scope is intentionally limited to the remaining high-risk follow-on work:
 
@@ -13,6 +13,20 @@ The current scope is intentionally limited to the remaining high-risk follow-on 
 - trigger-based cache/MMU and Xtensa follow-ons only when guest evidence demands them
 
 Broader silicon-completeness work such as analog PLL dynamics, full cache microarchitecture realism, a full ESP32-S3-specific EMAC replacement, and speculative Xtensa configured-core/TIE coverage remain source-gated and out of scope unless the active workload or stronger references promote them.
+
+## Backlog Plan Map
+
+The remaining documented queues are split into these plan records under `docs/plans/new/`:
+
+- `docs/plans/new/esp32s3-board-control-realism/plan.md` for clock, reset, sleep, and low-power realism
+- `docs/plans/new/esp32s3-external-memory-fidelity/plan.md` for cache/MMU, flash, and PSRAM follow-ons
+- `docs/plans/new/esp32s3-generic-mmio-burn-down/plan.md` for the remaining catch-all windows and explicit owner handoff
+- `docs/plans/new/esp32s3-peripheral-contract-follow-ons/plan.md` for GP-SPI, USB Serial/JTAG, I2C, UART, SHA, eFuse, PMS, and RNG residual contract work
+- `docs/plans/new/esp32s3-emac-fidelity/plan.md` for deeper EMAC fidelity beyond the current `open_eth` contract
+- `docs/plans/new/esp32s3-rmt-model/plan.md` for the currently unimplemented RMT block
+- `docs/plans/new/esp32s3-xtensa-backend-follow-ons/plan.md` for guest-driven Xtensa backend and configured-core follow-ons
+
+Source-gated residuals remain source-gated even with a plan file. Those plans exist so the evidence requirements, intended scope, and verification floor are explicit before implementation begins.
 
 ## Current State Snapshot
 
