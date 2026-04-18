@@ -4,7 +4,7 @@
 Restore a single live ESP32-S3 fidelity backlog, align the repo-root gap document with the archived plan history, and close the next highest-pressure gap for the active T-Deck Pro workload.
 
 ## Current Phase
-Phase 1 in progress: SYSTIMER light-sleep semantics plus plan/doc state normalization.
+Implemented on 2026-04-18 after the verification floor was restored to green.
 
 ## Scope
 This plan covers:
@@ -28,8 +28,8 @@ This plan does not claim full silicon fidelity. Analog PLL dynamics, full power-
 - Modify: `ESP32S3_EMULATION_GAPS.md`
 - Modify: `docs/plans/implemented/esp32s3-tdeck-pro-fidelity/plan.md`
 - Modify: `docs/plans/implemented/esp32s3-deferred-foundation/xtensa-blockers.md`
-- Create: `docs/plans/in-progress/esp32s3-fidelity-follow-on/plan.md`
-- Create: `docs/plans/in-progress/esp32s3-fidelity-follow-on/progress.md`
+- Historical execution path: `docs/plans/implemented/esp32s3-fidelity-follow-on/plan.md`
+- Historical execution path: `docs/plans/implemented/esp32s3-fidelity-follow-on/progress.md`
 - Modify: `include/hw/timer/esp_systimer.h`
 - Modify: `hw/timer/esp_systimer.c`
 - Modify: `hw/xtensa/esp32s3.c`
@@ -67,9 +67,10 @@ Every implementation slice in this plan must keep the following green unless the
 - [ ] Keep broader Xtensa opcode work gated behind a reproduced failing opcode path or exact configured-core reference.
 
 ## Exit Criteria
-- The repository has one live ESP32-S3 fidelity plan under `docs/plans/in-progress/`.
+- The repository has one coherent recorded ESP32-S3 follow-on plan under `docs/plans/implemented/`.
 - The repo-root gap document no longer points at archived paths or stale “still open” shortcut text.
 - The first sleep/clock follow-on slice lands with direct regression coverage and the verification floor recorded in progress.
 - Phase 2 keeps a single SoC-owned RTC clock-apply path, with RTC-side bookkeeping only driving the `clk_update` signal.
 - The RTC block restores explicit modeled-surface defaults on full-chip reset instead of only rebasing RTC time.
 - The current guest audit leaves wider clock/power fanout deferred: no additional QEMU-visible consumer beyond the existing UART/TIMG path is proven today.
+- The qtest verification floor remains green after the `libqtest` teardown path is hardened with a QMP `quit` before signal fallback.

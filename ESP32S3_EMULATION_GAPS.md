@@ -4,7 +4,7 @@
 
 This document tracks the known fidelity gaps in the `esp32s3` machine model in this fork and the current follow-on program for closing the highest-value gaps for the active T-Deck Pro workload.
 
-The immediate peripheral, deferred-foundation, core-SoC, and first T-Deck prioritization plans are historical records under `docs/plans/implemented/`. Active follow-on execution now lives in `docs/plans/in-progress/esp32s3-fidelity-follow-on/plan.md`.
+The immediate peripheral, deferred-foundation, core-SoC, first T-Deck prioritization plan, and the 2026-04-18 follow-on clock/reset/sleep cleanup plan are historical records under `docs/plans/implemented/`. There is no separate active `docs/plans/in-progress/` ESP32-S3 fidelity plan right now; the remaining guest-triggered queues are tracked directly in this document.
 
 The current scope is intentionally limited to the remaining high-risk follow-on work:
 

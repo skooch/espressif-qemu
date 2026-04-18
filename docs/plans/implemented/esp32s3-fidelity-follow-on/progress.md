@@ -2,7 +2,7 @@
 
 - 2026-04-18: Created peer worktree `/Users/skooch/projects/tdeck-pro-rust/worktrees/esp32s3-fidelity-plan-refresh` on branch `codex/esp32s3-fidelity-plan-refresh` from refreshed `tdeck-peripherals`.
 - 2026-04-18: Audited the current ESP32-S3 plan/doc state. Confirmed there was no live ESP32-S3 plan in `docs/plans/in-progress/`, the repo-root gap document still pointed at the archived `esp32s3-tdeck-pro-fidelity` path, and parts of `ESP32S3_EMULATION_GAPS.md` still described already-closed light-sleep/reset shortcuts as open.
-- 2026-04-18: Created the live successor plan `docs/plans/in-progress/esp32s3-fidelity-follow-on/plan.md` and retargeted the repo-root gap document plus the residual Xtensa blocker queue to it.
+- 2026-04-18: Created the live successor plan, now archived at `docs/plans/implemented/esp32s3-fidelity-follow-on/plan.md`, and retargeted the repo-root gap document plus the residual Xtensa blocker queue to it.
 - 2026-04-18: Selected the first executable follow-on slice: model SYSTIMER stop/resume across modeled light sleep so the adjacent firmware’s `sleep::systimer::compensate(...)` path matches QEMU instead of double-counting slept time.
 - 2026-04-18: Landed the first Phase 1 code slice in the worktree. The SoC light-sleep hook now tells the shared SYSTIMER model to suspend counters and comparator timers while sleep is asserted, then resume and reprogram comparator deadlines on wake.
 - 2026-04-18: Added direct qtest coverage in `tests/qtest/esp32s3-test.c` proving SYSTIMER unit 0 advances while awake, stays flat through modeled light sleep before wake, and resumes counting after wake.
@@ -33,3 +33,11 @@
   - `QTEST_QEMU_BINARY=./build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test -p /xtensa/esp32s3/rtc` passes as a subgroup, including `/xtensa/esp32s3/rtc/reset-transitions`.
   - Launching every listed ESP32-S3 qtest path one-by-one in fresh qtest processes still eventually reproduces the same `signal 9` death at `/xtensa/esp32s3/rtc/reset-transitions` once enough earlier paths have run, which points to a cumulative local suite-runner limitation rather than a targeted RTC contract regression.
 - 2026-04-18: Audited the remaining clock/power-fanout item against the active firmware and the current QEMU model. The firmware changes CPU period through `src/clock.rs`, re-applies it after light sleep, and uses high-level boosts around SD, Wi-Fi, BLE, and display work, but on the QEMU side the only modeled dynamic clock consumers are still UART and TIMG. No additional guest-proven QEMU-visible fanout target emerged from the audit, so the remaining work in this queue stays explicitly deferred rather than widened speculatively.
+- 2026-04-18: Diagnosed the suite-level `kill_qemu()` blocker down to the qtest harness teardown path. `tests/qtest/libqtest.c` was using `SIGTERM` unconditionally during `qtest_quit()`, and on this Mac that path could time out after cumulative runs even when the guest contract remained healthy.
+- 2026-04-18: Hardened `libqtest` teardown so `qtest_kill_qemu()` now tries QMP `quit` first and only falls back to the older signal path when needed. This fixes the cumulative ESP32-S3 suite teardown failure without changing the ESP32-S3 model behavior itself.
+- 2026-04-18: Final verification after the `libqtest` teardown fix:
+  - `git diff --check` passed.
+  - `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` passed.
+  - The full redirected `QTEST_QEMU_BINARY=./build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` suite passed through `/xtensa/esp32s3/efuse/explicit-contract` with exit code `0`.
+  - Functional tests `tests/functional/test_xtensa_esp32s3_cache_reject.py` and `tests/functional/test_xtensa_esp32s3_sleep_wake.py` passed via `uv run --with pycotap`.
+  - The plan scope is complete; only the explicitly guest-triggered deferred queues remain open.
