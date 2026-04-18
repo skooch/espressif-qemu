@@ -319,6 +319,192 @@ static uint32_t rtc_default_clk_conf(void)
     return rtc_clk_conf;
 }
 
+static uint32_t system_default_cpu_per_conf(void)
+{
+    uint32_t cpu_per_conf = 0;
+
+    cpu_per_conf = FIELD_DP32(cpu_per_conf, SYSTEM_CPU_PER_CONF,
+                              CPUPERIOD_SEL, ESP32S3_PERIOD_SEL_80);
+    cpu_per_conf = FIELD_DP32(cpu_per_conf, SYSTEM_CPU_PER_CONF,
+                              PLL_FREQ_SEL, ESP32S3_FREQ_SEL_PLL_480);
+    cpu_per_conf = FIELD_DP32(cpu_per_conf, SYSTEM_CPU_PER_CONF,
+                              CPU_WAIT_MODE_FORCE_ON, 1);
+    return cpu_per_conf;
+}
+
+static uint32_t system_default_sysclk_conf(uint32_t soc_clk_sel)
+{
+    uint32_t sysclk_conf = 0;
+
+    sysclk_conf = FIELD_DP32(sysclk_conf, SYSTEM_SYSCLK_CONF, PRE_DIV_CNT, 1);
+    sysclk_conf = FIELD_DP32(sysclk_conf, SYSTEM_SYSCLK_CONF, SOC_CLK_SEL,
+                             soc_clk_sel);
+    sysclk_conf = FIELD_DP32(sysclk_conf, SYSTEM_SYSCLK_CONF, CLK_XTAL_FREQ,
+                             40);
+    sysclk_conf = FIELD_DP32(sysclk_conf, SYSTEM_SYSCLK_CONF, CLK_DIV_EN, 1);
+    return sysclk_conf;
+}
+
+static uint32_t timg_default_t0config(void)
+{
+    return 1u << R_TIMG_T0CONFIG_DIVIDER_SHIFT;
+}
+
+static void dirty_owned_digital_reset_surface(QTestState *qts)
+{
+    uint32_t t0_config = 0;
+
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_CPU_PER_CONF, UINT32_MAX);
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF, UINT32_MAX);
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_PERIP_CLK_EN0, 0x13579bdf);
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_PERIP_CLK_EN1, 0x2468ace0);
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_PERIP_RST_EN0, 0x11223344);
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_PERIP_RST_EN1, 0x55667788);
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_CORE_1_CONTROL_0_REG, 1);
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET, 0);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_CTRL1,
+                 R_EXTMEM_DCACHE_CTRL1_SHUT_CORE1_BUS_MASK);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_CTRL1,
+                 R_EXTMEM_ICACHE_CTRL1_SHUT_CORE1_BUS_MASK);
+
+    qtest_writel(qts, GPIO_BASE + GPIO_STATUS_W1TS_REG, BIT(5));
+    qtest_clock_step(qts, 1000);
+    qtest_writel(qts, GPIO_BASE + GPIO_FUNC_OUT_SEL_CFG_REG(34),
+                 ESP32S3_GPIO_SIG_SD_CS);
+    qtest_writel(qts, IOMUX_BASE + ESP32S3_IOMUX_GPIO_REG(34), 0);
+
+    qtest_writel(qts, SPI2_BASE + 0x34, GPSPI_INT_TRANS_DONE);
+    qtest_writel(qts, SPI2_BASE + 0x00,
+                 GPSPI_CMD_USR_BIT | GPSPI_CMD_UPDATE_BIT);
+    qtest_clock_step(qts, 2400);
+
+    qtest_writel(qts, SHA_BASE + A_SHA_IRQ_ENA,
+                 FIELD_DP32(0, SHA_IRQ_ENA, INTERRUPT_ENA, 1));
+    qtest_writel(qts, SHA_BASE + A_SHA_MODE, ESP_SHA_256_MODE);
+    qtest_writel(qts, SHA_BASE + A_SHA_M_MEM, 0x61626380);
+    qtest_writel(qts, SHA_BASE + A_SHA_START,
+                 FIELD_DP32(0, SHA_START, START, 1));
+
+    qtest_writel(qts, PMS_BASE + 0x44, 0x12345678);
+    qtest_writel(qts, PMS_BASE + 0xffc, UINT32_MAX);
+
+    qtest_writel(qts, TIMG0_BASE + A_TIMG_T0LOADLO, 0);
+    qtest_writel(qts, TIMG0_BASE + A_TIMG_T0LOADHI, 0);
+    qtest_writel(qts, TIMG0_BASE + A_TIMG_T0LOAD, 1);
+    t0_config = FIELD_DP32(t0_config, TIMG_T0CONFIG, DIVIDER, 1);
+    t0_config = FIELD_DP32(t0_config, TIMG_T0CONFIG, INCREASE, 1);
+    t0_config = FIELD_DP32(t0_config, TIMG_T0CONFIG, EN, 1);
+    qtest_writel(qts, TIMG0_BASE + A_TIMG_T0CONFIG, t0_config);
+    qtest_clock_step(qts, 1000);
+}
+
+static void assert_owned_digital_reset_surface_is_dirty(QTestState *qts)
+{
+    const uint32_t dcache_ctrl1_bits =
+        R_EXTMEM_DCACHE_CTRL1_SHUT_CORE0_BUS_MASK |
+        R_EXTMEM_DCACHE_CTRL1_SHUT_CORE1_BUS_MASK;
+    const uint32_t icache_ctrl1_bits =
+        R_EXTMEM_ICACHE_CTRL1_SHUT_CORE0_BUS_MASK |
+        R_EXTMEM_ICACHE_CTRL1_SHUT_CORE1_BUS_MASK;
+
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_CPU_PER_CONF),
+                    ==, SYSTEM_CPU_PER_CONF_SUPPORTED_MASK);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_PERIP_CLK_EN0),
+                    ==, 0x13579bdf);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_CORE_1_CONTROL_0_REG),
+                    ==, 1);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_CTRL1) &
+                    dcache_ctrl1_bits,
+                    ==, R_EXTMEM_DCACHE_CTRL1_SHUT_CORE1_BUS_MASK);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_CTRL1) &
+                    icache_ctrl1_bits,
+                    ==, R_EXTMEM_ICACHE_CTRL1_SHUT_CORE1_BUS_MASK);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, GPIO_BASE + GPIO_STATUS_REG), ==, BIT(5));
+    g_assert_cmphex(qtest_readl(qts, GPIO_BASE + GPIO_FUNC_OUT_SEL_CFG_REG(34)),
+                    ==, ESP32S3_GPIO_SIG_SD_CS);
+    g_assert_cmphex((qtest_readl(qts, IOMUX_BASE +
+                                 ESP32S3_IOMUX_GPIO_REG(34)) &
+                     ESP32S3_IOMUX_MCU_SEL_MASK) >>
+                    ESP32S3_IOMUX_MCU_SEL_SHIFT,
+                    ==, ESP32S3_GPIO_IOMUX_FUNC_DIRECT);
+    g_assert_cmphex(qtest_readl(qts, SPI2_BASE + 0x00), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, SPI2_BASE + 0x3c),
+                    ==, GPSPI_INT_TRANS_DONE);
+    g_assert_cmphex(qtest_readl(qts, SPI2_BASE + 0x40),
+                    ==, GPSPI_INT_TRANS_DONE);
+    g_assert_cmphex(qtest_readl(qts, SHA_BASE + A_SHA_IRQ_ENA), ==, 1);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x44), ==, 0x678);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0xffc), ==, 0x0fffffff);
+    g_assert_cmphex(qtest_readl(qts, TIMG0_BASE + A_TIMG_T0CONFIG), !=,
+                    timg_default_t0config());
+    qtest_writel(qts, TIMG0_BASE + A_TIMG_T0UPDATE,
+                 R_TIMG_T0UPDATE_UPDATE_MASK);
+    g_assert_cmpuint(qtest_readl(qts, TIMG0_BASE + A_TIMG_T0LO), >, 0);
+}
+
+static void assert_owned_digital_reset_surface_defaults(QTestState *qts,
+                                                        uint32_t sysclk_sel)
+{
+    const uint32_t dcache_ctrl1_bits =
+        R_EXTMEM_DCACHE_CTRL1_SHUT_CORE0_BUS_MASK |
+        R_EXTMEM_DCACHE_CTRL1_SHUT_CORE1_BUS_MASK;
+    const uint32_t icache_ctrl1_bits =
+        R_EXTMEM_ICACHE_CTRL1_SHUT_CORE0_BUS_MASK |
+        R_EXTMEM_ICACHE_CTRL1_SHUT_CORE1_BUS_MASK;
+
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_CPU_PER_CONF),
+                    ==, system_default_cpu_per_conf());
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF),
+                    ==, system_default_sysclk_conf(sysclk_sel));
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_PERIP_CLK_EN0),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_PERIP_CLK_EN1),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_PERIP_RST_EN0),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_PERIP_RST_EN1),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_CORE_1_CONTROL_0_REG),
+                    ==, 0);
+
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_CTRL1) &
+                    dcache_ctrl1_bits,
+                    ==, dcache_ctrl1_bits);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_CTRL1) &
+                    icache_ctrl1_bits,
+                    ==, icache_ctrl1_bits);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET),
+                    ==, BIT(14));
+
+    g_assert_cmphex(qtest_readl(qts, GPIO_BASE + GPIO_STATUS_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, GPIO_BASE + GPIO_FUNC_OUT_SEL_CFG_REG(34)),
+                    ==, ESP32S3_GPIO_SIG_GPIO_OUT);
+    g_assert_cmphex((qtest_readl(qts, IOMUX_BASE +
+                                 ESP32S3_IOMUX_GPIO_REG(34)) &
+                     ESP32S3_IOMUX_MCU_SEL_MASK) >>
+                    ESP32S3_IOMUX_MCU_SEL_SHIFT,
+                    ==, ESP32S3_GPIO_IOMUX_FUNC_GPIO);
+
+    g_assert_cmphex(qtest_readl(qts, SPI2_BASE + 0x00), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, SPI2_BASE + 0x3c), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, SPI2_BASE + 0x40), ==, 0);
+
+    g_assert_cmphex(qtest_readl(qts, SHA_BASE + A_SHA_IRQ_ENA), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, SHA_BASE + A_SHA_H_MEM), ==, 0);
+
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0x44), ==, 0xfff);
+    g_assert_cmphex(qtest_readl(qts, PMS_BASE + 0xffc), ==, PMS_DATE_VALUE);
+
+    g_assert_cmphex(qtest_readl(qts, TIMG0_BASE + A_TIMG_T0CONFIG), ==,
+                    timg_default_t0config());
+    qtest_writel(qts, TIMG0_BASE + A_TIMG_T0UPDATE,
+                 R_TIMG_T0UPDATE_UPDATE_MASK);
+    g_assert_cmpuint(qtest_readl(qts, TIMG0_BASE + A_TIMG_T0LO), ==, 0);
+}
+
 #ifndef _WIN32
 static QTestState *qts_start_with_flash(const char *flash_path)
 {
@@ -2289,6 +2475,8 @@ static void test_rtc_reset_transitions(void)
 
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_STORE0, scratch_value);
     qtest_writel(qts, UART0_BASE + A_UART_INT_ENA, uart_int_ena);
+    dirty_owned_digital_reset_surface(qts);
+    assert_owned_digital_reset_surface_is_dirty(qts);
 
     options0 = FIELD_DP32(options0, RTC_CNTL_OPTIONS0, SW_PROCPU_RESET, 1);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
@@ -2304,6 +2492,7 @@ static void test_rtc_reset_transitions(void)
                     ==, uart_int_ena);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STORE0),
                     ==, scratch_value);
+    assert_owned_digital_reset_surface_is_dirty(qts);
 
     options0 = FIELD_DP32(0, RTC_CNTL_OPTIONS0, SW_APPCPU_RESET, 1);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
@@ -2319,6 +2508,7 @@ static void test_rtc_reset_transitions(void)
                     ==, uart_int_ena);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STORE0),
                     ==, scratch_value);
+    assert_owned_digital_reset_surface_is_dirty(qts);
 
     options0 = FIELD_DP32(0, RTC_CNTL_OPTIONS0, SW_SYS_RESET, 1);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
@@ -2333,6 +2523,7 @@ static void test_rtc_reset_transitions(void)
     g_assert_cmphex(qtest_readl(qts, UART0_BASE + A_UART_INT_ENA), ==, 0);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STORE0),
                     ==, scratch_value);
+    assert_owned_digital_reset_surface_defaults(qts, ESP32S3_CLK_SEL_XTAL);
 
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WAKEUP_STATE, UINT32_MAX);
     qtest_writel(qts, RTC_EXT_WAKEUP_CONF_REG, UINT32_MAX);
@@ -2355,11 +2546,12 @@ static void test_rtc_reset_transitions(void)
     rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, SOC_CLK_SEL,
                               ESP32_SOC_CLK_PLL);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_CLK_CONF, rtc_clk_conf);
-
+    dirty_owned_digital_reset_surface(qts);
     qtest_writel(qts, UART0_BASE + A_UART_INT_ENA, uart_int_ena);
     esp32s3_qmp_system_reset(qts);
 
     g_assert_cmphex(qtest_readl(qts, UART0_BASE + A_UART_INT_ENA), ==, 0);
+    assert_owned_digital_reset_surface_defaults(qts, ESP32S3_CLK_SEL_PLL);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0),
                     ==, 0);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SW_CPU_STALL),

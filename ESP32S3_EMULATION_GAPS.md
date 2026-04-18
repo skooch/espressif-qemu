@@ -4,13 +4,12 @@
 
 This document tracks the known fidelity gaps in the `esp32s3` machine model in this fork and the current follow-on program for closing the highest-value gaps for the active T-Deck Pro workload.
 
-The immediate peripheral, deferred-foundation, core-SoC, first T-Deck prioritization plan, and the 2026-04-18 follow-on clock/reset/sleep cleanup plan are historical records under `docs/plans/implemented/`. There is no separate active `docs/plans/in-progress/` ESP32-S3 fidelity plan right now; the remaining guest-triggered queues are tracked directly in this document.
+The immediate peripheral, deferred-foundation, core-SoC, first T-Deck prioritization plan, the 2026-04-18 follow-on clock/reset/sleep cleanup plan, and the 2026-04-18 reset-fanout phase are historical records under `docs/plans/implemented/`. There is no separate active `docs/plans/in-progress/` ESP32-S3 fidelity plan right now; the remaining guest-triggered queues are tracked directly in this document.
 
 The current scope is intentionally limited to the remaining high-risk follow-on work:
 
-- clock/reset/sleep phase 2 cleanup after the archived P0/P1 slices
-- documenting the landed SYSTIMER light-sleep contract and the broader clock/sleep work that still remains
-- wider doc and plan-state normalization so the active backlog is unambiguous
+- broader sleep and clock realism beyond the qtest-pinned RTC, SYSTIMER, TIMG, and UART contract
+- reset-tree fidelity beyond the newly owned digital reset surface
 - trigger-based cache/MMU and Xtensa follow-ons only when guest evidence demands them
 
 Broader silicon-completeness work such as analog PLL dynamics, full cache microarchitecture realism, a full ESP32-S3-specific EMAC replacement, and speculative Xtensa configured-core/TIE coverage remain source-gated and out of scope unless the active workload or stronger references promote them.
@@ -152,14 +151,15 @@ This is a QEMU-visible SoC transition contract and a guest-level recovery regres
 
 ### Phase 3 Reset Domain Status
 
-The ESP32-S3 reset path is now split into named helpers for PROCPU reset, APPCPU reset, partial digital peripheral reset, digital reset, and full-chip reset. This makes the current QEMU contract explicit:
+The ESP32-S3 reset path is now split into named helpers for PROCPU reset, APPCPU reset, owned digital-peripheral reset, digital reset, and full-chip reset. This makes the current QEMU contract explicit:
 
 - PROCPU and APPCPU resets reset only the targeted modeled CPU, select the RTC-configured static-vector mode, clear CPU watchpoints, and restore `CPENABLE` as a QEMU compatibility bridge for system-mode Xtensa execution.
-- Digital reset resets both modeled CPUs plus the currently owned digital-peripheral subset: interrupt matrix, UARTs, and I2C controllers.
-- Full-chip reset currently resets the explicit digital domain and re-bases RTC time. RTC scratch registers remain retained under the tested software-reset path.
+- Digital reset resets both modeled CPUs plus the currently owned digital-peripheral subset: interrupt matrix, UARTs, GPIO, RNG, I2C, SPI0/SPI1, EXTMEM cache/MMU, SYSTEM clock block, GDMA, SHA/AES/RSA/HMAC/DS/PMS/XTS_AES, TIMG0/TIMG1, SYSTIMER, USB Serial/JTAG, IO_MUX, GPSPI, and the explicit analog register shims already owned by the SoC helper.
+- After software digital reset resets the SYSTEM clock block, the SoC reapplies the retained RTC clock selection into the modeled system clock tree so guest-visible software reset remains aligned with RTC-owned clock bookkeeping.
+- Full-chip reset cold-resets RTC_CNTL first, then runs the same owned digital reset helper and CPU resets. This keeps host/QMP `system_reset` aligned with the existing full-chip clock defaults while still clearing the widened digital surface.
 - Guest software reset bits in `RTC_CNTL_OPTIONS0` now dispatch the modeled ESP32-S3 reset domain locally instead of manufacturing a QEMU process-level reset event. Host/QMP `system_reset` remains wired through QEMU's reset framework and enters the explicit full-chip reset helper.
 
-The qtest suite pins guest-visible reset cause, PROCPU/APPCPU reset isolation from UART state, digital peripheral reset clearing UART interrupt-enable state, host/QMP full-chip reset behavior, and RTC scratch retention across software CPU/digital resets. Full ESP32-S3 reset-tree fidelity remains incomplete for analog rails, brownout, full peripheral fanout, retention timing, and power-domain sequencing.
+The qtest suite now pins guest-visible reset cause, PROCPU/APPCPU reset isolation from dirty digital state, software digital reset clearing representative clock/cache/GPIO/IOMUX/GPSPI/SHA/PMS/TIMG state, host/QMP full-chip reset restoring the widened digital surface to host-reset defaults, and RTC scratch retention across software CPU/digital resets. Full ESP32-S3 reset-tree fidelity remains incomplete for analog rails, brownout, LP-domain sequencing, retention timing, and peripherals that are still outside the currently owned digital subset.
 
 ### Phase 4 Cache, MMU, Flash, And PSRAM Status
 
@@ -281,7 +281,7 @@ The original 2026-04-04 shortcut inventory is now historical. The archived P0 sl
 The remaining follow-on items in this area are:
 
 - The active light-sleep path now freezes SYSTIMER and resumes it on wake, while the adjacent firmware remains responsible for compensating elapsed RTC time after wake. Broader oscillator stop/start timing and peripheral-gating realism remain incomplete.
-- Digital-reset fanout is still selective. The SoC reset path now owns guest software reset dispatch, but only the currently-owned digital subset is explicitly reset.
+- Digital-reset fanout now covers the currently owned digital subset with direct regression coverage. Broader reset-tree sequencing, LP/analog domains, and any future owned peripherals remain deferred until a guest or source-backed need appears.
 - The RTC-to-clock handoff now has one explicit owner: the RTC block updates only its local clock-selection bookkeeping, and the SoC callback remains the single place that applies those selections into the modeled system clock tree.
 - Clock and sleep fanout are still narrow compared to real hardware. After auditing the active guest, the only dynamic QEMU-visible consumers still proven today are TIMG and UART, so wider peripheral fanout remains deferred until a concrete guest dependency appears. Oscillator stop/start timing and peripheral/power-domain gating are still incomplete.
 - Full-chip RTC reset now restores the explicitly modeled RTC_CNTL register surface to reset defaults instead of only rebasing time. Wider domain-aware retention timing, analog/power sequencing, and broader reset fanout remain incomplete.

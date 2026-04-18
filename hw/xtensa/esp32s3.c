@@ -264,21 +264,55 @@ static void esp32s3_cpu_reset(void* opaque, int n, int level)
     }
 }
 
-static void esp32s3_soc_reset_peripherals(Esp32s3SocState *s)
+static void esp32s3_soc_reset_owned_digital_peripherals(Esp32s3SocState *s)
 {
     /*
-     * Partial digital-peripheral reset. This currently covers the modeled
-     * interrupt matrix, UARTs, and I2C controllers. Other modeled devices keep
-     * their QEMU state until their reset-domain ownership is made explicit.
+     * Reset the SoC-owned digital devices with explicit guest-visible register
+     * contracts. Leave RTC retention, eFuse contents, and external board
+     * peripherals to their own phases.
      */
     device_cold_reset(DEVICE(&s->intmatrix));
     for (int i = 0; i < ESP32S3_UART_COUNT; ++i) {
         device_cold_reset(DEVICE(&s->uart[i]));
     }
+    device_cold_reset(DEVICE(&s->gpio));
+    device_cold_reset(DEVICE(&s->rng));
     for (int i = 0; i < ESP32S3_I2C_COUNT; ++i) {
         device_cold_reset(DEVICE(&s->i2c[i]));
     }
+    device_cold_reset(DEVICE(&s->spi0));
+    device_cold_reset(DEVICE(&s->spi1));
+    device_cold_reset(DEVICE(&s->cache));
+    device_cold_reset(DEVICE(&s->clock));
+    device_cold_reset(DEVICE(&s->gdma));
+    device_cold_reset(DEVICE(&s->sha));
+    device_cold_reset(DEVICE(&s->aes));
+    device_cold_reset(DEVICE(&s->rsa));
+    device_cold_reset(DEVICE(&s->hmac));
+    device_cold_reset(DEVICE(&s->ds));
+    device_cold_reset(DEVICE(&s->pms));
+    device_cold_reset(DEVICE(&s->xts_aes));
+    for (int i = 0; i < ESP32S3_TIMG_COUNT; ++i) {
+        device_cold_reset(DEVICE(&s->timg[i]));
+    }
+    device_cold_reset(DEVICE(&s->systimer));
+    device_cold_reset(DEVICE(&s->jtag));
+    device_cold_reset(DEVICE(&s->iomux));
+    for (int i = 0; i < ARRAY_SIZE(s->gpspi); ++i) {
+        device_cold_reset(DEVICE(&s->gpspi[i]));
+    }
     esp32s3_soc_reset_analog_register_shims(s);
+}
+
+static void esp32s3_soc_reapply_rtc_clock_state(Esp32s3SocState *s)
+{
+    /*
+     * Digital reset leaves RTC bookkeeping retained, so the SoC remains the
+     * single owner that reapplies the retained RTC clock selection to the
+     * freshly reset SYSTEM clock block.
+     */
+    esp32s3_clock_apply_rtc_soc_clk(&s->clock, s->rtc_cntl.soc_clk,
+                                    s->rtc_cntl.xtal_apb_freq);
 }
 
 static bool esp32s3_soc_cpu_present(int cpu_index)
@@ -360,22 +394,17 @@ static void esp32s3_soc_reset_cpu(Esp32s3SocState *s, int cpu_index)
     s->cpu[cpu_index].env.sregs[CPENABLE] = 0xff;
 }
 
-static void esp32s3_soc_reset_digital(Esp32s3SocState *s)
-{
-    esp32s3_soc_reset_peripherals(s);
-    esp32s3_soc_reset_cpu(s, 0);
-    esp32s3_soc_reset_cpu(s, 1);
-}
-
 static void esp32s3_soc_reset_full_chip(Esp32s3SocState *s)
 {
     /*
      * QEMU full-chip reset is still a compatibility approximation. It resets
-     * the explicit digital domain and re-bases RTC time, but it does not model
-     * analog rail sequencing, brownout timing, or retention timing.
+     * the RTC domain and the explicit owned digital domain, but it does not
+     * model analog rail sequencing, brownout timing, or retention timing.
      */
     device_cold_reset(DEVICE(&s->rtc_cntl));
-    esp32s3_soc_reset_digital(s);
+    esp32s3_soc_reset_owned_digital_peripherals(s);
+    esp32s3_soc_reset_cpu(s, 0);
+    esp32s3_soc_reset_cpu(s, 1);
 }
 
 static void esp32s3_soc_apply_reset(Esp32s3SocState *s, uint32_t reset_domain)
@@ -388,7 +417,8 @@ static void esp32s3_soc_apply_reset(Esp32s3SocState *s, uint32_t reset_domain)
     }
 
     if (reset_domain & ESP32S3_SOC_RESET_PERIPH) {
-        esp32s3_soc_reset_peripherals(s);
+        esp32s3_soc_reset_owned_digital_peripherals(s);
+        esp32s3_soc_reapply_rtc_clock_state(s);
     }
 
     if (reset_domain & ESP32S3_SOC_RESET_PROCPU) {
