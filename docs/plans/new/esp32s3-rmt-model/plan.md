@@ -1,10 +1,12 @@
-# ESP32-S3 RMT Model Plan
+# 6. ESP32-S3 RMT Model Plan
 
 ## Goal
 Replace the explicitly unimplemented ESP32-S3 RMT block with the smallest source-backed modeled surface that the active or expected firmware path can justify.
 
 ## Current Phase
 Queued on 2026-04-19 under `docs/plans/new/`.
+
+Ideal backlog order: 6 of 7.
 
 ## Scope
 This plan covers:

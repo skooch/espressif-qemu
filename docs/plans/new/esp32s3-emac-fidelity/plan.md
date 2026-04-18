@@ -1,10 +1,12 @@
-# ESP32-S3 EMAC Fidelity Plan
+# 5. ESP32-S3 EMAC Fidelity Plan
 
 ## Goal
 Decide how far to carry ESP32-S3 Ethernet fidelity beyond the current `open_eth` compatibility contract and land the next source-backed step without breaking the working board-path launch contract.
 
 ## Current Phase
 Queued on 2026-04-19 under `docs/plans/new/`.
+
+Ideal backlog order: 5 of 7.
 
 ## Scope
 This plan covers:

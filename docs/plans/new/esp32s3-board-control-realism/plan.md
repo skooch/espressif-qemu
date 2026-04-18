@@ -1,10 +1,12 @@
-# ESP32-S3 Board Control Realism Plan
+# 1. ESP32-S3 Board Control Realism Plan
 
 ## Goal
 Broaden the ESP32-S3 board-control model past the current qtest-pinned SDK contract so clock-source switching, reset propagation, sleep entry/exit, and low-power side effects better match the local TRM, ESP-IDF, esp-hal, and hardware-backed expectations.
 
 ## Current Phase
 Queued on 2026-04-19 under `docs/plans/new/`.
+
+Ideal backlog order: 1 of 7.
 
 ## Scope
 This plan covers:

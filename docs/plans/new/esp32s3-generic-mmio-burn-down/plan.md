@@ -1,10 +1,12 @@
-# ESP32-S3 Generic MMIO Burn-Down Plan
+# 3. ESP32-S3 Generic MMIO Burn-Down Plan
 
 ## Goal
 Keep shrinking the generic MMIO fallback so new guest-visible behavior is owned by explicit device models instead of hidden behind compatibility storage.
 
 ## Current Phase
 Queued on 2026-04-19 under `docs/plans/new/`.
+
+Ideal backlog order: 3 of 7.
 
 ## Scope
 This plan covers:

@@ -1,10 +1,12 @@
-# ESP32-S3 External Memory Fidelity Plan
+# 4. ESP32-S3 External Memory Fidelity Plan
 
 ## Goal
 Tighten the remaining external-memory backlog around EXTMEM cache/MMU, flash, and PSRAM by separating guest-visible functional follow-ons from source-gated microarchitectural realism.
 
 ## Current Phase
 Queued on 2026-04-19 under `docs/plans/new/`.
+
+Ideal backlog order: 4 of 7.
 
 ## Scope
 This plan covers:

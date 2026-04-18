@@ -16,15 +16,15 @@ Broader silicon-completeness work such as analog PLL dynamics, full cache microa
 
 ## Backlog Plan Map
 
-The remaining documented queues are split into these plan records under `docs/plans/new/`:
+The remaining documented queues are split into these plan records under `docs/plans/new/`, in the ideal execution order for the current tree:
 
-- `docs/plans/new/esp32s3-board-control-realism/plan.md` for clock, reset, sleep, and low-power realism
-- `docs/plans/new/esp32s3-external-memory-fidelity/plan.md` for cache/MMU, flash, and PSRAM follow-ons
-- `docs/plans/new/esp32s3-generic-mmio-burn-down/plan.md` for the remaining catch-all windows and explicit owner handoff
-- `docs/plans/new/esp32s3-peripheral-contract-follow-ons/plan.md` for GP-SPI, USB Serial/JTAG, I2C, UART, SHA, eFuse, PMS, and RNG residual contract work
-- `docs/plans/new/esp32s3-emac-fidelity/plan.md` for deeper EMAC fidelity beyond the current `open_eth` contract
-- `docs/plans/new/esp32s3-rmt-model/plan.md` for the currently unimplemented RMT block
-- `docs/plans/new/esp32s3-xtensa-backend-follow-ons/plan.md` for guest-driven Xtensa backend and configured-core follow-ons
+1. `docs/plans/new/esp32s3-board-control-realism/plan.md` for clock, reset, sleep, and low-power realism
+2. `docs/plans/new/esp32s3-peripheral-contract-follow-ons/plan.md` for GP-SPI, USB Serial/JTAG, I2C, UART, SHA, eFuse, PMS, and RNG residual contract work
+3. `docs/plans/new/esp32s3-generic-mmio-burn-down/plan.md` for the remaining catch-all windows and explicit owner handoff
+4. `docs/plans/new/esp32s3-external-memory-fidelity/plan.md` for cache/MMU, flash, and PSRAM follow-ons
+5. `docs/plans/new/esp32s3-emac-fidelity/plan.md` for deeper EMAC fidelity beyond the current `open_eth` contract
+6. `docs/plans/new/esp32s3-rmt-model/plan.md` for the currently unimplemented RMT block
+7. `docs/plans/new/esp32s3-xtensa-backend-follow-ons/plan.md` for guest-driven Xtensa backend and configured-core follow-ons
 
 Source-gated residuals remain source-gated even with a plan file. Those plans exist so the evidence requirements, intended scope, and verification floor are explicit before implementation begins.
 

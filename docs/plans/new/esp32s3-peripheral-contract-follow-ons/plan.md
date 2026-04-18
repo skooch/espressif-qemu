@@ -1,10 +1,12 @@
-# ESP32-S3 Peripheral Contract Follow-Ons Plan
+# 2. ESP32-S3 Peripheral Contract Follow-Ons Plan
 
 ## Goal
 Close the residual board-path contract gaps in the already-modeled peripheral set without broadening them into unjustified silicon-complete rewrites.
 
 ## Current Phase
 Queued on 2026-04-19 under `docs/plans/new/`.
+
+Ideal backlog order: 2 of 7.
 
 ## Scope
 This plan covers:

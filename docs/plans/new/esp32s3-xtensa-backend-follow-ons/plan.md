@@ -1,10 +1,12 @@
-# ESP32-S3 Xtensa Backend Follow-Ons Plan
+# 7. ESP32-S3 Xtensa Backend Follow-Ons Plan
 
 ## Goal
 Track and fix the remaining Xtensa backend gaps only when they are backed by exact local ISA/configured-core references or reproduced guest failures.
 
 ## Current Phase
 Queued on 2026-04-19 under `docs/plans/new/`.
+
+Ideal backlog order: 7 of 7.
 
 ## Scope
 This plan covers:
