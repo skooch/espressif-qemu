@@ -338,6 +338,25 @@ static uint32_t rtc_default_timer2(void)
     return FIELD_DP32(0, RTC_CNTL_TIMER2, ULPCP_TOUCH_START_WAIT, 0x10);
 }
 
+static uint32_t rtc_default_sdio_conf(void)
+{
+    uint32_t sdio_conf = 0;
+
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, DREFM_SDIO, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, DREFL_SDIO, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_TIEH, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_PD_EN, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_ENCURLIM, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_EN_INITI, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_INITI, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_DCAP, 3);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_DTHDRV, 3);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_TIMER_TARGET,
+                           10);
+
+    return sdio_conf;
+}
+
 static uint32_t rtc_default_rtc_reg(void)
 {
     return R_RTC_CNTL_RTC_REGULATOR_FORCE_PU_MASK;
@@ -367,6 +386,7 @@ static void dirty_rtc_light_sleep_config_surface(QTestState *qts)
                  R_RTC_CNTL_OPTIONS0_BBPLL_I2C_FORCE_PU_MASK |
                  R_RTC_CNTL_OPTIONS0_BB_I2C_FORCE_PU_MASK);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIMER2, 0);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SDIO_CONF, 0);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_RTC, 0);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_PWC, UINT32_MAX);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_BIAS_CONF, UINT32_MAX);
@@ -381,6 +401,8 @@ static void assert_rtc_light_sleep_config_surface_is_dirty(QTestState *qts)
                         R_RTC_CNTL_OPTIONS0_BBPLL_I2C_FORCE_PU_MASK |
                         R_RTC_CNTL_OPTIONS0_BB_I2C_FORCE_PU_MASK);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIMER2), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SDIO_CONF),
+                    ==, 0);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_RTC), ==, 0);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_PWC),
                     ==, R_RTC_CNTL_PWC_PAD_FORCE_HOLD_MASK |
@@ -409,6 +431,8 @@ static void assert_rtc_light_sleep_config_defaults(QTestState *qts)
                     ==, rtc_default_options0());
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIMER2),
                     ==, rtc_default_timer2());
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SDIO_CONF),
+                    ==, rtc_default_sdio_conf());
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_RTC),
                     ==, rtc_default_rtc_reg());
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_PWC),
@@ -2186,6 +2210,24 @@ static void test_rtc_explicit_register_surface(void)
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIMER2, UINT32_MAX);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIMER2),
                     ==, R_RTC_CNTL_TIMER2_ULPCP_TOUCH_START_WAIT_MASK);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SDIO_CONF, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SDIO_CONF),
+                    ==, R_RTC_CNTL_SDIO_CONF_XPD_SDIO_REG_MASK |
+                        R_RTC_CNTL_SDIO_CONF_DREFH_SDIO_MASK |
+                        R_RTC_CNTL_SDIO_CONF_DREFM_SDIO_MASK |
+                        R_RTC_CNTL_SDIO_CONF_DREFL_SDIO_MASK |
+                        R_RTC_CNTL_SDIO_CONF_SDIO_TIEH_MASK |
+                        R_RTC_CNTL_SDIO_CONF_SDIO_FORCE_MASK |
+                        R_RTC_CNTL_SDIO_CONF_SDIO_PD_EN_MASK |
+                        R_RTC_CNTL_SDIO_CONF_SDIO_ENCURLIM_MASK |
+                        R_RTC_CNTL_SDIO_CONF_SDIO_MODECURLIM_MASK |
+                        R_RTC_CNTL_SDIO_CONF_SDIO_DCURLIM_MASK |
+                        R_RTC_CNTL_SDIO_CONF_SDIO_EN_INITI_MASK |
+                        R_RTC_CNTL_SDIO_CONF_SDIO_INITI_MASK |
+                        R_RTC_CNTL_SDIO_CONF_SDIO_DCAP_MASK |
+                        R_RTC_CNTL_SDIO_CONF_SDIO_DTHDRV_MASK |
+                        R_RTC_CNTL_SDIO_CONF_SDIO_TIMER_TARGET_MASK);
 
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER0, 0x89abcdef);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER0),

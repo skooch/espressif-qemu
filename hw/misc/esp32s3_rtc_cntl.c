@@ -41,6 +41,23 @@ static void esp32s3_rtc_update_clk(Esp32s3RtcCntlState* s);
 #define RTC_CNTL_TIMER2_RW_MASK \
     R_RTC_CNTL_TIMER2_ULPCP_TOUCH_START_WAIT_MASK
 
+#define RTC_CNTL_SDIO_CONF_RW_MASK \
+    (R_RTC_CNTL_SDIO_CONF_XPD_SDIO_REG_MASK | \
+     R_RTC_CNTL_SDIO_CONF_DREFH_SDIO_MASK | \
+     R_RTC_CNTL_SDIO_CONF_DREFM_SDIO_MASK | \
+     R_RTC_CNTL_SDIO_CONF_DREFL_SDIO_MASK | \
+     R_RTC_CNTL_SDIO_CONF_SDIO_TIEH_MASK | \
+     R_RTC_CNTL_SDIO_CONF_SDIO_FORCE_MASK | \
+     R_RTC_CNTL_SDIO_CONF_SDIO_PD_EN_MASK | \
+     R_RTC_CNTL_SDIO_CONF_SDIO_ENCURLIM_MASK | \
+     R_RTC_CNTL_SDIO_CONF_SDIO_MODECURLIM_MASK | \
+     R_RTC_CNTL_SDIO_CONF_SDIO_DCURLIM_MASK | \
+     R_RTC_CNTL_SDIO_CONF_SDIO_EN_INITI_MASK | \
+     R_RTC_CNTL_SDIO_CONF_SDIO_INITI_MASK | \
+     R_RTC_CNTL_SDIO_CONF_SDIO_DCAP_MASK | \
+     R_RTC_CNTL_SDIO_CONF_SDIO_DTHDRV_MASK | \
+     R_RTC_CNTL_SDIO_CONF_SDIO_TIMER_TARGET_MASK)
+
 #define RTC_CNTL_RTC_RW_MASK \
     R_RTC_CNTL_RTC_REGULATOR_FORCE_PU_MASK
 
@@ -80,6 +97,25 @@ static uint32_t esp32s3_rtc_options0_default(void)
 static uint32_t esp32s3_rtc_timer2_default(void)
 {
     return FIELD_DP32(0, RTC_CNTL_TIMER2, ULPCP_TOUCH_START_WAIT, 0x10);
+}
+
+static uint32_t esp32s3_rtc_sdio_conf_default(void)
+{
+    uint32_t sdio_conf = 0;
+
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, DREFM_SDIO, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, DREFL_SDIO, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_TIEH, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_PD_EN, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_ENCURLIM, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_EN_INITI, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_INITI, 1);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_DCAP, 3);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_DTHDRV, 3);
+    sdio_conf = FIELD_DP32(sdio_conf, RTC_CNTL_SDIO_CONF, SDIO_TIMER_TARGET,
+                           10);
+
+    return sdio_conf;
 }
 
 static uint32_t esp32s3_rtc_reg_default(void)
@@ -131,6 +167,7 @@ static void esp32s3_rtc_cntl_reset_modeled_surface(Esp32s3RtcCntlState *s)
     s->time_reg[1] = 0;
     s->sw_cpu_stall_reg = 0;
     s->timer2_reg = esp32s3_rtc_timer2_default();
+    s->sdio_conf_reg = esp32s3_rtc_sdio_conf_default();
     s->rtc_reg = esp32s3_rtc_reg_default();
     s->pwc_reg = esp32s3_rtc_pwc_default();
     s->bias_conf_reg = esp32s3_rtc_bias_conf_default();
@@ -357,6 +394,9 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
     case A_RTC_CNTL_TIMER2:
         r = s->timer2_reg;
         break;
+    case A_RTC_CNTL_SDIO_CONF:
+        r = s->sdio_conf_reg;
+        break;
     case A_RTC_CNTL_TIME_UPDATE:
         r = s->time_update_reg | R_RTC_CNTL_TIME_UPDATE_VALID_MASK;
         break;
@@ -521,6 +561,10 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
 
     case A_RTC_CNTL_TIMER2:
         s->timer2_reg = (uint32_t)value & RTC_CNTL_TIMER2_RW_MASK;
+        break;
+
+    case A_RTC_CNTL_SDIO_CONF:
+        s->sdio_conf_reg = (uint32_t)value & RTC_CNTL_SDIO_CONF_RW_MASK;
         break;
 
     case A_RTC_CNTL_TIME_UPDATE:
