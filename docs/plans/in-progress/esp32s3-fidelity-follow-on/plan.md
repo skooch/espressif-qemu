@@ -60,7 +60,7 @@ Every implementation slice in this plan must keep the following green unless the
 ## Phase 2: Clock/Reset/Sleep Follow-On Queue
 - [x] Remove duplicated RTC-to-clock ownership so the SoC has one explicit clock-update path.
 - [x] Rebuild RTC reset/default handling around the explicitly modeled register surface instead of only rebasing time.
-- [ ] Expand clock/power fanout only where the current guest proves a dependency.
+- [x] Expand clock/power fanout only where the current guest proves a dependency.
 
 ## Triggered Queues
 - [ ] Keep residual `CORE0/1_ACS_CACHE_INT_*` widening gated behind concrete guest reads of the still-idle reject/write-IC/access-mask bits.
@@ -72,3 +72,4 @@ Every implementation slice in this plan must keep the following green unless the
 - The first sleep/clock follow-on slice lands with direct regression coverage and the verification floor recorded in progress.
 - Phase 2 keeps a single SoC-owned RTC clock-apply path, with RTC-side bookkeeping only driving the `clk_update` signal.
 - The RTC block restores explicit modeled-surface defaults on full-chip reset instead of only rebasing RTC time.
+- The current guest audit leaves wider clock/power fanout deferred: no additional QEMU-visible consumer beyond the existing UART/TIMG path is proven today.
