@@ -12,5 +12,13 @@
   - `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` passed in the worktree after configuring a local Xtensa-only build.
   - Targeted qtests `/xtensa/esp32s3/rtc/light-sleep-stops-systimer`, `/xtensa/esp32s3/cache/flash-spi-updates-mapped-alias`, and `/xtensa/esp32s3/efuse/explicit-contract` passed.
   - Functional tests `tests/functional/test_xtensa_esp32s3_cache_reject.py` and `tests/functional/test_xtensa_esp32s3_sleep_wake.py` passed via `uv run --with pycotap`.
-  - The full `QTEST_QEMU_BINARY=./build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` run reached the new RTC coverage and the final eFuse case, then aborted in `kill_qemu()` because the last QEMU instance had already died from `signal 9` during cleanup. The verification-floor checkbox remains open until that suite-level instability is explained or eliminated.
+  - The full `QTEST_QEMU_BINARY=./build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` run passes when its TAP output is redirected to a log and tailed after exit, which matches the earlier build/test results and eliminates the earlier streamed-output `kill_qemu()` cleanup artifact as a blocker for Phase 1.
 - 2026-04-18: Added a local build note to `CLAUDE.md`: in this worktree flow, host `meson test -C build` can misread `build.dat`; use the build-local Meson entrypoint or invoke `ninja` and the test binaries directly.
+- 2026-04-18: Started the Phase 2 clock/reset queue in peer worktree `/Users/skooch/projects/tdeck-pro-rust/worktrees/esp32s3-fidelity-phase2` on branch `codex/esp32s3-fidelity-phase2`, created from refreshed `tdeck-peripherals` after merging and pushing the Phase 1 slice.
+- 2026-04-18: Removed duplicated RTC-to-clock ownership. `esp32s3_rtc_update_clk()` now only updates RTC-side fast/slow clock bookkeeping and pulses `clk_update`, while the SoC-level `esp32s3_clk_update()` path remains the single owner of `esp32s3_clock_apply_rtc_soc_clk(...)`.
+- 2026-04-18: Verification for the first Phase 2 slice:
+  - `git diff --check` passed in `/Users/skooch/projects/tdeck-pro-rust/worktrees/esp32s3-fidelity-phase2`.
+  - `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` passed.
+  - Targeted qtest `/xtensa/esp32s3/rtc/clk-update` passed.
+  - The full redirected `QTEST_QEMU_BINARY=./build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` suite passed through `/xtensa/esp32s3/efuse/explicit-contract`.
+  - Functional tests `tests/functional/test_xtensa_esp32s3_cache_reject.py` and `tests/functional/test_xtensa_esp32s3_sleep_wake.py` passed via `uv run --with pycotap`.

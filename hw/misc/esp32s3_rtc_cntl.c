@@ -21,7 +21,6 @@
 #include "hw/misc/esp32s3_reg.h"
 #include "hw/misc/esp32s3_rtc_cntl.h"
 #include "hw/gpio/esp32s3_gpio.h"
-#include "hw/xtensa/esp32s3_clk.h"
 
 static void esp32s3_rtc_update_cpu_stall(Esp32s3RtcCntlState* s);
 static void esp32s3_rtc_update_clk(Esp32s3RtcCntlState* s);
@@ -498,11 +497,6 @@ static void esp32s3_rtc_update_clk(Esp32s3RtcCntlState* s)
     const uint32_t fastclk_freq[] = {s->xtal_apb_freq / 4, 8000000};
     s->rtc_slowclk_freq = slowclk_freq[s->rtc_slowclk];
     s->rtc_fastclk_freq = fastclk_freq[s->rtc_fastclk];
-
-    if (s->clock) {
-        esp32s3_clock_apply_rtc_soc_clk(s->clock, s->soc_clk,
-                                        s->xtal_apb_freq);
-    }
 
     qemu_irq_pulse(s->clk_update);
 }

@@ -67,8 +67,6 @@ typedef enum Esp32s3RtcSleepState {
     ESP32S3_RTC_SLEEP_WOKE,
 } Esp32s3RtcSleepState;
 
-typedef struct ESP32S3ClockState ESP32S3ClockState;
-
 typedef struct Esp32s3RtcCntlState {
     SysBusDevice parent_obj;
 
@@ -117,7 +115,6 @@ typedef struct Esp32s3RtcCntlState {
 
     /* GPIO model reference for wakeup pin checking */
     struct ESP32S3GPIOState *gpio;
-    ESP32S3ClockState *clock;
 } Esp32s3RtcCntlState;
 
 /* Called by GPIO model when a wakeup-configured pin triggers */

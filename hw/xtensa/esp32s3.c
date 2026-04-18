@@ -1449,7 +1449,6 @@ static void esp32s3_machine_init(MachineState *machine)
                                                            0));
         ss->clock.cpu[0] = CPU(&ss->cpu[0]);
         ss->clock.cpu[1] = machine->smp.cpus > 1 ? CPU(&ss->cpu[1]) : NULL;
-        ss->rtc_cntl.clock = &ss->clock;
         for (int i = 0; i < ESP32S3_UART_COUNT; i++) {
             ss->uart[i].parent.clock = &ss->clock;
         }

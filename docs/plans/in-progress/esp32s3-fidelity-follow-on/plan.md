@@ -55,10 +55,10 @@ Every implementation slice in this plan must keep the following green unless the
 - [x] Resume SYSTIMER counters and comparator scheduling cleanly on wake without manufacturing slept time inside the hardware model.
 - [x] Add direct qtest coverage proving SYSTIMER stays flat during modeled light sleep and resumes counting only after wake.
 - [x] Update `ESP32S3_EMULATION_GAPS.md` with the new boundary: SYSTIMER stop/resume is modeled for the active sleep path, but broader oscillator and peripheral-gating realism remains blocked.
-- [ ] Run the verification floor.
+- [x] Run the verification floor.
 
 ## Phase 2: Clock/Reset/Sleep Follow-On Queue
-- [ ] Remove duplicated RTC-to-clock ownership so the SoC has one explicit clock-update path.
+- [x] Remove duplicated RTC-to-clock ownership so the SoC has one explicit clock-update path.
 - [ ] Rebuild RTC reset/default handling around the explicitly modeled register surface instead of only rebasing time.
 - [ ] Expand clock/power fanout only where the current guest proves a dependency.
 
@@ -70,3 +70,4 @@ Every implementation slice in this plan must keep the following green unless the
 - The repository has one live ESP32-S3 fidelity plan under `docs/plans/in-progress/`.
 - The repo-root gap document no longer points at archived paths or stale “still open” shortcut text.
 - The first sleep/clock follow-on slice lands with direct regression coverage and the verification floor recorded in progress.
+- Phase 2 keeps a single SoC-owned RTC clock-apply path, with RTC-side bookkeeping only driving the `clk_update` signal.
