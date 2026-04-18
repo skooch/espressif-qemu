@@ -4,7 +4,7 @@
 Broaden the ESP32-S3 board-control model past the current qtest-pinned SDK contract so clock-source switching, reset propagation, sleep entry/exit, and low-power side effects better match the local TRM, ESP-IDF, esp-hal, and hardware-backed expectations.
 
 ## Current Phase
-Queued on 2026-04-19 under `docs/plans/new/`.
+Active on 2026-04-19 under `docs/plans/in-progress/`.
 
 Ideal backlog order: 1 of 7.
 
@@ -41,6 +41,7 @@ This phase does not claim analog PLL calibration accuracy, oscillator jitter, or
 - Modify: `include/hw/timer/esp_systimer.h`
 - Modify: `tests/qtest/esp32s3-test.c`
 - Modify: `ESP32S3_EMULATION_GAPS.md`
+- Record: `docs/plans/in-progress/esp32s3-board-control-realism/progress.md`
 
 ## Verification Floor
 - `git diff --check`
