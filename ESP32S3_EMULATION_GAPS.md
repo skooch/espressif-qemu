@@ -282,9 +282,9 @@ The remaining follow-on items in this area are:
 
 - The active light-sleep path now freezes SYSTIMER and resumes it on wake, while the adjacent firmware remains responsible for compensating elapsed RTC time after wake. Broader oscillator stop/start timing and peripheral-gating realism remain incomplete.
 - Digital-reset fanout is still selective. The SoC reset path now owns guest software reset dispatch, but only the currently-owned digital subset is explicitly reset.
-- The RTC-to-clock handoff still has duplicated ownership: the RTC block applies clock changes directly and also emits the older `clk-update` pulse through the SoC callback.
+- The RTC-to-clock handoff now has one explicit owner: the RTC block updates only its local clock-selection bookkeeping, and the SoC callback remains the single place that applies those selections into the modeled system clock tree.
 - Clock and sleep fanout are still narrow compared to real hardware. TIMG and UART follow the modeled clock path, but wider peripheral fanout, oscillator stop/start timing, and peripheral/power-domain gating remain incomplete.
-- RTC reset remains explicit only for the currently modeled contract. A wider domain-aware reset/default reconstruction for the RTC surface is still pending.
+- Full-chip RTC reset now restores the explicitly modeled RTC_CNTL register surface to reset defaults instead of only rebasing time. Wider domain-aware retention timing, analog/power sequencing, and broader reset fanout remain incomplete.
 
 ### Task 2 Cache/MMU Dependency Inventory (2026-04-04)
 

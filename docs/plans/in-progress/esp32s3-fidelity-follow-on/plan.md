@@ -59,7 +59,7 @@ Every implementation slice in this plan must keep the following green unless the
 
 ## Phase 2: Clock/Reset/Sleep Follow-On Queue
 - [x] Remove duplicated RTC-to-clock ownership so the SoC has one explicit clock-update path.
-- [ ] Rebuild RTC reset/default handling around the explicitly modeled register surface instead of only rebasing time.
+- [x] Rebuild RTC reset/default handling around the explicitly modeled register surface instead of only rebasing time.
 - [ ] Expand clock/power fanout only where the current guest proves a dependency.
 
 ## Triggered Queues
@@ -71,3 +71,4 @@ Every implementation slice in this plan must keep the following green unless the
 - The repo-root gap document no longer points at archived paths or stale “still open” shortcut text.
 - The first sleep/clock follow-on slice lands with direct regression coverage and the verification floor recorded in progress.
 - Phase 2 keeps a single SoC-owned RTC clock-apply path, with RTC-side bookkeeping only driving the `clk_update` signal.
+- The RTC block restores explicit modeled-surface defaults on full-chip reset instead of only rebasing RTC time.

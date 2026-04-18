@@ -22,3 +22,11 @@
   - Targeted qtest `/xtensa/esp32s3/rtc/clk-update` passed.
   - The full redirected `QTEST_QEMU_BINARY=./build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` suite passed through `/xtensa/esp32s3/efuse/explicit-contract`.
   - Functional tests `tests/functional/test_xtensa_esp32s3_cache_reject.py` and `tests/functional/test_xtensa_esp32s3_sleep_wake.py` passed via `uv run --with pycotap`.
+- 2026-04-18: Rebuilt RTC full-chip reset/default handling around the explicitly modeled register surface. The RTC block now restores its modeled sleep, wake, clock-select, watchdog-protect, pad-hold, and date-register defaults during `device_cold_reset()` instead of only rebasing `time_base_ns`.
+- 2026-04-18: Extended `test_rtc_reset_transitions()` so host/QMP `system_reset` now proves the RTC reset/default contract: modeled RTC control registers return to reset values, while `RTC_CNTL_STORE0` still stays retained across the tested software/full-chip reset path.
+- 2026-04-18: Verification for the second Phase 2 slice:
+  - `git diff --check` passed.
+  - `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test` passed after rebuilding both the qtest binary and `qemu-system-xtensa` with the RTC model changes.
+  - Targeted qtests `/xtensa/esp32s3/rtc/reset-transitions`, `/xtensa/esp32s3/rtc/clk-update`, and `/xtensa/esp32s3/rtc/light-sleep-stops-systimer` passed.
+  - Functional tests `tests/functional/test_xtensa_esp32s3_cache_reject.py` and `tests/functional/test_xtensa_esp32s3_sleep_wake.py` passed via `uv run --with pycotap`.
+  - The full redirected `QTEST_QEMU_BINARY=./build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test` suite now reproducibly aborts in `kill_qemu()` with QEMU already dead from `signal 9` at the handoff into `/xtensa/esp32s3/rtc/reset-transitions`. The focused reset qtest still passes on its own, so this is currently a suite-level verification blocker rather than a targeted RTC contract failure.

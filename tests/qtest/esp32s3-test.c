@@ -306,6 +306,19 @@ static uint64_t read_systimer_unit0(QTestState *qts)
     return (hi << 32) | lo;
 }
 
+static uint32_t rtc_default_clk_conf(void)
+{
+    uint32_t rtc_clk_conf = 0;
+
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, ANA_CLK_RTC_SEL,
+                              ESP32_SLOW_CLK_RC);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, FAST_CLK_RTC_SEL,
+                              ESP32_FAST_CLK_8M);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, SOC_CLK_SEL,
+                              ESP32_SOC_CLK_XTAL);
+    return rtc_clk_conf;
+}
+
 #ifndef _WIN32
 static QTestState *qts_start_with_flash(const char *flash_path)
 {
@@ -1715,12 +1728,7 @@ static void test_rtc_clk_update_propagates_to_system_and_uart(void)
     uint32_t rtc_clk_conf = 0;
     uint32_t sysclk_conf;
 
-    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, ANA_CLK_RTC_SEL,
-                              ESP32_SLOW_CLK_RC);
-    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, FAST_CLK_RTC_SEL,
-                              ESP32_FAST_CLK_8M);
-    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, SOC_CLK_SEL,
-                              ESP32_SOC_CLK_XTAL);
+    rtc_clk_conf = rtc_default_clk_conf();
     qtest_writel(qts, DR_REG_RTCCNTL_BASE + A_RTC_CNTL_CLK_CONF, rtc_clk_conf);
 
     sysclk_conf = qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF);
@@ -2277,6 +2285,7 @@ static void test_rtc_reset_transitions(void)
                                   R_UART_INT_ENA_RXFIFO_TOUT_MASK;
     uint32_t options0 = 0;
     uint32_t reset_state;
+    uint32_t rtc_clk_conf = 0;
 
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_STORE0, scratch_value);
     qtest_writel(qts, UART0_BASE + A_UART_INT_ENA, uart_int_ena);
@@ -2325,9 +2334,68 @@ static void test_rtc_reset_transitions(void)
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STORE0),
                     ==, scratch_value);
 
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WAKEUP_STATE, UINT32_MAX);
+    qtest_writel(qts, RTC_EXT_WAKEUP_CONF_REG, UINT32_MAX);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_REJECT_CONF, UINT32_MAX);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER0, 0x89abcdef);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER1,
+                 R_RTC_CNTL_SLP_TIMER1_MAIN_TIMER_ALARM_EN_MASK |
+                 R_RTC_CNTL_SLP_TIMER1_SLP_VAL_HI_MASK);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WDTWPROTECT, 0x50d83aa1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SWD_CONF, UINT32_MAX);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SWD_WPROTECT, 0x8f1d312a);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_PAD_HOLD, UINT32_MAX);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_DIG_PAD_HOLD, UINT32_MAX);
+    qtest_writel(qts, RTC_EXT_WAKEUP1_REG, UINT32_MAX);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_DATE, UINT32_MAX);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, ANA_CLK_RTC_SEL,
+                              ESP32_SLOW_CLK_32KXTAL);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, FAST_CLK_RTC_SEL,
+                              ESP32_FAST_CLK_XTALD4);
+    rtc_clk_conf = FIELD_DP32(rtc_clk_conf, RTC_CNTL_CLK_CONF, SOC_CLK_SEL,
+                              ESP32_SOC_CLK_PLL);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_CLK_CONF, rtc_clk_conf);
+
     qtest_writel(qts, UART0_BASE + A_UART_INT_ENA, uart_int_ena);
     esp32s3_qmp_system_reset(qts);
+
     g_assert_cmphex(qtest_readl(qts, UART0_BASE + A_UART_INT_ENA), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SW_CPU_STALL),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_WAKEUP_STATE),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_EXT_WAKEUP_CONF_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_REJECT_CONF),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER0),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER1),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_WAKEUP_CAUSE),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_WDTWPROTECT),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SWD_CONF),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SWD_WPROTECT),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_PAD_HOLD),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_DIG_PAD_HOLD),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_EXT_WAKEUP1_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_DATE),
+                    ==, ESP32S3_RTC_CNTL_DATE_RESET);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_CLK_CONF),
+                    ==, rtc_default_clk_conf());
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STORE0),
+                    ==, scratch_value);
 
     qtest_quit(qts);
 }

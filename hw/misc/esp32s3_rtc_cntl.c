@@ -25,6 +25,33 @@
 static void esp32s3_rtc_update_cpu_stall(Esp32s3RtcCntlState* s);
 static void esp32s3_rtc_update_clk(Esp32s3RtcCntlState* s);
 
+static void esp32s3_rtc_cntl_reset_modeled_surface(Esp32s3RtcCntlState *s)
+{
+    s->options0_reg = 0;
+    s->time_reg = 0;
+    s->sw_cpu_stall_reg = 0;
+
+    s->sleep_state = ESP32S3_RTC_SLEEP_AWAKE;
+    s->slp_timer0 = 0;
+    s->slp_timer1 = 0;
+    s->wakeup_state = 0;
+    s->slp_reject_conf = 0;
+    s->ext_wakeup_conf = 0;
+    s->ext_wakeup1 = 0;
+    s->int_raw = 0;
+    s->slp_wakeup_cause = 0;
+    s->wdt_wprotect = 0;
+    s->swd_conf = 0;
+    s->swd_wprotect = 0;
+    s->pad_hold = 0;
+    s->dig_pad_hold = 0;
+    s->date_reg = ESP32S3_RTC_CNTL_DATE_RESET;
+
+    s->rtc_slowclk = ESP32_SLOW_CLK_RC;
+    s->rtc_fastclk = ESP32_FAST_CLK_8M;
+    s->soc_clk = ESP32_SOC_CLK_XTAL;
+}
+
 /* wakeup_ena bits (at [31:15] of WAKEUP_STATE, so trigger bit N = reg bit N+15) */
 #define WAKEUP_ENA_EXT1_BIT    (1 << 16)  /* ExtEvent1Trig = trigger bit 1 */
 
@@ -511,9 +538,11 @@ static void esp32s3_rtc_cntl_reset_hold(Object *obj, ResetType type)
 {
     Esp32s3RtcCntlState *s = ESP32S3_RTC_CNTL(obj);
 
+    esp32s3_rtc_cntl_reset_modeled_surface(s);
     s->time_base_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     timer_del(&s->slp_timer);
-    esp32s3_rtc_set_sleep_state(s, ESP32S3_RTC_SLEEP_AWAKE);
+    esp32s3_rtc_update_cpu_stall(s);
+    esp32s3_rtc_update_clk(s);
 }
 
 static void esp32s3_rtc_cntl_realize(DeviceState *dev, Error **errp)
@@ -541,13 +570,10 @@ static void esp32s3_rtc_cntl_init(Object *obj)
         s->stat_vector_sel[i] = true;
     }
 
-    s->rtc_slowclk = ESP32_SLOW_CLK_RC;
-    s->rtc_fastclk = ESP32_FAST_CLK_8M;
-    s->soc_clk = ESP32_SOC_CLK_XTAL;
-    s->sleep_state = ESP32S3_RTC_SLEEP_AWAKE;
-    s->date_reg = ESP32S3_RTC_CNTL_DATE_RESET;
     s->xtal_apb_freq = 40000000;
     s->pll_apb_freq = 80000000;
+    esp32s3_rtc_cntl_reset_modeled_surface(s);
+    esp32s3_rtc_update_cpu_stall(s);
     esp32s3_rtc_update_clk(s);
 
     timer_init_ns(&s->slp_timer, QEMU_CLOCK_VIRTUAL,
