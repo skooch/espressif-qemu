@@ -4,7 +4,7 @@
 
 This document tracks the known fidelity gaps in the `esp32s3` machine model in this fork and the current follow-on program for closing the highest-value gaps for the active T-Deck Pro workload.
 
-The immediate peripheral, deferred-foundation, core-SoC, first T-Deck prioritization plan, the 2026-04-18 follow-on clock/reset/sleep cleanup plan, and the 2026-04-18 reset-fanout phase are historical records under `docs/plans/implemented/`. There is no separate active `docs/plans/in-progress/` ESP32-S3 fidelity plan right now; the remaining guest-triggered queues are tracked directly in this document.
+The immediate peripheral, deferred-foundation, core-SoC, first T-Deck prioritization plan, the 2026-04-18 follow-on clock/reset/sleep cleanup plan, the 2026-04-18 reset-fanout phase, and the 2026-04-18 RTC time-trigger phase are historical records under `docs/plans/implemented/`. There is no separate active `docs/plans/in-progress/` ESP32-S3 fidelity plan right now; the remaining guest-triggered queues are tracked directly in this document.
 
 The current scope is intentionally limited to the remaining high-risk follow-on work:
 
@@ -280,6 +280,7 @@ The original 2026-04-04 shortcut inventory is now historical. The archived P0 sl
 
 The remaining follow-on items in this area are:
 
+- The RTC timer surface now models the source-backed `TIME_UPDATE` trigger bits for system stall, XTAL-off/light-sleep transitions, and software reset completion, and exposes both current and previous trigger captures through `RTC_TIME_LOW0/HIGH0` and `RTC_TIME_LOW1/HIGH1`. Broader oscillator stop/start timing and power-domain sequencing are still incomplete.
 - The active light-sleep path now freezes SYSTIMER and resumes it on wake, while the adjacent firmware remains responsible for compensating elapsed RTC time after wake. Broader oscillator stop/start timing and peripheral-gating realism remain incomplete.
 - Digital-reset fanout now covers the currently owned digital subset with direct regression coverage. Broader reset-tree sequencing, LP/analog domains, and any future owned peripherals remain deferred until a guest or source-backed need appears.
 - The RTC-to-clock handoff now has one explicit owner: the RTC block updates only its local clock-selection bookkeeping, and the SoC callback remains the single place that applies those selections into the modeled system clock tree.

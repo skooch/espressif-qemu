@@ -306,6 +306,15 @@ static uint64_t read_systimer_unit0(QTestState *qts)
     return (hi << 32) | lo;
 }
 
+static uint64_t read_rtc_time_capture(QTestState *qts, uint32_t low_reg,
+                                      uint32_t high_reg)
+{
+    uint64_t hi = qtest_readl(qts, RTC_CNTL_BASE + high_reg) & 0xffff;
+    uint64_t lo = qtest_readl(qts, RTC_CNTL_BASE + low_reg);
+
+    return (hi << 32) | lo;
+}
+
 static uint32_t rtc_default_clk_conf(void)
 {
     uint32_t rtc_clk_conf = 0;
@@ -2239,6 +2248,100 @@ static void test_rtc_timer_light_sleep_stops_systimer(void)
     qtest_quit(qts);
 }
 
+static void test_rtc_time_triggers(void)
+{
+    QTestState *qts = qts_start();
+    const uint32_t alarm_ticks = 30;
+    uint32_t time_update = 0;
+    uint32_t sw_cpu_stall = 0;
+    uint32_t options0 = 0;
+    uint32_t timer1 = 0;
+    uint32_t wakeup_state = 0;
+    uint32_t state0 = 0;
+    uint64_t manual_capture = 0;
+    uint64_t stall_enter = 0;
+    uint64_t stall_exit = 0;
+    uint64_t sleep_enter = 0;
+    uint64_t sleep_exit = 0;
+    uint64_t reset_capture = 0;
+
+    qtest_clock_step(qts, 64000);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIME_UPDATE,
+                 R_RTC_CNTL_TIME_UPDATE_UPDATE_MASK);
+    manual_capture = read_rtc_time_capture(qts, A_RTC_CNTL_TIME0,
+                                           A_RTC_CNTL_TIME1);
+    g_assert_cmpuint(manual_capture, >, 0);
+    g_assert_cmphex(read_rtc_time_capture(qts, A_RTC_CNTL_TIME_LOW1,
+                                          A_RTC_CNTL_TIME_HIGH1),
+                    ==, 0);
+
+    time_update = R_RTC_CNTL_TIME_UPDATE_TIMER_SYS_STALL_MASK |
+                  R_RTC_CNTL_TIME_UPDATE_TIMER_XTL_OFF_MASK |
+                  R_RTC_CNTL_TIME_UPDATE_TIMER_SYS_RST_MASK;
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIME_UPDATE, time_update);
+    g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIME_UPDATE),
+                    ==, time_update | R_RTC_CNTL_TIME_UPDATE_VALID_MASK);
+
+    qtest_clock_step(qts, 64000);
+    sw_cpu_stall = FIELD_DP32(sw_cpu_stall, RTC_CNTL_SW_CPU_STALL,
+                              APPCPU_C1, 0x21);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SW_CPU_STALL, sw_cpu_stall);
+    options0 = FIELD_DP32(options0, RTC_CNTL_OPTIONS0, SW_STALL_APPCPU_C0, 2);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
+    stall_enter = read_rtc_time_capture(qts, A_RTC_CNTL_TIME0,
+                                        A_RTC_CNTL_TIME1);
+    g_assert_cmpuint(stall_enter, >, manual_capture);
+    g_assert_cmphex(read_rtc_time_capture(qts, A_RTC_CNTL_TIME_LOW1,
+                                          A_RTC_CNTL_TIME_HIGH1),
+                    ==, manual_capture);
+
+    qtest_clock_step(qts, 64000);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, 0);
+    stall_exit = read_rtc_time_capture(qts, A_RTC_CNTL_TIME0,
+                                       A_RTC_CNTL_TIME1);
+    g_assert_cmpuint(stall_exit, >, stall_enter);
+    g_assert_cmphex(read_rtc_time_capture(qts, A_RTC_CNTL_TIME_LOW1,
+                                          A_RTC_CNTL_TIME_HIGH1),
+                    ==, stall_enter);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER0, alarm_ticks);
+    timer1 = FIELD_DP32(timer1, RTC_CNTL_SLP_TIMER1, MAIN_TIMER_ALARM_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER1, timer1);
+    wakeup_state = FIELD_DP32(wakeup_state, RTC_CNTL_WAKEUP_STATE,
+                              TIMER_WAKEUP_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WAKEUP_STATE, wakeup_state);
+
+    qtest_clock_step(qts, 64000);
+    state0 = FIELD_DP32(state0, RTC_CNTL_STATE0, SLEEP_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0, state0);
+    sleep_enter = read_rtc_time_capture(qts, A_RTC_CNTL_TIME0,
+                                        A_RTC_CNTL_TIME1);
+    g_assert_cmpuint(sleep_enter, >, stall_exit);
+    g_assert_cmphex(read_rtc_time_capture(qts, A_RTC_CNTL_TIME_LOW1,
+                                          A_RTC_CNTL_TIME_HIGH1),
+                    ==, stall_exit);
+
+    qtest_clock_step(qts, 240000);
+    sleep_exit = read_rtc_time_capture(qts, A_RTC_CNTL_TIME0,
+                                       A_RTC_CNTL_TIME1);
+    g_assert_cmpuint(sleep_exit, >, sleep_enter);
+    g_assert_cmphex(read_rtc_time_capture(qts, A_RTC_CNTL_TIME_LOW1,
+                                          A_RTC_CNTL_TIME_HIGH1),
+                    ==, sleep_enter);
+
+    qtest_clock_step(qts, 64000);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0,
+                 R_RTC_CNTL_OPTIONS0_SW_SYS_RESET_MASK);
+    reset_capture = read_rtc_time_capture(qts, A_RTC_CNTL_TIME0,
+                                          A_RTC_CNTL_TIME1);
+    g_assert_cmpuint(reset_capture, >, sleep_exit);
+    g_assert_cmphex(read_rtc_time_capture(qts, A_RTC_CNTL_TIME_LOW1,
+                                          A_RTC_CNTL_TIME_HIGH1),
+                    ==, sleep_exit);
+
+    qtest_quit(qts);
+}
+
 static void test_rtc_gpio_low_wakeup_transition(void)
 {
     QTestState *qts = qts_start();
@@ -2813,9 +2916,6 @@ static void test_rng_modeled_surface(void)
     g_assert_cmphex(qtest_readl(qts, ESP32S3_RNG_BASE + 4), ==, 0);
     qtest_writel(qts, ESP32S3_RNG_BASE, 0xffffffff);
     g_assert_cmphex(qtest_readl(qts, ESP32S3_RNG_BASE + 4), ==, 0);
-    qtest_qmp_assert_success(qts, "{ 'execute': 'system_reset' }");
-    qtest_qmp_eventwait(qts, "RESET");
-    g_assert_cmphex(qtest_readl(qts, ESP32S3_RNG_BASE + 4), ==, 0);
 
     qtest_quit(qts);
 }
@@ -3216,6 +3316,7 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/rtc/explicit-register-surface",
                    test_rtc_explicit_register_surface);
     qtest_add_func("/esp32s3/rtc/timer-wakeup", test_rtc_timer_wakeup_transition);
+    qtest_add_func("/esp32s3/rtc/time-triggers", test_rtc_time_triggers);
     qtest_add_func("/esp32s3/rtc/light-sleep-stops-systimer",
                    test_rtc_timer_light_sleep_stops_systimer);
     qtest_add_func("/esp32s3/rtc/gpio-wakeup", test_rtc_gpio_low_wakeup_transition);

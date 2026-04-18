@@ -419,6 +419,7 @@ static void esp32s3_soc_apply_reset(Esp32s3SocState *s, uint32_t reset_domain)
     if (reset_domain & ESP32S3_SOC_RESET_PERIPH) {
         esp32s3_soc_reset_owned_digital_peripherals(s);
         esp32s3_soc_reapply_rtc_clock_state(s);
+        esp32s3_rtc_notify_system_reset(&s->rtc_cntl);
     }
 
     if (reset_domain & ESP32S3_SOC_RESET_PROCPU) {

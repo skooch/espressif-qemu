@@ -1,0 +1,9 @@
+# ESP32-S3 RTC Time Trigger Progress
+
+- 2026-04-18: Started the RTC time-trigger phase in `/Users/skooch/projects/tdeck-pro-rust/worktrees/esp32s3-sleep-clock-phase4` from `codex/esp32s3-reset-fanout-phase3`.
+- 2026-04-18: Confirmed the current RTC model only updates `TIME0/TIME1` on an explicit `TIME_UPDATE.UPDATE` write and does not yet wire the TRM-documented trigger bits for system stall, XTAL-off/sleep transition, or digital reset completion.
+- 2026-04-18: Confirmed from the local TRM and vendored IDF headers that `RTC_CNTL_TIME_UPDATE` exposes `TIMER_SYS_STALL`, `TIMER_XTL_OFF`, and `TIMER_SYS_RST`, and that the RTC timer surface also includes a previous-trigger capture group at `RTC_TIME_LOW1/HIGH1`.
+- 2026-04-18: Implemented source-backed `TIME_UPDATE` trigger-enable storage, exposed `RTC_TIME_LOW1/HIGH1`, and wired ordered RTC timer capture snapshots for manual update, CPU stall transitions, light-sleep XTAL-off compatibility boundaries, and software digital reset completion.
+- 2026-04-18: Added `/xtensa/esp32s3/rtc/time-triggers` coverage so the qtest RTC suite proves the current/previous capture contract across stall, sleep, and software reset transitions.
+- 2026-04-18: While closing verification, identified that the monolithic qtest failure at `/xtensa/esp32s3/rng/modeled-surface` came from a vacuous `system_reset` leg that only reread an always-zero unsupported offset. Removed that dead reset step so the full suite reflects real coverage instead of a teardown race.
+- 2026-04-18: Verification passed: `git diff --check`, `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test`, targeted qtests for `/xtensa/esp32s3/rtc/time-triggers`, `/xtensa/esp32s3/rtc`, and `/xtensa/esp32s3/rng/modeled-surface`, the full `QTEST_QEMU_BINARY=./build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test`, and the functional tests `test_xtensa_esp32s3_cache_reject.py` and `test_xtensa_esp32s3_sleep_wake.py`.

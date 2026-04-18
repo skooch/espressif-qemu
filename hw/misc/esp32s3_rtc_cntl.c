@@ -25,10 +25,31 @@
 static void esp32s3_rtc_update_cpu_stall(Esp32s3RtcCntlState* s);
 static void esp32s3_rtc_update_clk(Esp32s3RtcCntlState* s);
 
+static uint64_t esp32s3_rtc_get_time(Esp32s3RtcCntlState *s)
+{
+    return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - s->time_base_ns,
+                    s->rtc_slowclk_freq, NANOSECONDS_PER_SECOND);
+}
+
+static void esp32s3_rtc_capture_time(Esp32s3RtcCntlState *s)
+{
+    s->time_reg[1] = s->time_reg[0];
+    s->time_reg[0] = esp32s3_rtc_get_time(s);
+}
+
+static void esp32s3_rtc_capture_time_if(Esp32s3RtcCntlState *s, bool enabled)
+{
+    if (enabled) {
+        esp32s3_rtc_capture_time(s);
+    }
+}
+
 static void esp32s3_rtc_cntl_reset_modeled_surface(Esp32s3RtcCntlState *s)
 {
     s->options0_reg = 0;
-    s->time_reg = 0;
+    s->time_update_reg = 0;
+    s->time_reg[0] = 0;
+    s->time_reg[1] = 0;
     s->sw_cpu_stall_reg = 0;
 
     s->sleep_state = ESP32S3_RTC_SLEEP_AWAKE;
@@ -62,6 +83,11 @@ static void esp32s3_rtc_set_sleep_state(Esp32s3RtcCntlState *s,
     bool new_sleeping = state == ESP32S3_RTC_SLEEP_SLEEPING;
 
     s->sleep_state = state;
+
+    esp32s3_rtc_capture_time_if(s,
+                                old_sleeping != new_sleeping &&
+                                (s->time_update_reg &
+                                 R_RTC_CNTL_TIME_UPDATE_TIMER_XTL_OFF_MASK));
 
     if (old_sleeping != new_sleeping && s->light_sleep_req) {
         qemu_set_irq(s->light_sleep_req, new_sleeping);
@@ -244,13 +270,13 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
         r = s->options0_reg;
         break;
     case A_RTC_CNTL_TIME_UPDATE:
-        r = R_RTC_CNTL_TIME_UPDATE_VALID_MASK;
+        r = s->time_update_reg | R_RTC_CNTL_TIME_UPDATE_VALID_MASK;
         break;
     case A_RTC_CNTL_TIME0:
-        r = s->time_reg & UINT32_MAX;
+        r = s->time_reg[0] & UINT32_MAX;
         break;
     case A_RTC_CNTL_TIME1:
-        r = s->time_reg >> 32;
+        r = s->time_reg[0] >> 32;
         break;
 
     case A_RTC_CNTL_SLP_TIMER0:
@@ -320,6 +346,14 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
         r = s->scratch_reg[(addr - A_RTC_CNTL_STORE4) / 4 + 4];
         break;
 
+    case A_RTC_CNTL_TIME_LOW1:
+        r = s->time_reg[1] & UINT32_MAX;
+        break;
+
+    case A_RTC_CNTL_TIME_HIGH1:
+        r = s->time_reg[1] >> 32;
+        break;
+
     case A_RTC_CNTL_INT_RAW:
         r = s->int_raw;
         break;
@@ -378,10 +412,12 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
         break;
 
     case A_RTC_CNTL_TIME_UPDATE:
+        s->time_update_reg = (uint32_t)value &
+                             (R_RTC_CNTL_TIME_UPDATE_TIMER_SYS_RST_MASK |
+                              R_RTC_CNTL_TIME_UPDATE_TIMER_XTL_OFF_MASK |
+                              R_RTC_CNTL_TIME_UPDATE_TIMER_SYS_STALL_MASK);
         if (value & R_RTC_CNTL_TIME_UPDATE_UPDATE_MASK) {
-            s->time_reg = muldiv64(
-                qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - s->time_base_ns,
-                s->rtc_slowclk_freq, NANOSECONDS_PER_SECOND);
+            esp32s3_rtc_capture_time(s);
         }
         break;
 
@@ -503,6 +539,7 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
 
 static void esp32s3_rtc_update_cpu_stall(Esp32s3RtcCntlState* s)
 {
+    bool old_stall_state[ESP32S3_CPU_COUNT];
     uint32_t procpu_stall = (FIELD_EX32(s->sw_cpu_stall_reg, RTC_CNTL_SW_CPU_STALL, PROCPU_C1) << 2) |
                             (FIELD_EX32(s->options0_reg, RTC_CNTL_OPTIONS0, SW_STALL_PROCPU_C0));
 
@@ -511,8 +548,16 @@ static void esp32s3_rtc_update_cpu_stall(Esp32s3RtcCntlState* s)
 
     const uint32_t stall_magic_val = 0x86;
 
+    memcpy(old_stall_state, s->cpu_stall_state, sizeof(old_stall_state));
+
     s->cpu_stall_state[0] = procpu_stall == stall_magic_val;
     s->cpu_stall_state[1] = appcpu_stall == stall_magic_val;
+
+    esp32s3_rtc_capture_time_if(s,
+                                (old_stall_state[0] != s->cpu_stall_state[0] ||
+                                 old_stall_state[1] != s->cpu_stall_state[1]) &&
+                                (s->time_update_reg &
+                                 R_RTC_CNTL_TIME_UPDATE_TIMER_SYS_STALL_MASK));
 
     qemu_set_irq(s->cpu_stall_req[0], s->cpu_stall_state[0]);
     qemu_set_irq(s->cpu_stall_req[1], s->cpu_stall_state[1]);
@@ -526,6 +571,12 @@ static void esp32s3_rtc_update_clk(Esp32s3RtcCntlState* s)
     s->rtc_fastclk_freq = fastclk_freq[s->rtc_fastclk];
 
     qemu_irq_pulse(s->clk_update);
+}
+
+void esp32s3_rtc_notify_system_reset(Esp32s3RtcCntlState *s)
+{
+    esp32s3_rtc_capture_time_if(s, s->time_update_reg &
+                                   R_RTC_CNTL_TIME_UPDATE_TIMER_SYS_RST_MASK);
 }
 
 static const MemoryRegionOps esp32s3_rtc_cntl_ops = {

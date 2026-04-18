@@ -89,7 +89,8 @@ typedef struct Esp32s3RtcCntlState {
     int64_t time_base_ns;
 
     uint32_t options0_reg;
-    uint64_t time_reg;
+    uint32_t time_update_reg;
+    uint64_t time_reg[2];
     uint32_t sw_cpu_stall_reg;
     uint32_t scratch_reg[ESP32S3_RTC_CNTL_SCRATCH_REG_COUNT];
     Esp32s3ResetCause reset_cause[ESP32S3_CPU_COUNT];
@@ -119,6 +120,7 @@ typedef struct Esp32s3RtcCntlState {
 
 /* Called by GPIO model when a wakeup-configured pin triggers */
 void esp32s3_rtc_gpio_wakeup_notify(Esp32s3RtcCntlState *s, int gpio_num);
+void esp32s3_rtc_notify_system_reset(Esp32s3RtcCntlState *s);
 
 REG32(RTC_CNTL_OPTIONS0, 0x00)
     FIELD(RTC_CNTL_OPTIONS0, SW_SYS_RESET, 31, 1)
@@ -130,6 +132,9 @@ REG32(RTC_CNTL_OPTIONS0, 0x00)
 REG32(RTC_CNTL_TIME_UPDATE, 0xc)
     FIELD(RTC_CNTL_TIME_UPDATE, UPDATE, 31, 1)
     FIELD(RTC_CNTL_TIME_UPDATE, VALID, 30, 1)
+    FIELD(RTC_CNTL_TIME_UPDATE, TIMER_SYS_RST, 29, 1)
+    FIELD(RTC_CNTL_TIME_UPDATE, TIMER_XTL_OFF, 28, 1)
+    FIELD(RTC_CNTL_TIME_UPDATE, TIMER_SYS_STALL, 27, 1)
 REG32(RTC_CNTL_TIME0, 0x10)
 REG32(RTC_CNTL_TIME1, 0x14)
 
@@ -157,6 +162,8 @@ REG32(RTC_CNTL_STORE4, 0xc0)
 REG32(RTC_CNTL_STORE5, 0xc4)
 REG32(RTC_CNTL_STORE6, 0xc8)
 REG32(RTC_CNTL_STORE7, 0xcc)
+REG32(RTC_CNTL_TIME_LOW1, 0xec)
+REG32(RTC_CNTL_TIME_HIGH1, 0xf0)
 REG32(RTC_CNTL_DATE,   0x1fc)
     FIELD(RTC_CNTL_DATE, DATE, 0, 28)
 
