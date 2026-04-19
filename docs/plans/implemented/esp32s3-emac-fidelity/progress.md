@@ -1,0 +1,6 @@
+# ESP32-S3 EMAC Fidelity Progress
+
+- 2026-04-19: Activated plan `#5` from `docs/plans/new/` into `docs/plans/in-progress/` and began reconciling the `open_eth` wrapper contract against the local ESP-IDF OpenETH driver and existing qtest coverage.
+- 2026-04-19: Reconciled the direction against the local corpus. The adjacent ESP-IDF `esp_eth_mac_openeth.c` path is explicitly QEMU-only and relies on the OpenCores wrapper rather than a real ESP32-S3 EMAC model, while the active T-Deck Pro workload remains Wi-Fi-only. Closed the plan on a tighter wrapper contract rather than an ESP32-S3-specific EMAC replacement.
+- 2026-04-19: Fixed the next source-backed OpenETH contract bug in `hw/net/opencores_eth.c`: writing `MIITX_DATA` alone no longer mutates the emulated PHY. The write now commits only when `MIICOMMAND.WCTRLDATA` is asserted, matching the local OpenETH driver sequence.
+- 2026-04-19: Added direct qtest coverage for the staged MII write contract and reran the full plan verification floor: `git diff --check`, `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test`, `QTEST_QEMU_BINARY=./build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test -p /xtensa/esp32s3/emac`, and the full `QTEST_QEMU_BINARY=./build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test`. All passed.

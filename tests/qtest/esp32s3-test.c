@@ -140,6 +140,7 @@
 #define OPENETH_MODER_RXEN             BIT(0)
 #define OPENETH_INT_SOURCE_RXB         BIT(2)
 #define OPENETH_INT_SOURCE_TXB         BIT(0)
+#define OPENETH_MIICOMMAND_WCTRLDATA   BIT(2)
 #define OPENETH_MIICOMMAND_RSTAT       BIT(1)
 #define OPENETH_MIICOMMAND_SCANSTAT    BIT(0)
 #define OPENETH_MIISTATUS_LINKFAIL     BIT(0)
@@ -157,6 +158,7 @@
 #define OPENETH_TX_BD_NUM_REG          (EMAC_BASE + 0x20)
 #define OPENETH_MIICOMMAND_REG         (EMAC_BASE + 0x2c)
 #define OPENETH_MIIADDRESS_REG         (EMAC_BASE + 0x30)
+#define OPENETH_MIITX_DATA_REG         (EMAC_BASE + 0x34)
 #define OPENETH_MIIRX_DATA_REG         (EMAC_BASE + 0x38)
 #define OPENETH_MIISTATUS_REG          (EMAC_BASE + 0x3c)
 #define OPENETH_MAC_ADDR0_REG          (EMAC_BASE + 0x40)
@@ -3923,6 +3925,18 @@ static uint16_t openeth_mii_read(QTestState *qts, uint8_t reg)
     return qtest_readl(qts, OPENETH_MIIRX_DATA_REG) & 0xffff;
 }
 
+static void openeth_mii_write(QTestState *qts, uint8_t reg, uint16_t value)
+{
+    uint32_t cmd = qtest_readl(qts, OPENETH_MIICOMMAND_REG);
+
+    qtest_writel(qts, OPENETH_MIIADDRESS_REG,
+                 (reg << OPENETH_MIIADDRESS_RGAD_SHIFT) |
+                 (OPENETH_DEFAULT_PHY << OPENETH_MIIADDRESS_FIAD_SHIFT));
+    qtest_writel(qts, OPENETH_MIITX_DATA_REG, value);
+    qtest_writel(qts, OPENETH_MIICOMMAND_REG,
+                 cmd | OPENETH_MIICOMMAND_WCTRLDATA);
+}
+
 static void openeth_read_mac(QTestState *qts, uint8_t mac[6])
 {
     uint32_t mac0 = qtest_readl(qts, OPENETH_MAC_ADDR0_REG);
@@ -4051,6 +4065,26 @@ static void test_emac_link_and_loopback_surface(void)
     qtest_quit(qts);
 }
 
+static void test_emac_mii_write_requires_command(void)
+{
+    QTestState *qts = qts_start_with_openeth();
+    uint16_t anar_default = openeth_mii_read(qts, MII_ANAR);
+
+    g_assert_cmphex(anar_default, !=, 0x0001);
+
+    qtest_writel(qts, OPENETH_MIIADDRESS_REG,
+                 (MII_ANAR << OPENETH_MIIADDRESS_RGAD_SHIFT) |
+                 (OPENETH_DEFAULT_PHY << OPENETH_MIIADDRESS_FIAD_SHIFT));
+    qtest_writel(qts, OPENETH_MIITX_DATA_REG, 0x0001);
+
+    g_assert_cmphex(openeth_mii_read(qts, MII_ANAR), ==, anar_default);
+
+    openeth_mii_write(qts, MII_ANAR, 0x0001);
+    g_assert_cmphex(openeth_mii_read(qts, MII_ANAR), ==, 0x0001);
+
+    qtest_quit(qts);
+}
+
 static void test_emac_not_instantiated_without_nic(void)
 {
     QTestState *qts = qts_start_without_openeth();
@@ -4170,6 +4204,8 @@ int main(int argc, char **argv)
                    test_emac_not_instantiated_without_nic);
     qtest_add_func("/esp32s3/emac/instantiated-with-openeth-nic",
                    test_emac_instantiated_with_openeth_nic);
+    qtest_add_func("/esp32s3/emac/mii-write-requires-command",
+                   test_emac_mii_write_requires_command);
     qtest_add_func("/esp32s3/emac/link-loopback", test_emac_link_and_loopback_surface);
     qtest_add_func("/esp32s3/pms/modeled-surface", test_pms_modeled_surface);
     qtest_add_func("/esp32s3/rng/modeled-surface", test_rng_modeled_surface);

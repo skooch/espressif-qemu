@@ -692,10 +692,6 @@ static void open_eth_mii_command_host_write(OpenEthState *s, uint32_t val)
 static void open_eth_mii_tx_host_write(OpenEthState *s, uint32_t val)
 {
     SET_REGFIELD(s, MIITX_DATA, CTRLDATA, val);
-    if (GET_REGFIELD(s, MIIADDRESS, FIAD) == DEFAULT_PHY) {
-        mii_write_host(&s->mii, GET_REGFIELD(s, MIIADDRESS, RGAD),
-                GET_REGFIELD(s, MIITX_DATA, CTRLDATA));
-    }
 }
 
 static void open_eth_reg_write(void *opaque,
