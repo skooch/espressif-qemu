@@ -94,6 +94,13 @@ static void esp32s3_rtc_sync_clk_conf_sources(Esp32s3RtcCntlState *s);
      R_RTC_CNTL_RETENTION_CTRL_RETENTION_TARGET_MASK | \
      R_RTC_CNTL_RETENTION_CTRL_RETENTION_TAG_MODE_MASK)
 
+#define RTC_CNTL_PG_CTRL_RW_MASK \
+    (R_RTC_CNTL_PG_CTRL_POWER_GLITCH_EN_MASK | \
+     R_RTC_CNTL_PG_CTRL_POWER_GLITCH_EFUSE_SEL_MASK | \
+     R_RTC_CNTL_PG_CTRL_POWER_GLITCH_FORCE_PU_MASK | \
+     R_RTC_CNTL_PG_CTRL_POWER_GLITCH_FORCE_PD_MASK | \
+     R_RTC_CNTL_PG_CTRL_POWER_GLITCH_DSENSE_MASK)
+
 #define RTC_CNTL_RTC_RW_MASK \
     R_RTC_CNTL_RTC_REGULATOR_FORCE_PU_MASK
 
@@ -251,6 +258,7 @@ static void esp32s3_rtc_cntl_reset_modeled_surface(Esp32s3RtcCntlState *s)
     s->clk_conf_reg = esp32s3_rtc_clk_conf_default();
     s->sdio_conf_reg = esp32s3_rtc_sdio_conf_default();
     s->retention_ctrl_reg = esp32s3_rtc_retention_ctrl_default();
+    s->pg_ctrl_reg = 0;
     s->rtc_reg = esp32s3_rtc_reg_default();
     s->pwc_reg = esp32s3_rtc_pwc_default();
     s->bias_conf_reg = esp32s3_rtc_bias_conf_default();
@@ -496,6 +504,9 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
     case A_RTC_CNTL_RETENTION_CTRL:
         r = s->retention_ctrl_reg;
         break;
+    case A_RTC_CNTL_PG_CTRL:
+        r = s->pg_ctrl_reg;
+        break;
     case A_RTC_CNTL_TIME_UPDATE:
         r = s->time_update_reg | R_RTC_CNTL_TIME_UPDATE_VALID_MASK;
         break;
@@ -678,6 +689,10 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
 
     case A_RTC_CNTL_RETENTION_CTRL:
         s->retention_ctrl_reg = (uint32_t)value & RTC_CNTL_RETENTION_CTRL_RW_MASK;
+        break;
+
+    case A_RTC_CNTL_PG_CTRL:
+        s->pg_ctrl_reg = (uint32_t)value & RTC_CNTL_PG_CTRL_RW_MASK;
         break;
 
     case A_RTC_CNTL_TIME_UPDATE:

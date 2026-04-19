@@ -74,6 +74,7 @@
 #define RTC_SLP_REJECT_CAUSE_REG (RTC_CNTL_BASE + 0x128)
 #define RTC_RETENTION_CTRL_REG  (RTC_CNTL_BASE + 0x140)
 #define RTC_PG_CTRL_REG         (RTC_CNTL_BASE + 0x144)
+#define RTC_FIB_SEL_REG         (RTC_CNTL_BASE + 0x148)
 #define RTC_WAKEUP_ENA_EXT1_BIT BIT(16)
 #define RTC_GPIO_TRIG_EN        BIT(2)
 #define CACHE_OP_DELAY_NS              1000
@@ -2399,6 +2400,14 @@ static void test_rtc_explicit_register_surface(void)
                         R_RTC_CNTL_RETENTION_CTRL_RETENTION_TARGET_MASK |
                         R_RTC_CNTL_RETENTION_CTRL_RETENTION_TAG_MODE_MASK);
 
+    qtest_writel(qts, RTC_PG_CTRL_REG, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_PG_CTRL_REG),
+                    ==, R_RTC_CNTL_PG_CTRL_POWER_GLITCH_EN_MASK |
+                        R_RTC_CNTL_PG_CTRL_POWER_GLITCH_EFUSE_SEL_MASK |
+                        R_RTC_CNTL_PG_CTRL_POWER_GLITCH_FORCE_PU_MASK |
+                        R_RTC_CNTL_PG_CTRL_POWER_GLITCH_FORCE_PD_MASK |
+                        R_RTC_CNTL_PG_CTRL_POWER_GLITCH_DSENSE_MASK);
+
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WDTWPROTECT, 0x50d83aa1);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_WDTWPROTECT),
                     ==, 0x50d83aa1);
@@ -2428,8 +2437,8 @@ static void test_rtc_explicit_register_surface(void)
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_DATE),
                     ==, R_RTC_CNTL_DATE_DATE_MASK);
 
-    qtest_writel(qts, RTC_PG_CTRL_REG, UINT32_MAX);
-    g_assert_cmphex(qtest_readl(qts, RTC_PG_CTRL_REG), ==, 0);
+    qtest_writel(qts, RTC_FIB_SEL_REG, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_FIB_SEL_REG), ==, 0);
 
     qtest_quit(qts);
 }

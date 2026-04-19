@@ -14,7 +14,7 @@ adjacent firmware-visible wake behavior, the RTC-owned
 `EXT_WAKEUP1_STATUS` latch and clear path for EXT1 wakeups, the
 documented `RTC_CNTL_TIMER1` wait-field surface, the narrow
 `SLP_REJECT_CAUSE` register contract, and the explicit
-`RTC_CNTL_RETENTION_CTRL` register surface, while leaving
+`RTC_CNTL_RETENTION_CTRL` and `RTC_CNTL_PG_CTRL` register surfaces, while leaving
 firmware-owned tier reapplication plus broader oscillator, retention, and
 power-domain sequencing for later phases.
 
