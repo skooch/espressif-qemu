@@ -83,6 +83,7 @@ typedef struct Esp32s3RtcCntlState {
     uint64_t time_reg[2];
     uint32_t sw_cpu_stall_reg;
     uint32_t timer2_reg;
+    uint32_t timer1_reg;
     uint32_t clk_conf_reg;
     uint32_t sdio_conf_reg;
     uint32_t rtc_reg;
@@ -143,6 +144,10 @@ REG32(RTC_CNTL_TIME_UPDATE, 0xc)
     FIELD(RTC_CNTL_TIME_UPDATE, TIMER_SYS_STALL, 27, 1)
 REG32(RTC_CNTL_TIME0, 0x10)
 REG32(RTC_CNTL_TIME1, 0x14)
+REG32(RTC_CNTL_TIMER1, 0x1c)
+    FIELD(RTC_CNTL_TIMER1, PLL_BUF_WAIT, 24, 8)
+    FIELD(RTC_CNTL_TIMER1, XTL_BUF_WAIT, 14, 10)
+    FIELD(RTC_CNTL_TIMER1, CK8M_WAIT, 6, 8)
 
 REG32(RTC_CNTL_RESET_STATE, 0x38)
     FIELD(RTC_CNTL_RESET_STATE, PROCPU_STAT_VECTOR_SEL, 13, 1)

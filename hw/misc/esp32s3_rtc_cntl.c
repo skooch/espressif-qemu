@@ -42,6 +42,11 @@ static void esp32s3_rtc_sync_clk_conf_sources(Esp32s3RtcCntlState *s);
 #define RTC_CNTL_TIMER2_RW_MASK \
     R_RTC_CNTL_TIMER2_ULPCP_TOUCH_START_WAIT_MASK
 
+#define RTC_CNTL_TIMER1_RW_MASK \
+    (R_RTC_CNTL_TIMER1_PLL_BUF_WAIT_MASK | \
+     R_RTC_CNTL_TIMER1_XTL_BUF_WAIT_MASK | \
+     R_RTC_CNTL_TIMER1_CK8M_WAIT_MASK)
+
 #define RTC_CNTL_CLK_CONF_RW_MASK \
     (R_RTC_CNTL_CLK_CONF_ANA_CLK_RTC_SEL_MASK | \
      R_RTC_CNTL_CLK_CONF_FAST_CLK_RTC_SEL_MASK | \
@@ -119,6 +124,16 @@ static uint32_t esp32s3_rtc_options0_default(void)
 static uint32_t esp32s3_rtc_timer2_default(void)
 {
     return FIELD_DP32(0, RTC_CNTL_TIMER2, ULPCP_TOUCH_START_WAIT, 0x10);
+}
+
+static uint32_t esp32s3_rtc_timer1_default(void)
+{
+    uint32_t timer1 = 0;
+
+    timer1 = FIELD_DP32(timer1, RTC_CNTL_TIMER1, PLL_BUF_WAIT, 40);
+    timer1 = FIELD_DP32(timer1, RTC_CNTL_TIMER1, XTL_BUF_WAIT, 80);
+    timer1 = FIELD_DP32(timer1, RTC_CNTL_TIMER1, CK8M_WAIT, 0x10);
+    return timer1;
 }
 
 static uint32_t esp32s3_rtc_sdio_conf_default(void)
@@ -210,6 +225,7 @@ static void esp32s3_rtc_cntl_reset_modeled_surface(Esp32s3RtcCntlState *s)
     s->time_reg[1] = 0;
     s->sw_cpu_stall_reg = 0;
     s->timer2_reg = esp32s3_rtc_timer2_default();
+    s->timer1_reg = esp32s3_rtc_timer1_default();
     s->clk_conf_reg = esp32s3_rtc_clk_conf_default();
     s->sdio_conf_reg = esp32s3_rtc_sdio_conf_default();
     s->rtc_reg = esp32s3_rtc_reg_default();
@@ -445,6 +461,9 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
     case A_RTC_CNTL_TIMER2:
         r = s->timer2_reg;
         break;
+    case A_RTC_CNTL_TIMER1:
+        r = s->timer1_reg;
+        break;
     case A_RTC_CNTL_SDIO_CONF:
         r = s->sdio_conf_reg;
         break;
@@ -614,6 +633,10 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
 
     case A_RTC_CNTL_TIMER2:
         s->timer2_reg = (uint32_t)value & RTC_CNTL_TIMER2_RW_MASK;
+        break;
+
+    case A_RTC_CNTL_TIMER1:
+        s->timer1_reg = (uint32_t)value & RTC_CNTL_TIMER1_RW_MASK;
         break;
 
     case A_RTC_CNTL_SDIO_CONF:
