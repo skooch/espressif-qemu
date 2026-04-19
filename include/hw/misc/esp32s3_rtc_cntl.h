@@ -105,6 +105,7 @@ typedef struct Esp32s3RtcCntlState {
     uint32_t ext_wakeup1;
     uint32_t ext_wakeup1_status;
     uint32_t int_raw;
+    uint32_t slp_reject_cause;
     uint32_t slp_wakeup_cause;
     QEMUTimer slp_timer;
     uint32_t wdt_wprotect;
@@ -281,6 +282,9 @@ REG32(RTC_CNTL_EXT_WAKEUP1, 0xe0)
 
 REG32(RTC_CNTL_EXT_WAKEUP1_STATUS, 0xe4)
     FIELD(RTC_CNTL_EXT_WAKEUP1_STATUS, EXT_WAKEUP1_STATUS, 0, 22)
+
+REG32(RTC_CNTL_SLP_REJECT_CAUSE, 0x128)
+    FIELD(RTC_CNTL_SLP_REJECT_CAUSE, REJECT_CAUSE, 0, 18)
 
 REG32(RTC_CNTL_SLP_WAKEUP_CAUSE, 0x130)
     FIELD(RTC_CNTL_SLP_WAKEUP_CAUSE, EXT1, 1, 1)

@@ -243,6 +243,7 @@ static void esp32s3_rtc_cntl_reset_modeled_surface(Esp32s3RtcCntlState *s)
     s->ext_wakeup1 = 0;
     s->ext_wakeup1_status = 0;
     s->int_raw = 0;
+    s->slp_reject_cause = 0;
     s->slp_wakeup_cause = 0;
     s->wdt_wprotect = 0;
     s->swd_conf = 0;
@@ -254,6 +255,7 @@ static void esp32s3_rtc_cntl_reset_modeled_surface(Esp32s3RtcCntlState *s)
 
 /* wakeup_ena bits (at [31:15] of WAKEUP_STATE, so trigger bit N = reg bit N+15) */
 #define WAKEUP_ENA_EXT1_BIT    (1 << 16)  /* ExtEvent1Trig = trigger bit 1 */
+#define ESP32S3_RTC_GPIO_TRIG_EN BIT(2)
 
 static void esp32s3_rtc_set_sleep_state(Esp32s3RtcCntlState *s,
                                         Esp32s3RtcSleepState state)
@@ -385,6 +387,7 @@ static void esp32s3_rtc_enter_sleep(Esp32s3RtcCntlState *s)
                 if (!pin_level) {
                     esp32s3_rtc_set_sleep_state(s,
                                                 ESP32S3_RTC_SLEEP_REJECTED);
+                    s->slp_reject_cause = ESP32S3_RTC_GPIO_TRIG_EN;
                     s->int_raw |= R_RTC_CNTL_INT_RAW_SLP_REJECT_MASK;
                     return;
                 }
@@ -574,6 +577,10 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
         r = s->int_raw;
         break;
 
+    case A_RTC_CNTL_SLP_REJECT_CAUSE:
+        r = s->slp_reject_cause;
+        break;
+
     case A_RTC_CNTL_SLP_WAKEUP_CAUSE:
         r = s->slp_wakeup_cause;
         break;
@@ -740,6 +747,7 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
         bool reject_clr = FIELD_EX32(value, RTC_CNTL_STATE0,
                                      SLP_REJECT_CAUSE_CLR);
         if (reject_clr && s->sleep_state == ESP32S3_RTC_SLEEP_REJECTED) {
+            s->slp_reject_cause = 0;
             esp32s3_rtc_set_sleep_state(s, ESP32S3_RTC_SLEEP_AWAKE);
         }
         if (sleep_en) {

@@ -71,8 +71,10 @@
 #define RTC_EXT_WAKEUP_CONF_REG (RTC_CNTL_BASE + 0x64)
 #define RTC_EXT_WAKEUP1_REG     (RTC_CNTL_BASE + 0xe0)
 #define RTC_EXT_WAKEUP1_STATUS_REG (RTC_CNTL_BASE + 0xe4)
+#define RTC_SLP_REJECT_CAUSE_REG (RTC_CNTL_BASE + 0x128)
 #define RTC_RETENTION_CTRL_REG  (RTC_CNTL_BASE + 0x140)
 #define RTC_WAKEUP_ENA_EXT1_BIT BIT(16)
+#define RTC_GPIO_TRIG_EN        BIT(2)
 #define CACHE_OP_DELAY_NS              1000
 #define ESP32S3_CACHE_IA_SOURCE        56
 #define ESP32S3_CACHE_CORE0_ACS_SOURCE 94
@@ -2331,6 +2333,7 @@ static void test_rtc_explicit_register_surface(void)
                     ==, R_RTC_CNTL_SLP_REJECT_CONF_DEEP_SLP_REJECT_EN_MASK |
                         R_RTC_CNTL_SLP_REJECT_CONF_LIGHT_SLP_REJECT_EN_MASK |
                         R_RTC_CNTL_SLP_REJECT_CONF_SLEEP_REJECT_ENA_MASK);
+    g_assert_cmphex(qtest_readl(qts, RTC_SLP_REJECT_CAUSE_REG), ==, 0);
 
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_RTC, 0);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_RTC), ==, 0);
@@ -2745,6 +2748,8 @@ static void test_rtc_gpio_low_reject_transition(void)
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_RAW) &
                     R_RTC_CNTL_INT_RAW_SLP_REJECT_MASK,
                     ==, R_RTC_CNTL_INT_RAW_SLP_REJECT_MASK);
+    g_assert_cmphex(qtest_readl(qts, RTC_SLP_REJECT_CAUSE_REG),
+                    ==, RTC_GPIO_TRIG_EN);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0) &
                     R_RTC_CNTL_STATE0_SLP_REJECT_MASK,
                     ==, R_RTC_CNTL_STATE0_SLP_REJECT_MASK);
@@ -2755,6 +2760,7 @@ static void test_rtc_gpio_low_reject_transition(void)
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0,
                  R_RTC_CNTL_STATE0_SLP_REJECT_CAUSE_CLR_MASK);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_SLP_REJECT_CAUSE_REG), ==, 0);
     g_assert_false(qtest_get_irq(qts, 0));
 
     qtest_quit(qts);
