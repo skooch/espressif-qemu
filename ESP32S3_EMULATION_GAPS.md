@@ -4,7 +4,7 @@
 
 This document tracks the known fidelity gaps in the `esp32s3` machine model in this fork and the current follow-on program for closing the highest-value gaps for the active T-Deck Pro workload.
 
-The immediate peripheral, deferred-foundation, core-SoC, first T-Deck prioritization plan, the 2026-04-18 follow-on clock/reset/sleep cleanup plan, the 2026-04-18 reset-fanout phase, the 2026-04-18 RTC time-trigger phase, the 2026-04-18 RTC light-sleep configuration phase, the 2026-04-18 RTC SDIO config phase, plan `#1` (`docs/plans/implemented/esp32s3-board-control-realism/plan.md`), plan `#2` (`docs/plans/implemented/esp32s3-peripheral-contract-follow-ons/plan.md`), plan `#3` (`docs/plans/implemented/esp32s3-generic-mmio-burn-down/plan.md`), and plan `#4` (`docs/plans/implemented/esp32s3-external-memory-fidelity/plan.md`) are now historical records under `docs/plans/implemented/`. There is currently no active in-progress ESP32-S3 fidelity plan; the remaining backlog is split into explicit `docs/plans/new/` plan records plus the documented source-gated residuals below.
+The immediate peripheral, deferred-foundation, core-SoC, first T-Deck prioritization plan, the 2026-04-18 follow-on clock/reset/sleep cleanup plan, the 2026-04-18 reset-fanout phase, the 2026-04-18 RTC time-trigger phase, the 2026-04-18 RTC light-sleep configuration phase, the 2026-04-18 RTC SDIO config phase, plan `#1` (`docs/plans/implemented/esp32s3-board-control-realism/plan.md`), plan `#2` (`docs/plans/implemented/esp32s3-peripheral-contract-follow-ons/plan.md`), plan `#3` (`docs/plans/implemented/esp32s3-generic-mmio-burn-down/plan.md`), and plan `#4` (`docs/plans/implemented/esp32s3-external-memory-fidelity/plan.md`) are now historical records under `docs/plans/implemented/`. The active in-progress ESP32-S3 fidelity plan is now plan `#5` at `docs/plans/in-progress/esp32s3-emac-fidelity/plan.md`; the remaining backlog stays split into later `docs/plans/new/` plan records plus the documented source-gated residuals below.
 
 The remaining scope is intentionally limited to the next high-risk follow-on work:
 
@@ -22,7 +22,7 @@ The remaining documented queues are split into these plan records, in the ideal 
 2. `docs/plans/implemented/esp32s3-peripheral-contract-follow-ons/plan.md` is the completed historical record for GP-SPI, USB Serial/JTAG, I2C, UART, SHA, eFuse, PMS, and RNG residual contract work
 3. `docs/plans/implemented/esp32s3-generic-mmio-burn-down/plan.md` is the completed historical record for the remaining catch-all windows and explicit owner handoff
 4. `docs/plans/implemented/esp32s3-external-memory-fidelity/plan.md` is the completed historical record for functional cache/MMU, flash, and PSRAM coherency
-5. `docs/plans/new/esp32s3-emac-fidelity/plan.md` for deeper EMAC fidelity beyond the current `open_eth` contract
+5. `docs/plans/in-progress/esp32s3-emac-fidelity/plan.md` for deeper EMAC fidelity beyond the current `open_eth` contract
 6. `docs/plans/new/esp32s3-rmt-model/plan.md` for the currently unimplemented RMT block
 7. `docs/plans/new/esp32s3-xtensa-backend-follow-ons/plan.md` for guest-driven Xtensa backend and configured-core follow-ons
 
