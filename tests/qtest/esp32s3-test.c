@@ -1959,6 +1959,48 @@ static void write_gdma_descriptor(QTestState *qts, uint32_t addr,
     qtest_memwrite(qts, addr, &desc, sizeof(desc));
 }
 
+static void run_gpspi_sd_dma_transfer(QTestState *qts, const uint8_t *tx_payload,
+                                      uint8_t *rx_after, size_t len)
+{
+    const uint32_t tx_buf = GDMA_TX_DATA_BASE;
+    const uint32_t rx_buf = GDMA_RX_DATA_BASE;
+    const uint32_t tx_desc = GDMA_TX_DESC_BASE;
+    const uint32_t rx_desc = GDMA_RX_DESC_BASE;
+    const uint32_t in_dir_base = GDMA_SPI2_CHAN * DMA_CHAN_REGS_SIZE
+                               + ESP_GDMA_IN_IDX * DMA_DIR_REGS_SIZE;
+    const uint32_t out_dir_base = GDMA_SPI2_CHAN * DMA_CHAN_REGS_SIZE
+                                + ESP_GDMA_OUT_IDX * DMA_DIR_REGS_SIZE;
+    uint8_t zero[16] = {0};
+
+    g_assert_cmpuint(len, <=, sizeof(zero));
+
+    qtest_memwrite(qts, tx_buf, tx_payload, len);
+    qtest_memwrite(qts, rx_buf, zero, len);
+
+    write_gdma_descriptor(qts, tx_desc, len, len, true, false, tx_buf, 0);
+    write_gdma_descriptor(qts, rx_desc, len, 0, false, false, rx_buf, 0);
+
+    qtest_writel(qts, GDMA_BASE + in_dir_base + A_DMA_PERI_SEL,
+                 FIELD_DP32(0, GDMA_PERI_SEL, PERI_SEL, GDMA_SPI2));
+    qtest_writel(qts, GDMA_BASE + out_dir_base + A_DMA_PERI_SEL,
+                 FIELD_DP32(0, GDMA_PERI_SEL, PERI_SEL, GDMA_SPI2));
+
+    qtest_writel(qts, GDMA_BASE + in_dir_base + A_DMA_LINK,
+                 R_GDMA_IN_LINK_START_MASK |
+                 (rx_desc & R_GDMA_IN_LINK_ADDR_MASK));
+    qtest_writel(qts, GDMA_BASE + out_dir_base + A_DMA_LINK,
+                 R_GDMA_OUT_LINK_START_MASK |
+                 (tx_desc & R_GDMA_OUT_LINK_ADDR_MASK));
+
+    qtest_writel(qts, SPI2_BASE + 0x10, (1u << 27) | (1u << 28));
+    qtest_writel(qts, SPI2_BASE + 0x1C, (len * 8) - 1);
+    qtest_writel(qts, SPI2_BASE + 0x38, GPSPI_INT_TRANS_DONE);
+    qtest_writel(qts, SPI2_BASE + 0x00, GPSPI_CMD_USR_BIT);
+    qtest_clock_step(qts, 2200);
+
+    qtest_memread(qts, rx_buf, rx_after, len);
+}
+
 static uint32_t sha_dma_buf_addr(uint32_t block_len)
 {
     return SHA_DMA_BUF_BASE;
@@ -1967,36 +2009,10 @@ static uint32_t sha_dma_buf_addr(uint32_t block_len)
 static void test_gpspi_dma_txrx_handoff(void)
 {
     QTestState *qts = qts_start();
-    const uint32_t tx_len = 4;
-    const uint32_t rx_len = 4;
-    const uint32_t tx_buf = GDMA_TX_DATA_BASE;
-    const uint32_t rx_buf = GDMA_RX_DATA_BASE;
-    const uint32_t tx_desc = GDMA_TX_DESC_BASE;
-    const uint32_t rx_desc = GDMA_RX_DESC_BASE;
     const uint32_t in_dir_base = GDMA_SPI2_CHAN * DMA_CHAN_REGS_SIZE
                                + ESP_GDMA_IN_IDX * DMA_DIR_REGS_SIZE;
-    const uint32_t out_dir_base = GDMA_SPI2_CHAN * DMA_CHAN_REGS_SIZE
-                               + ESP_GDMA_OUT_IDX * DMA_DIR_REGS_SIZE;
     const uint8_t tx_payload[4] = { 0x11, 0x22, 0x33, 0x44 };
-    const uint8_t zero[4] = { 0 };
-
-    qtest_memwrite(qts, tx_buf, tx_payload, sizeof(tx_payload));
-    qtest_memwrite(qts, rx_buf, zero, sizeof(zero));
-
-    write_gdma_descriptor(qts, tx_desc, tx_len, tx_len, true, false,
-                          tx_buf, 0);
-    write_gdma_descriptor(qts, rx_desc, rx_len, 0, false, false,
-                          rx_buf, 0);
-
-    qtest_writel(qts, GDMA_BASE + in_dir_base + A_DMA_PERI_SEL,
-                 FIELD_DP32(0, GDMA_PERI_SEL, PERI_SEL, GDMA_SPI2));
-    qtest_writel(qts, GDMA_BASE + out_dir_base + A_DMA_PERI_SEL,
-                 FIELD_DP32(0, GDMA_PERI_SEL, PERI_SEL, GDMA_SPI2));
-
-    qtest_writel(qts, GDMA_BASE + in_dir_base + A_DMA_LINK,
-                 R_GDMA_IN_LINK_START_MASK | (rx_desc & R_GDMA_IN_LINK_ADDR_MASK));
-    qtest_writel(qts, GDMA_BASE + out_dir_base + A_DMA_LINK,
-                 R_GDMA_OUT_LINK_START_MASK | (tx_desc & R_GDMA_OUT_LINK_ADDR_MASK));
+    uint8_t rx_after[4];
 
     qtest_writel(qts, IOMUX_BASE + ESP32S3_IOMUX_GPIO_REG(48),
                  ESP32S3_GPIO_IOMUX_FUNC_GPIO << ESP32S3_IOMUX_MCU_SEL_SHIFT);
@@ -2007,18 +2023,8 @@ static void test_gpspi_dma_txrx_handoff(void)
     g_assert_cmphex(qtest_readl(qts, GPIO_BASE + GPIO_IN1_REG) & BIT(16),
                     ==, 0);
 
-    qtest_writel(qts, SPI2_BASE + 0x10,
-                 (1u << 27) | (1u << 28)); /* USR_MOSI/MISO */
-    qtest_writel(qts, SPI2_BASE + 0x1C, 31); /* 4 bytes */
     qtest_writel(qts, SPI2_BASE + 0x34, GPSPI_INT_TRANS_DONE);
-    qtest_writel(qts, SPI2_BASE + 0x38, GPSPI_INT_TRANS_DONE);
-    qtest_writel(qts, SPI2_BASE + 0x00, GPSPI_CMD_USR_BIT);
-
-    qtest_clock_step(qts, 600);
-    g_assert_cmphex(qtest_readl(qts, SPI2_BASE + 0x3c) & GPSPI_INT_TRANS_DONE,
-                    ==, 0);
-
-    qtest_clock_step(qts, 1600);
+    run_gpspi_sd_dma_transfer(qts, tx_payload, rx_after, sizeof(rx_after));
     g_assert_cmphex(qtest_readl(qts, SPI2_BASE + 0x00) & GPSPI_CMD_USR_BIT, ==, 0);
     g_assert_cmphex(qtest_readl(qts, SPI2_BASE + 0x3c) & GPSPI_INT_TRANS_DONE,
                     ==, GPSPI_INT_TRANS_DONE);
@@ -2027,16 +2033,51 @@ static void test_gpspi_dma_txrx_handoff(void)
                     (R_GDMA_INTERRUPT_IN_DONE_MASK | R_GDMA_INTERRUPT_IN_SUC_EOF_MASK),
                     ==, R_GDMA_INTERRUPT_IN_DONE_MASK | R_GDMA_INTERRUPT_IN_SUC_EOF_MASK);
 
-    {
-        uint8_t rx_after[4];
-
-        qtest_memread(qts, rx_buf, rx_after, sizeof(rx_after));
-        for (size_t i = 0; i < sizeof(rx_after); i++) {
-            g_assert_cmphex(rx_after[i], ==, 0xff);
-        }
+    for (size_t i = 0; i < sizeof(rx_after); i++) {
+        g_assert_cmphex(rx_after[i], ==, 0xff);
     }
 
     qtest_writel(qts, SPI2_BASE + 0x38, GPSPI_INT_TRANS_DONE);
+
+    qtest_quit(qts);
+}
+
+static void test_gpspi_board_default_sd_routing_reset(void)
+{
+    QTestState *qts = qts_start();
+    const uint8_t tx_payload[4] = { 0x11, 0x22, 0x33, 0x44 };
+    uint8_t rx_after[4];
+    uint32_t options0 = 0;
+
+    run_gpspi_sd_dma_transfer(qts, tx_payload, rx_after, sizeof(rx_after));
+    for (size_t i = 0; i < sizeof(rx_after); i++) {
+        g_assert_cmphex(rx_after[i], ==, 0xff);
+    }
+
+    qtest_writel(qts, IOMUX_BASE + ESP32S3_IOMUX_GPIO_REG(34),
+                 ESP32S3_GPIO_IOMUX_FUNC_GPIO << ESP32S3_IOMUX_MCU_SEL_SHIFT);
+    qtest_writel(qts, GPIO_BASE + GPIO_FUNC_OUT_SEL_CFG_REG(34),
+                 ESP32S3_GPIO_SIG_SD_CS);
+    qtest_writel(qts, GPIO_BASE + GPIO_ENABLE1_W1TS_REG, BIT(16));
+    qtest_writel(qts, GPIO_BASE + GPIO_OUT1_W1TS_REG, BIT(16));
+
+    run_gpspi_sd_dma_transfer(qts, tx_payload, rx_after, sizeof(rx_after));
+    for (size_t i = 0; i < sizeof(rx_after); i++) {
+        g_assert_cmphex(rx_after[i], ==, 0xff);
+    }
+
+    options0 = FIELD_DP32(0, RTC_CNTL_OPTIONS0, SW_SYS_RESET, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_OPTIONS0, options0);
+
+    g_assert_cmphex(qtest_readl(qts, GPIO_BASE + GPIO_FUNC_OUT_SEL_CFG_REG(34)),
+                    ==, ESP32S3_GPIO_SIG_GPIO_OUT);
+    g_assert_cmphex(qtest_readl(qts, GPIO_BASE + GPIO_FUNC_OUT_SEL_CFG_REG(48)),
+                    ==, ESP32S3_GPIO_SIG_GPIO_OUT);
+
+    run_gpspi_sd_dma_transfer(qts, tx_payload, rx_after, sizeof(rx_after));
+    for (size_t i = 0; i < sizeof(rx_after); i++) {
+        g_assert_cmphex(rx_after[i], ==, 0xff);
+    }
 
     qtest_quit(qts);
 }
@@ -2311,6 +2352,35 @@ static void test_i2c_unsupported_modes(void)
     g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_CTR) &
                     R_I2C_CTR_TRANS_START_MASK, ==, 0);
     g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_INT_RAW), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_CMD) &
+                    R_I2C_CMD_DONE_MASK, ==, 0);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_STATUS) &
+                    R_I2C_STATUS_BUS_BUSY_MASK, ==, 0);
+
+    qtest_writel(qts, I2C0_BASE + A_I2C_FIFO_DATA, 0x68);
+    qtest_writel(qts, I2C0_BASE + A_I2C_CMD, i2c_cmd_write(1, true));
+    qtest_writel(qts, I2C0_BASE + A_I2C_CMD + 4, i2c_cmd_stop());
+    ctr = FIELD_DP32(0, I2C_CTR, MS_MODE, 1);
+    ctr = FIELD_DP32(ctr, I2C_CTR, TRANS_START, 1);
+    qtest_writel(qts, I2C0_BASE + A_I2C_CTR, ctr);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_INT_RAW), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_CMD) &
+                    R_I2C_CMD_DONE_MASK, ==, 0);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_STATUS) &
+                    R_I2C_STATUS_BUS_BUSY_MASK, ==, 0);
+
+    qtest_writel(qts, I2C0_BASE + A_I2C_FIFO_CONF, 0);
+    qtest_writel(qts, I2C0_BASE + A_I2C_FIFO_DATA, 0x68);
+    qtest_writel(qts, I2C0_BASE + A_I2C_CMD, i2c_cmd_write(1, true));
+    qtest_writel(qts, I2C0_BASE + A_I2C_CMD + 4, i2c_cmd_stop());
+    ctr = FIELD_DP32(0, I2C_CTR, MS_MODE, 0);
+    ctr = FIELD_DP32(ctr, I2C_CTR, TRANS_START, 1);
+    qtest_writel(qts, I2C0_BASE + A_I2C_CTR, ctr);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_INT_RAW), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_CMD) &
+                    R_I2C_CMD_DONE_MASK, ==, 0);
+    g_assert_cmphex(qtest_readl(qts, I2C0_BASE + A_I2C_STATUS) &
+                    R_I2C_STATUS_BUS_BUSY_MASK, ==, 0);
 
     qtest_quit(qts);
 }
@@ -4006,6 +4076,8 @@ int main(int argc, char **argv)
 #endif
     qtest_add_func("/esp32s3/gpio/iomux", test_gpio_and_iomux_state);
     qtest_add_func("/esp32s3/gpspi/completion-irq", test_gpspi_completion_irq);
+    qtest_add_func("/esp32s3/gpspi/board-default-sd-routing-reset",
+                   test_gpspi_board_default_sd_routing_reset);
     qtest_add_func("/esp32s3/gpio/remap-state", test_gpio_signal_remap_state);
     qtest_add_func("/esp32s3/gpio/remap-non-default", test_gpio_signal_non_default_routing);
     qtest_add_func("/esp32s3/spi1/usr-rx-overwrite", test_spi1_usr_rx_overwrites_all_bytes);

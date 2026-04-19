@@ -245,6 +245,23 @@ static void esp32s3_soc_reset_analog_register_shims(Esp32s3SocState *s)
     s->apb_saradc_regs[0x70 / sizeof(uint32_t)] = 4;
 }
 
+static void esp32s3_soc_apply_tdeck_gpio_defaults(Esp32s3SocState *s)
+{
+    /*
+     * These routed-signal defaults are a T-Deck board contract, not a generic
+     * ESP32-S3 GPIO-reset property. Keep them owned by the SoC/machine layer
+     * so board routing assumptions stay explicit.
+     */
+    esp32s3_gpio_set_default_output_signal(&s->gpio, 34,
+                                           ESP32S3_GPIO_SIG_EPD_CS);
+    esp32s3_gpio_set_default_output_signal(&s->gpio, 35,
+                                           ESP32S3_GPIO_SIG_EPD_DC);
+    esp32s3_gpio_set_default_output_signal(&s->gpio, 48,
+                                           ESP32S3_GPIO_SIG_SD_CS);
+    esp32s3_gpio_set_default_output_signal(&s->gpio, 3,
+                                           ESP32S3_GPIO_SIG_LORA_CS);
+}
+
 static void esp32s3_dig_reset(void *opaque, int n, int level)
 {
     Esp32s3SocState *s = ESP32S3_SOC(opaque);
@@ -301,6 +318,7 @@ static void esp32s3_soc_reset_owned_digital_peripherals(Esp32s3SocState *s)
     for (int i = 0; i < ARRAY_SIZE(s->gpspi); ++i) {
         device_cold_reset(DEVICE(&s->gpspi[i]));
     }
+    esp32s3_soc_apply_tdeck_gpio_defaults(s);
     esp32s3_soc_reset_analog_register_shims(s);
 }
 
@@ -1514,6 +1532,7 @@ static void esp32s3_machine_init(MachineState *machine)
         sysbus_realize(SYS_BUS_DEVICE(&ss->iomux), &error_fatal);
         mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->iomux), 0);
         memory_region_add_subregion_overlap(sys_mem, DR_REG_IO_MUX_BASE, mr, 0);
+        esp32s3_soc_apply_tdeck_gpio_defaults(ss);
     }
 
     /* I2C controller realization */

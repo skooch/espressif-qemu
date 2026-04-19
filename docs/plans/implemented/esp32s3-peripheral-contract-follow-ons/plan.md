@@ -4,7 +4,7 @@
 Close the residual board-path contract gaps in the already-modeled peripheral set without broadening them into unjustified silicon-complete rewrites.
 
 ## Current Phase
-In progress on 2026-04-19 under `docs/plans/in-progress/`.
+Implemented on 2026-04-19 under `docs/plans/implemented/`.
 
 Ideal backlog order: 2 of 7.
 
@@ -21,6 +21,7 @@ This phase does not claim complete silicon timing or analog behavior for these b
 - `ESP32S3_EMULATION_GAPS.md`
 - `hw/ssi/esp32s3_gpspi.c`
 - `hw/gpio/esp32s3_gpio.c`
+- `hw/xtensa/esp32s3.c`
 - `hw/char/esp32s3_usb_serial_jtag.c`
 - `hw/i2c/esp32s3_i2c.c`
 - `hw/char/esp32s3_uart.c`
@@ -35,6 +36,7 @@ This phase does not claim complete silicon timing or analog behavior for these b
 ## File Map
 - Modify: `hw/ssi/esp32s3_gpspi.c`
 - Modify: `hw/gpio/esp32s3_gpio.c`
+- Modify: `hw/xtensa/esp32s3.c`
 - Modify: `hw/char/esp32s3_usb_serial_jtag.c`
 - Modify: `hw/i2c/esp32s3_i2c.c`
 - Modify: `hw/char/esp32s3_uart.c`
@@ -58,12 +60,17 @@ This phase does not claim complete silicon timing or analog behavior for these b
 - `QTEST_QEMU_BINARY=./build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test`
 
 ## Tasks
-- [ ] Audit each residual peripheral gap against the active firmware path so the next slices are driven by real usage rather than speculative completeness.
-- [ ] Remove hard-wired GP-SPI board assumptions where the GPIO routing and firmware evidence justify a more explicit contract.
-- [ ] Tighten the remaining uncommon-mode or interrupt-routing surfaces in USB Serial/JTAG, I2C, UART, and SHA as they become guest-proven.
-- [ ] Promote any stronger source-backed eFuse, PMS, or RNG contract that improves correctness without pretending to model factory provisioning, real security policy, or physical entropy behavior.
-- [ ] Keep `ESP32S3_EMULATION_GAPS.md` aligned with the residual contract after each landed slice.
+- [x] Audit each residual peripheral gap against the active firmware path so the next slices are driven by real usage rather than speculative completeness.
+- [x] Remove hard-wired GP-SPI board assumptions where the GPIO routing and firmware evidence justify a more explicit contract.
+- [x] Tighten the remaining uncommon-mode or interrupt-routing surfaces in USB Serial/JTAG, I2C, UART, and SHA as they become guest-proven.
+- [x] Promote any stronger source-backed eFuse, PMS, or RNG contract that improves correctness without pretending to model factory provisioning, real security policy, or physical entropy behavior.
+- [x] Keep `ESP32S3_EMULATION_GAPS.md` aligned with the residual contract after each landed slice.
 
 ## Exit Criteria
 - The already-modeled peripherals have fewer implicit board assumptions and fewer unpinned residual behaviors.
 - The remaining synthetic boundaries in eFuse, PMS, and RNG are explicitly justified rather than accidental.
+
+## Completion Notes
+- T-Deck GP-SPI default routed signals are now owned by the SoC/board layer and reapplied across digital resets rather than being hard-wired in generic GPIO reset state.
+- I2C slave-mode and APB/nonfifo transaction starts are now an explicit no-op contract with zero `DONE`, zero `INT_RAW`, and no bus-busy side effects.
+- USB Serial/JTAG, UART, SHA, PMS, RNG, and eFuse stay at their existing explicit contract boundary; the remaining gaps are now source-gated timing, DMA error, security-policy, or broader interrupt-routing work rather than accidental behavior.

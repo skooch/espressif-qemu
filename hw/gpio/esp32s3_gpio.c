@@ -459,10 +459,6 @@ static void esp32s3_gpio_reset_hold(Object *obj, ResetType type)
         s->iomux_func[i] = ESP32S3_GPIO_IOMUX_FUNC_GPIO;
     }
 
-    s->default_out_sig[34] = ESP32S3_GPIO_SIG_EPD_CS;
-    s->default_out_sig[35] = ESP32S3_GPIO_SIG_EPD_DC;
-    s->default_out_sig[48] = ESP32S3_GPIO_SIG_SD_CS;
-    s->default_out_sig[3] = ESP32S3_GPIO_SIG_LORA_CS;
 }
 
 static void esp32s3_gpio_realize(DeviceState *dev, Error **errp)

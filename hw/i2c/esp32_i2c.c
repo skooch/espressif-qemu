@@ -84,6 +84,24 @@ static void esp32_i2c_update_irq(Esp32I2CState * s)
     }
 }
 
+static bool esp32_i2c_unsupported_transfer_mode(Esp32I2CState *s, uint32_t ctr)
+{
+    bool slave_mode = FIELD_EX32(ctr, I2C_CTR, MS_MODE) != 1;
+    bool nonfifo_mode = FIELD_EX32(I2C_REG(s, A_I2C_FIFO_CONF),
+                                   I2C_FIFO_CONF, NONFIFO_EN) != 0;
+
+    if (slave_mode) {
+        qemu_log_mask(LOG_UNIMP,
+                      "esp32_i2c: slave mode transfer start ignored\n");
+    }
+    if (nonfifo_mode) {
+        qemu_log_mask(LOG_UNIMP,
+                      "esp32_i2c: APB mode transfer start ignored\n");
+    }
+
+    return slave_mode || nonfifo_mode;
+}
+
 static uint64_t esp32_i2c_read(void * opaque, hwaddr addr, unsigned int size)
 {
     Esp32I2CState * s = Esp32_I2C(opaque);
@@ -125,13 +143,13 @@ static void esp32_i2c_write(void * opaque, hwaddr addr, uint64_t value, unsigned
     /* Special handling for specific registers */
     switch(addr) {
     case A_I2C_CTR:
-        if (FIELD_EX32(value, I2C_CTR, MS_MODE) != 1) {
-            error_report("esp32_i2c: slave mode not implemented");
-        }
         if (FIELD_EX32(value, I2C_CTR, TRANS_START)) {
             esp32_i2c_clear_done_bits(s);
             s->deferred_int_raw = 0;
-            esp32_i2c_do_transaction(s);
+            s->trans_ongoing = false;
+            if (!esp32_i2c_unsupported_transfer_mode(s, value)) {
+                esp32_i2c_do_transaction(s);
+            }
             /* Auto-clear WT bits: TRANS_START, CONF_UPGATE */
             value &= ~(R_I2C_CTR_TRANS_START_MASK | R_I2C_CTR_CONF_UPGATE_MASK);
             s->regs[addr / 4] = (uint32_t)value;
@@ -142,9 +160,6 @@ static void esp32_i2c_write(void * opaque, hwaddr addr, uint64_t value, unsigned
         }
         break;
     case A_I2C_FIFO_CONF:
-        if (FIELD_EX32(value, I2C_FIFO_CONF, NONFIFO_EN)) {
-            error_report("esp32_i2c: APB mode not implemented");
-        }
         if (FIELD_EX32(value, I2C_FIFO_CONF, RX_FIFO_RST)) {
             fifo8_reset(&s->rx_fifo);
         }
