@@ -4,7 +4,7 @@
 Keep shrinking the generic MMIO fallback so new guest-visible behavior is owned by explicit device models instead of hidden behind compatibility storage.
 
 ## Current Phase
-Queued on 2026-04-19 under `docs/plans/new/`.
+Activated on 2026-04-19 under `docs/plans/in-progress/`.
 
 Ideal backlog order: 3 of 7.
 
