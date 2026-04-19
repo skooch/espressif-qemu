@@ -74,6 +74,10 @@ typedef struct ESP32S3ClockState {
     qemu_irq core1_runstall;
     qemu_irq clock_update;
     uint32_t core1_control0;
+    bool light_sleeping;
+    bool light_sleep_restore_valid;
+    uint32_t light_sleep_saved_sysclk;
+    uint32_t light_sleep_saved_cpuperconf;
 } ESP32S3ClockState;
 
 typedef struct ESP32S3ClockClass {
@@ -86,3 +90,4 @@ uint32_t esp32s3_clock_get_xtal_freq(ESP32S3ClockState *s);
 uint32_t esp32s3_clock_get_cpu_freq(ESP32S3ClockState *s);
 uint32_t esp32s3_clock_get_apb_freq(ESP32S3ClockState *s);
 void esp32s3_clock_propagate_rates(ESP32S3ClockState *s);
+void esp32s3_clock_set_light_sleep(ESP32S3ClockState *s, bool light_sleeping);

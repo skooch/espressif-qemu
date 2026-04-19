@@ -126,6 +126,41 @@ static void esp32s3_clock_update_sysclk_conf(ESP32S3ClockState *s,
     esp32s3_clock_emit_update(s);
 }
 
+void esp32s3_clock_set_light_sleep(ESP32S3ClockState *s, bool light_sleeping)
+{
+    bool changed = false;
+
+    if (s->light_sleeping == light_sleeping) {
+        return;
+    }
+
+    s->light_sleeping = light_sleeping;
+
+    if (light_sleeping) {
+        uint32_t sleep_sysclk = s->sysclk;
+
+        s->light_sleep_saved_sysclk = s->sysclk;
+        s->light_sleep_saved_cpuperconf = s->cpuperconf;
+        s->light_sleep_restore_valid = true;
+
+        sleep_sysclk = FIELD_DP32(sleep_sysclk, SYSTEM_SYSCLK_CONF,
+                                  SOC_CLK_SEL, ESP32S3_CLK_SEL_XTAL);
+        sleep_sysclk &= SYSTEM_SYSCLK_CONF_SUPPORTED_MASK;
+        changed = sleep_sysclk != s->sysclk;
+        s->sysclk = sleep_sysclk;
+    } else if (s->light_sleep_restore_valid) {
+        changed = s->sysclk != s->light_sleep_saved_sysclk ||
+                  s->cpuperconf != s->light_sleep_saved_cpuperconf;
+        s->sysclk = s->light_sleep_saved_sysclk;
+        s->cpuperconf = s->light_sleep_saved_cpuperconf;
+        s->light_sleep_restore_valid = false;
+    }
+
+    if (changed) {
+        esp32s3_clock_emit_update(s);
+    }
+}
+
 uint32_t esp32s3_clock_get_apb_freq(ESP32S3ClockState *s)
 {
     uint32_t cpu_hz = esp32s3_clock_get_cpu_freq(s);
@@ -267,6 +302,10 @@ static void esp32s3_clock_reset_hold(Object *obj, ResetType type)
     s->perip_rst_en1 = 0;
     s->clock_gate = R_SYSTEM_CLOCK_GATE_CLK_EN_MASK;
     s->core1_control0 = 0;
+    s->light_sleeping = false;
+    s->light_sleep_restore_valid = false;
+    s->light_sleep_saved_sysclk = s->sysclk;
+    s->light_sleep_saved_cpuperconf = s->cpuperconf;
 
     esp32s3_clock_emit_update(s);
 

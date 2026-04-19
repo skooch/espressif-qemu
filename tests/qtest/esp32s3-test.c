@@ -2496,6 +2496,62 @@ static void test_rtc_timer_light_sleep_stops_systimer(void)
     qtest_quit(qts);
 }
 
+static void test_rtc_light_sleep_switches_system_clock(void)
+{
+    QTestState *qts = qts_start();
+    const uint32_t alarm_ticks = 30;
+    uint32_t cpu_per_conf = qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_CPU_PER_CONF);
+    uint32_t sysclk_conf = qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF);
+    uint32_t timer1 = 0;
+    uint32_t wakeup_state = 0;
+    uint32_t state0 = 0;
+
+    qtest_irq_intercept_out_named(qts, "/machine/soc/rtc_cntl",
+                                  ESP32S3_RTC_LIGHT_SLEEP_GPIO);
+    g_assert_false(qtest_get_irq(qts, 0));
+
+    cpu_per_conf = FIELD_DP32(cpu_per_conf, SYSTEM_CPU_PER_CONF,
+                              CPUPERIOD_SEL, ESP32S3_PERIOD_SEL_160);
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_CPU_PER_CONF, cpu_per_conf);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_CPU_PER_CONF),
+                    ==, cpu_per_conf);
+
+    sysclk_conf = FIELD_DP32(sysclk_conf, SYSTEM_SYSCLK_CONF, SOC_CLK_SEL,
+                             ESP32S3_CLK_SEL_PLL);
+    qtest_writel(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF, sysclk_conf);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF),
+                    ==, sysclk_conf);
+
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER0, alarm_ticks);
+    timer1 = FIELD_DP32(timer1, RTC_CNTL_SLP_TIMER1, MAIN_TIMER_ALARM_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SLP_TIMER1, timer1);
+
+    wakeup_state = FIELD_DP32(wakeup_state, RTC_CNTL_WAKEUP_STATE,
+                              TIMER_WAKEUP_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WAKEUP_STATE, wakeup_state);
+
+    state0 = FIELD_DP32(state0, RTC_CNTL_STATE0, SLEEP_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0, state0);
+
+    g_assert_true(qtest_get_irq(qts, 0));
+    g_assert_cmpuint(FIELD_EX32(qtest_readl(qts, SYSTEM_BASE +
+                                            A_SYSTEM_SYSCLK_CONF),
+                                SYSTEM_SYSCLK_CONF, SOC_CLK_SEL),
+                     ==, ESP32S3_CLK_SEL_XTAL);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_CPU_PER_CONF),
+                    ==, cpu_per_conf);
+
+    qtest_clock_step(qts, 240000);
+
+    g_assert_false(qtest_get_irq(qts, 0));
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_SYSCLK_CONF),
+                    ==, sysclk_conf);
+    g_assert_cmphex(qtest_readl(qts, SYSTEM_BASE + A_SYSTEM_CPU_PER_CONF),
+                    ==, cpu_per_conf);
+
+    qtest_quit(qts);
+}
+
 static void test_rtc_time_triggers(void)
 {
     QTestState *qts = qts_start();
@@ -3573,6 +3629,8 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/rtc/time-triggers", test_rtc_time_triggers);
     qtest_add_func("/esp32s3/rtc/light-sleep-stops-systimer",
                    test_rtc_timer_light_sleep_stops_systimer);
+    qtest_add_func("/esp32s3/rtc/light-sleep-switches-system-clock",
+                   test_rtc_light_sleep_switches_system_clock);
     qtest_add_func("/esp32s3/rtc/gpio-wakeup", test_rtc_gpio_low_wakeup_transition);
     qtest_add_func("/esp32s3/rtc/gpio-reject", test_rtc_gpio_low_reject_transition);
     qtest_add_func("/esp32s3/rtc/ext1-wakeup", test_rtc_ext1_low_wakeup_transition);

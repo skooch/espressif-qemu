@@ -443,6 +443,7 @@ static void esp32s3_light_sleep(void *opaque, int n, int level)
     Esp32s3SocState *s = ESP32S3_SOC(opaque);
 
     s->light_sleeping = level;
+    esp32s3_clock_set_light_sleep(&s->clock, level);
     esp_systimer_set_light_sleep(ESP_SYSTIMER(&s->systimer), level);
     esp32s3_soc_update_all_cpu_run_states(s);
 }
