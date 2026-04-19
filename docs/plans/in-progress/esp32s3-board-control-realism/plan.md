@@ -8,10 +8,12 @@ Active on 2026-04-19 under `docs/plans/in-progress/`.
 
 Ideal backlog order: 1 of 7.
 
-Current bounded slice: source-backed light-sleep system-clock handoff.
+Current bounded slice: source-backed light-sleep wake clock contract.
 This slice models the documented pre-sleep switch from PLL to XTAL and
-restores the pre-sleep `SYSTEM_SYSCLK_CONF` / `SYSTEM_CPU_PER_CONF` state
-on wake, while leaving broader oscillator, retention, and power-domain
+the adjacent firmware-visible wake behavior: QEMU returns
+`SYSTEM_SYSCLK_CONF` to PLL selection and restores `SYSTEM_CPU_PER_CONF`
+to the wake-stub boot clock (160 MHz PLL), leaving firmware-owned tier
+reapplication plus broader oscillator, retention, and power-domain
 sequencing for later phases.
 
 ## Scope

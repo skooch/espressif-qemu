@@ -82,6 +82,24 @@ static void esp32s3_clock_emit_update(ESP32S3ClockState *s)
     qemu_irq_pulse(s->clock_update);
 }
 
+static uint32_t esp32s3_clock_get_boot_cpu_per_conf(void)
+{
+    return (ESP32S3_PERIOD_SEL_160 <<
+            R_SYSTEM_CPU_PER_CONF_CPUPERIOD_SEL_SHIFT) |
+           (ESP32S3_FREQ_SEL_PLL_480 <<
+            R_SYSTEM_CPU_PER_CONF_PLL_FREQ_SEL_SHIFT) |
+           R_SYSTEM_CPU_PER_CONF_CPU_WAIT_MODE_FORCE_ON_MASK;
+}
+
+static uint32_t esp32s3_clock_get_wake_sysclk_conf(ESP32S3ClockState *s)
+{
+    uint32_t wake_sysclk = s->light_sleep_saved_sysclk;
+
+    wake_sysclk = FIELD_DP32(wake_sysclk, SYSTEM_SYSCLK_CONF, SOC_CLK_SEL,
+                             ESP32S3_CLK_SEL_PLL);
+    return wake_sysclk & SYSTEM_SYSCLK_CONF_SUPPORTED_MASK;
+}
+
 uint32_t esp32s3_clock_get_xtal_freq(ESP32S3ClockState *s)
 {
     uint32_t mhz = FIELD_EX32(s->sysclk, SYSTEM_SYSCLK_CONF, CLK_XTAL_FREQ);
@@ -140,7 +158,6 @@ void esp32s3_clock_set_light_sleep(ESP32S3ClockState *s, bool light_sleeping)
         uint32_t sleep_sysclk = s->sysclk;
 
         s->light_sleep_saved_sysclk = s->sysclk;
-        s->light_sleep_saved_cpuperconf = s->cpuperconf;
         s->light_sleep_restore_valid = true;
 
         sleep_sysclk = FIELD_DP32(sleep_sysclk, SYSTEM_SYSCLK_CONF,
@@ -149,10 +166,12 @@ void esp32s3_clock_set_light_sleep(ESP32S3ClockState *s, bool light_sleeping)
         changed = sleep_sysclk != s->sysclk;
         s->sysclk = sleep_sysclk;
     } else if (s->light_sleep_restore_valid) {
-        changed = s->sysclk != s->light_sleep_saved_sysclk ||
-                  s->cpuperconf != s->light_sleep_saved_cpuperconf;
-        s->sysclk = s->light_sleep_saved_sysclk;
-        s->cpuperconf = s->light_sleep_saved_cpuperconf;
+        uint32_t wake_sysclk = esp32s3_clock_get_wake_sysclk_conf(s);
+        uint32_t wake_cpuperconf = esp32s3_clock_get_boot_cpu_per_conf();
+
+        changed = s->sysclk != wake_sysclk || s->cpuperconf != wake_cpuperconf;
+        s->sysclk = wake_sysclk;
+        s->cpuperconf = wake_cpuperconf;
         s->light_sleep_restore_valid = false;
     }
 
@@ -305,7 +324,6 @@ static void esp32s3_clock_reset_hold(Object *obj, ResetType type)
     s->light_sleeping = false;
     s->light_sleep_restore_valid = false;
     s->light_sleep_saved_sysclk = s->sysclk;
-    s->light_sleep_saved_cpuperconf = s->cpuperconf;
 
     esp32s3_clock_emit_update(s);
 

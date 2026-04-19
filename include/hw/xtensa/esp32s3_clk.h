@@ -77,7 +77,6 @@ typedef struct ESP32S3ClockState {
     bool light_sleeping;
     bool light_sleep_restore_valid;
     uint32_t light_sleep_saved_sysclk;
-    uint32_t light_sleep_saved_cpuperconf;
 } ESP32S3ClockState;
 
 typedef struct ESP32S3ClockClass {
