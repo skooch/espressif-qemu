@@ -4,7 +4,7 @@
 Track and fix the remaining Xtensa backend gaps only when they are backed by exact local ISA/configured-core references or reproduced guest failures.
 
 ## Current Phase
-Queued on 2026-04-19 under `docs/plans/new/`.
+Completed on 2026-04-19 and archived under `docs/plans/implemented/`.
 
 Ideal backlog order: 7 of 7.
 
@@ -43,12 +43,13 @@ This phase does not authorize speculative configured-core, TIE, or SIMD implemen
 - `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py`
 
 ## Tasks
-- [ ] Keep a ranked queue of reproduced ESP32-S3 Xtensa backend failures tied to exact guest evidence or local manual references.
-- [ ] Revisit the remaining reject-surface gaps only when a board-path failure or focused test proves they matter.
-- [ ] Use the local Xtensa corpus before widening configured-core, TIE, or SIMD support.
-- [ ] Add or widen TCG, qtest, or functional coverage for each newly fixed backend path.
-- [ ] Keep `ESP32S3_EMULATION_GAPS.md` and `xtensa-blockers.md` aligned after each promoted backend slice.
+- [x] Keep a ranked queue of reproduced ESP32-S3 Xtensa backend failures tied to exact guest evidence or local manual references.
+- [x] Revisit the remaining reject-surface gaps only when a board-path failure or focused test proves they matter.
+- [x] Use the local Xtensa corpus before widening configured-core, TIE, or SIMD support.
+- [x] Add or widen TCG, qtest, or functional coverage for each newly fixed backend path.
+- [x] Keep `ESP32S3_EMULATION_GAPS.md` and `xtensa-blockers.md` aligned after each promoted backend slice.
 
 ## Exit Criteria
 - Xtensa backend work stays evidence-driven rather than speculative.
 - Each promoted backend fix has a direct reproduced failure and a focused regression to keep it pinned.
+- No additional backend slice is promoted until a new guest failure or exact configured-core reference appears.

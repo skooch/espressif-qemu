@@ -5,7 +5,7 @@ Updated: 2026-04-05
 This queue keeps the ESP32-S3 architectural/backend work separate from the peripheral backlog and ties each item to observed or likely guest behavior.
 
 Task 4 is complete for the currently confirmed blockers. This file now serves as a residual watch list and implementation record rather than an active sprint backlog.
-Its remaining items are now ranked against the broader hardware-target backlog recorded in `docs/plans/implemented/esp32s3-fidelity-follow-on/plan.md`.
+The 2026-04-19 Xtensa follow-on review closed plan `#7` without promoting new backend code because no additional guest-driven opcode or reject-surface failure is currently reproduced on the active path.
 
 ## Current scope choice
 
@@ -53,3 +53,4 @@ Its remaining items are now ranked against the broader hardware-target backlog r
 
 - Task 4 is closed for the currently confirmed guest blockers: the tree now preserves both the core0 and core1 board proofs.
 - Only come back to the remaining reject surface if guest code starts reading the still-idle write-IC or access-mask bits.
+- Only widen configured-core, TIE, or SIMD support if a concrete guest opcode failure or an exact ESP32-S3 configured-core reference appears.

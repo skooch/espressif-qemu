@@ -1,0 +1,6 @@
+# ESP32-S3 Xtensa Backend Follow-Ons Progress
+
+- 2026-04-19: Activated plan `#7` from `docs/plans/new/` into `docs/plans/in-progress/`.
+- 2026-04-19: Re-audited the residual Xtensa backend queue against the current tree, `xtensa-blockers.md`, the local Xtensa corpus, the qtest cache matrix, and the board-level cache-reject regression. No new reproduced opcode failure or reject-surface dependency was found on the active guest path.
+- 2026-04-19: Closed the plan as an evidence gate rather than promoting speculative backend work. The remaining Xtensa items stay as residual watch conditions: widen reject coverage only when guest code consumes the still-idle matrix bits, and widen configured-core or TIE support only when a concrete guest opcode failure or exact configured-core reference appears.
+- 2026-04-19: Verified `git diff --check`, `ninja -C build qemu-system-xtensa tests/qtest/esp32s3-test`, `QTEST_QEMU_BINARY=./build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test -p /xtensa/esp32s3/cache`, `QTEST_QEMU_BINARY=./build/qemu-system-xtensa ./build/tests/qtest/esp32s3-test`, and `QEMU_TEST_QEMU_BINARY=build/qemu-system-xtensa QEMU_BUILD_ROOT=build PYTHONPATH=python:tests/functional uv run --with pycotap python3 tests/functional/test_xtensa_esp32s3_cache_reject.py` before moving the plan to `docs/plans/implemented/`.
