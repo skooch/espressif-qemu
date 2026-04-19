@@ -85,6 +85,15 @@ static void esp32s3_rtc_sync_clk_conf_sources(Esp32s3RtcCntlState *s);
      R_RTC_CNTL_SDIO_CONF_SDIO_DTHDRV_MASK | \
      R_RTC_CNTL_SDIO_CONF_SDIO_TIMER_TARGET_MASK)
 
+#define RTC_CNTL_RETENTION_CTRL_RW_MASK \
+    (R_RTC_CNTL_RETENTION_CTRL_RETENTION_WAIT_MASK | \
+     R_RTC_CNTL_RETENTION_CTRL_RETENTION_EN_MASK | \
+     R_RTC_CNTL_RETENTION_CTRL_RETENTION_CLKOFF_WAIT_MASK | \
+     R_RTC_CNTL_RETENTION_CTRL_RETENTION_DONE_WAIT_MASK | \
+     R_RTC_CNTL_RETENTION_CTRL_RETENTION_CLK_SEL_MASK | \
+     R_RTC_CNTL_RETENTION_CTRL_RETENTION_TARGET_MASK | \
+     R_RTC_CNTL_RETENTION_CTRL_RETENTION_TAG_MODE_MASK)
+
 #define RTC_CNTL_RTC_RW_MASK \
     R_RTC_CNTL_RTC_REGULATOR_FORCE_PU_MASK
 
@@ -176,6 +185,19 @@ static uint32_t esp32s3_rtc_clk_conf_default(void)
     return clk_conf;
 }
 
+static uint32_t esp32s3_rtc_retention_ctrl_default(void)
+{
+    uint32_t retention_ctrl = 0;
+
+    retention_ctrl = FIELD_DP32(retention_ctrl, RTC_CNTL_RETENTION_CTRL,
+                                RETENTION_WAIT, 20);
+    retention_ctrl = FIELD_DP32(retention_ctrl, RTC_CNTL_RETENTION_CTRL,
+                                RETENTION_CLKOFF_WAIT, 3);
+    retention_ctrl = FIELD_DP32(retention_ctrl, RTC_CNTL_RETENTION_CTRL,
+                                RETENTION_DONE_WAIT, 2);
+    return retention_ctrl;
+}
+
 static uint32_t esp32s3_rtc_reg_default(void)
 {
     return R_RTC_CNTL_RTC_REGULATOR_FORCE_PU_MASK;
@@ -228,6 +250,7 @@ static void esp32s3_rtc_cntl_reset_modeled_surface(Esp32s3RtcCntlState *s)
     s->timer1_reg = esp32s3_rtc_timer1_default();
     s->clk_conf_reg = esp32s3_rtc_clk_conf_default();
     s->sdio_conf_reg = esp32s3_rtc_sdio_conf_default();
+    s->retention_ctrl_reg = esp32s3_rtc_retention_ctrl_default();
     s->rtc_reg = esp32s3_rtc_reg_default();
     s->pwc_reg = esp32s3_rtc_pwc_default();
     s->bias_conf_reg = esp32s3_rtc_bias_conf_default();
@@ -470,6 +493,9 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
     case A_RTC_CNTL_SDIO_CONF:
         r = s->sdio_conf_reg;
         break;
+    case A_RTC_CNTL_RETENTION_CTRL:
+        r = s->retention_ctrl_reg;
+        break;
     case A_RTC_CNTL_TIME_UPDATE:
         r = s->time_update_reg | R_RTC_CNTL_TIME_UPDATE_VALID_MASK;
         break;
@@ -648,6 +674,10 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
 
     case A_RTC_CNTL_SDIO_CONF:
         s->sdio_conf_reg = (uint32_t)value & RTC_CNTL_SDIO_CONF_RW_MASK;
+        break;
+
+    case A_RTC_CNTL_RETENTION_CTRL:
+        s->retention_ctrl_reg = (uint32_t)value & RTC_CNTL_RETENTION_CTRL_RW_MASK;
         break;
 
     case A_RTC_CNTL_TIME_UPDATE:

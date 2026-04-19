@@ -73,6 +73,7 @@
 #define RTC_EXT_WAKEUP1_STATUS_REG (RTC_CNTL_BASE + 0xe4)
 #define RTC_SLP_REJECT_CAUSE_REG (RTC_CNTL_BASE + 0x128)
 #define RTC_RETENTION_CTRL_REG  (RTC_CNTL_BASE + 0x140)
+#define RTC_PG_CTRL_REG         (RTC_CNTL_BASE + 0x144)
 #define RTC_WAKEUP_ENA_EXT1_BIT BIT(16)
 #define RTC_GPIO_TRIG_EN        BIT(2)
 #define CACHE_OP_DELAY_NS              1000
@@ -379,6 +380,19 @@ static uint32_t rtc_default_sdio_conf(void)
     return sdio_conf;
 }
 
+static uint32_t rtc_default_retention_ctrl(void)
+{
+    uint32_t retention_ctrl = 0;
+
+    retention_ctrl = FIELD_DP32(retention_ctrl, RTC_CNTL_RETENTION_CTRL,
+                                RETENTION_WAIT, 20);
+    retention_ctrl = FIELD_DP32(retention_ctrl, RTC_CNTL_RETENTION_CTRL,
+                                RETENTION_CLKOFF_WAIT, 3);
+    retention_ctrl = FIELD_DP32(retention_ctrl, RTC_CNTL_RETENTION_CTRL,
+                                RETENTION_DONE_WAIT, 2);
+    return retention_ctrl;
+}
+
 static uint32_t rtc_default_rtc_reg(void)
 {
     return R_RTC_CNTL_RTC_REGULATOR_FORCE_PU_MASK;
@@ -410,6 +424,7 @@ static void dirty_rtc_light_sleep_config_surface(QTestState *qts)
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIMER2, 0);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIMER1, 0);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_SDIO_CONF, 0);
+    qtest_writel(qts, RTC_RETENTION_CTRL_REG, 0);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_RTC, 0);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_PWC, UINT32_MAX);
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_BIAS_CONF, UINT32_MAX);
@@ -427,6 +442,7 @@ static void assert_rtc_light_sleep_config_surface_is_dirty(QTestState *qts)
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_TIMER1), ==, 0);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SDIO_CONF),
                     ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_RETENTION_CTRL_REG), ==, 0);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_RTC), ==, 0);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_PWC),
                     ==, R_RTC_CNTL_PWC_PAD_FORCE_HOLD_MASK |
@@ -459,6 +475,8 @@ static void assert_rtc_light_sleep_config_defaults(QTestState *qts)
                     ==, rtc_default_timer1());
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_SDIO_CONF),
                     ==, rtc_default_sdio_conf());
+    g_assert_cmphex(qtest_readl(qts, RTC_RETENTION_CTRL_REG),
+                    ==, rtc_default_retention_ctrl());
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_RTC),
                     ==, rtc_default_rtc_reg());
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_PWC),
@@ -2371,6 +2389,16 @@ static void test_rtc_explicit_register_surface(void)
                         R_RTC_CNTL_DIG_PWC_WIFI_FORCE_PU_MASK |
                         R_RTC_CNTL_DIG_PWC_LSLP_MEM_FORCE_PU_MASK);
 
+    qtest_writel(qts, RTC_RETENTION_CTRL_REG, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_RETENTION_CTRL_REG),
+                    ==, R_RTC_CNTL_RETENTION_CTRL_RETENTION_WAIT_MASK |
+                        R_RTC_CNTL_RETENTION_CTRL_RETENTION_EN_MASK |
+                        R_RTC_CNTL_RETENTION_CTRL_RETENTION_CLKOFF_WAIT_MASK |
+                        R_RTC_CNTL_RETENTION_CTRL_RETENTION_DONE_WAIT_MASK |
+                        R_RTC_CNTL_RETENTION_CTRL_RETENTION_CLK_SEL_MASK |
+                        R_RTC_CNTL_RETENTION_CTRL_RETENTION_TARGET_MASK |
+                        R_RTC_CNTL_RETENTION_CTRL_RETENTION_TAG_MODE_MASK);
+
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WDTWPROTECT, 0x50d83aa1);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_WDTWPROTECT),
                     ==, 0x50d83aa1);
@@ -2400,8 +2428,8 @@ static void test_rtc_explicit_register_surface(void)
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_DATE),
                     ==, R_RTC_CNTL_DATE_DATE_MASK);
 
-    qtest_writel(qts, RTC_RETENTION_CTRL_REG, UINT32_MAX);
-    g_assert_cmphex(qtest_readl(qts, RTC_RETENTION_CTRL_REG), ==, 0);
+    qtest_writel(qts, RTC_PG_CTRL_REG, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_PG_CTRL_REG), ==, 0);
 
     qtest_quit(qts);
 }

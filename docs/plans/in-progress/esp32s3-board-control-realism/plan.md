@@ -11,9 +11,10 @@ Ideal backlog order: 1 of 7.
 Current bounded slice: source-backed RTC wake ownership and reject/status closure.
 This slice models the documented pre-sleep switch from PLL to XTAL, the
 adjacent firmware-visible wake behavior, the RTC-owned
-`EXT_WAKEUP1_STATUS` latch and clear path for EXT1 wakeups, and the
-documented `RTC_CNTL_TIMER1` wait-field surface and `SLP_REJECT_CAUSE`
-register contract, while leaving
+`EXT_WAKEUP1_STATUS` latch and clear path for EXT1 wakeups, the
+documented `RTC_CNTL_TIMER1` wait-field surface, the narrow
+`SLP_REJECT_CAUSE` register contract, and the explicit
+`RTC_CNTL_RETENTION_CTRL` register surface, while leaving
 firmware-owned tier reapplication plus broader oscillator, retention, and
 power-domain sequencing for later phases.
 
