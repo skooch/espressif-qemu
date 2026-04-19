@@ -75,6 +75,10 @@
 #define RTC_RETENTION_CTRL_REG  (RTC_CNTL_BASE + 0x140)
 #define RTC_PG_CTRL_REG         (RTC_CNTL_BASE + 0x144)
 #define RTC_FIB_SEL_REG         (RTC_CNTL_BASE + 0x148)
+#define RTC_TOUCH_DAC_REG       (RTC_CNTL_BASE + 0x14c)
+#define RTC_TOUCH_DAC1_REG      (RTC_CNTL_BASE + 0x150)
+#define RTC_COCPU_DISABLE_REG   (RTC_CNTL_BASE + 0x154)
+#define RTC_INT_ENA_W1TC_REG    (RTC_CNTL_BASE + 0x13c)
 #define RTC_WAKEUP_ENA_EXT1_BIT BIT(16)
 #define RTC_GPIO_TRIG_EN        BIT(2)
 #define CACHE_OP_DELAY_NS              1000
@@ -392,6 +396,11 @@ static uint32_t rtc_default_retention_ctrl(void)
     retention_ctrl = FIELD_DP32(retention_ctrl, RTC_CNTL_RETENTION_CTRL,
                                 RETENTION_DONE_WAIT, 2);
     return retention_ctrl;
+}
+
+static uint32_t rtc_default_fib_sel(void)
+{
+    return FIELD_DP32(0, RTC_CNTL_FIB_SEL, FIB_SEL, 7);
 }
 
 static uint32_t rtc_default_rtc_reg(void)
@@ -2408,6 +2417,36 @@ static void test_rtc_explicit_register_surface(void)
                         R_RTC_CNTL_PG_CTRL_POWER_GLITCH_FORCE_PD_MASK |
                         R_RTC_CNTL_PG_CTRL_POWER_GLITCH_DSENSE_MASK);
 
+    g_assert_cmphex(qtest_readl(qts, RTC_FIB_SEL_REG), ==, rtc_default_fib_sel());
+    qtest_writel(qts, RTC_FIB_SEL_REG, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_FIB_SEL_REG),
+                    ==, R_RTC_CNTL_FIB_SEL_FIB_SEL_MASK);
+
+    qtest_writel(qts, RTC_TOUCH_DAC_REG, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_TOUCH_DAC_REG),
+                    ==, R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD0_DAC_MASK |
+                        R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD1_DAC_MASK |
+                        R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD2_DAC_MASK |
+                        R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD3_DAC_MASK |
+                        R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD4_DAC_MASK |
+                        R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD5_DAC_MASK |
+                        R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD6_DAC_MASK |
+                        R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD7_DAC_MASK |
+                        R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD8_DAC_MASK |
+                        R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD9_DAC_MASK);
+
+    qtest_writel(qts, RTC_TOUCH_DAC1_REG, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_TOUCH_DAC1_REG),
+                    ==, R_RTC_CNTL_TOUCH_DAC1_TOUCH_PAD10_DAC_MASK |
+                        R_RTC_CNTL_TOUCH_DAC1_TOUCH_PAD11_DAC_MASK |
+                        R_RTC_CNTL_TOUCH_DAC1_TOUCH_PAD12_DAC_MASK |
+                        R_RTC_CNTL_TOUCH_DAC1_TOUCH_PAD13_DAC_MASK |
+                        R_RTC_CNTL_TOUCH_DAC1_TOUCH_PAD14_DAC_MASK);
+
+    qtest_writel(qts, RTC_COCPU_DISABLE_REG, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_COCPU_DISABLE_REG),
+                    ==, R_RTC_CNTL_COCPU_DISABLE_DISABLE_RTC_CPU_MASK);
+
     qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WDTWPROTECT, 0x50d83aa1);
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_WDTWPROTECT),
                     ==, 0x50d83aa1);
@@ -2437,8 +2476,8 @@ static void test_rtc_explicit_register_surface(void)
     g_assert_cmphex(qtest_readl(qts, RTC_CNTL_BASE + A_RTC_CNTL_DATE),
                     ==, R_RTC_CNTL_DATE_DATE_MASK);
 
-    qtest_writel(qts, RTC_FIB_SEL_REG, UINT32_MAX);
-    g_assert_cmphex(qtest_readl(qts, RTC_FIB_SEL_REG), ==, 0);
+    qtest_writel(qts, RTC_INT_ENA_W1TC_REG, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, RTC_INT_ENA_W1TC_REG), ==, 0);
 
     qtest_quit(qts);
 }

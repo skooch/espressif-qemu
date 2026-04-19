@@ -101,6 +101,31 @@ static void esp32s3_rtc_sync_clk_conf_sources(Esp32s3RtcCntlState *s);
      R_RTC_CNTL_PG_CTRL_POWER_GLITCH_FORCE_PD_MASK | \
      R_RTC_CNTL_PG_CTRL_POWER_GLITCH_DSENSE_MASK)
 
+#define RTC_CNTL_FIB_SEL_RW_MASK \
+    R_RTC_CNTL_FIB_SEL_FIB_SEL_MASK
+
+#define RTC_CNTL_TOUCH_DAC_RW_MASK \
+    (R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD0_DAC_MASK | \
+     R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD1_DAC_MASK | \
+     R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD2_DAC_MASK | \
+     R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD3_DAC_MASK | \
+     R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD4_DAC_MASK | \
+     R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD5_DAC_MASK | \
+     R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD6_DAC_MASK | \
+     R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD7_DAC_MASK | \
+     R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD8_DAC_MASK | \
+     R_RTC_CNTL_TOUCH_DAC_TOUCH_PAD9_DAC_MASK)
+
+#define RTC_CNTL_TOUCH_DAC1_RW_MASK \
+    (R_RTC_CNTL_TOUCH_DAC1_TOUCH_PAD10_DAC_MASK | \
+     R_RTC_CNTL_TOUCH_DAC1_TOUCH_PAD11_DAC_MASK | \
+     R_RTC_CNTL_TOUCH_DAC1_TOUCH_PAD12_DAC_MASK | \
+     R_RTC_CNTL_TOUCH_DAC1_TOUCH_PAD13_DAC_MASK | \
+     R_RTC_CNTL_TOUCH_DAC1_TOUCH_PAD14_DAC_MASK)
+
+#define RTC_CNTL_COCPU_DISABLE_RW_MASK \
+    R_RTC_CNTL_COCPU_DISABLE_DISABLE_RTC_CPU_MASK
+
 #define RTC_CNTL_RTC_RW_MASK \
     R_RTC_CNTL_RTC_REGULATOR_FORCE_PU_MASK
 
@@ -205,6 +230,11 @@ static uint32_t esp32s3_rtc_retention_ctrl_default(void)
     return retention_ctrl;
 }
 
+static uint32_t esp32s3_rtc_fib_sel_default(void)
+{
+    return FIELD_DP32(0, RTC_CNTL_FIB_SEL, FIB_SEL, 7);
+}
+
 static uint32_t esp32s3_rtc_reg_default(void)
 {
     return R_RTC_CNTL_RTC_REGULATOR_FORCE_PU_MASK;
@@ -259,6 +289,10 @@ static void esp32s3_rtc_cntl_reset_modeled_surface(Esp32s3RtcCntlState *s)
     s->sdio_conf_reg = esp32s3_rtc_sdio_conf_default();
     s->retention_ctrl_reg = esp32s3_rtc_retention_ctrl_default();
     s->pg_ctrl_reg = 0;
+    s->fib_sel_reg = esp32s3_rtc_fib_sel_default();
+    s->touch_dac_reg = 0;
+    s->touch_dac1_reg = 0;
+    s->cocpu_disable_reg = 0;
     s->rtc_reg = esp32s3_rtc_reg_default();
     s->pwc_reg = esp32s3_rtc_pwc_default();
     s->bias_conf_reg = esp32s3_rtc_bias_conf_default();
@@ -507,6 +541,18 @@ static uint64_t esp32s3_rtc_cntl_read(void *opaque, hwaddr addr, unsigned int si
     case A_RTC_CNTL_PG_CTRL:
         r = s->pg_ctrl_reg;
         break;
+    case A_RTC_CNTL_FIB_SEL:
+        r = s->fib_sel_reg;
+        break;
+    case A_RTC_CNTL_TOUCH_DAC:
+        r = s->touch_dac_reg;
+        break;
+    case A_RTC_CNTL_TOUCH_DAC1:
+        r = s->touch_dac1_reg;
+        break;
+    case A_RTC_CNTL_COCPU_DISABLE:
+        r = s->cocpu_disable_reg;
+        break;
     case A_RTC_CNTL_TIME_UPDATE:
         r = s->time_update_reg | R_RTC_CNTL_TIME_UPDATE_VALID_MASK;
         break;
@@ -693,6 +739,22 @@ static void esp32s3_rtc_cntl_write(void *opaque, hwaddr addr, uint64_t value,
 
     case A_RTC_CNTL_PG_CTRL:
         s->pg_ctrl_reg = (uint32_t)value & RTC_CNTL_PG_CTRL_RW_MASK;
+        break;
+
+    case A_RTC_CNTL_FIB_SEL:
+        s->fib_sel_reg = (uint32_t)value & RTC_CNTL_FIB_SEL_RW_MASK;
+        break;
+
+    case A_RTC_CNTL_TOUCH_DAC:
+        s->touch_dac_reg = (uint32_t)value & RTC_CNTL_TOUCH_DAC_RW_MASK;
+        break;
+
+    case A_RTC_CNTL_TOUCH_DAC1:
+        s->touch_dac1_reg = (uint32_t)value & RTC_CNTL_TOUCH_DAC1_RW_MASK;
+        break;
+
+    case A_RTC_CNTL_COCPU_DISABLE:
+        s->cocpu_disable_reg = (uint32_t)value & RTC_CNTL_COCPU_DISABLE_RW_MASK;
         break;
 
     case A_RTC_CNTL_TIME_UPDATE:
