@@ -64,6 +64,7 @@
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
 #define ASSIST_DEBUG_BASE       DR_REG_ASSIST_DEBUG_BASE
 #define LEDC_BASE               DR_REG_LEDC_BASE
+#define RMT_BASE                DR_REG_RMT_BASE
 #define LEDC_LSCH0_CONF0_REG    (LEDC_BASE + 0x0000)
 #define LEDC_LSCH0_HPOINT_REG   (LEDC_BASE + 0x0004)
 #define LEDC_LSCH0_DUTY_REG     (LEDC_BASE + 0x0008)
@@ -72,6 +73,23 @@
 #define LEDC_UNSUPPORTED_REG    (LEDC_BASE + 0x00f0)
 #define LEDC_CONF_REG           (LEDC_BASE + 0x00d0)
 #define LEDC_DATE_REG           (LEDC_BASE + 0x00fc)
+#define RMT_CH0DATA_REG         (RMT_BASE + 0x0000)
+#define RMT_CH0CONF0_REG        (RMT_BASE + 0x0020)
+#define RMT_CH4CONF0_REG        (RMT_BASE + 0x0030)
+#define RMT_CH4CONF1_REG        (RMT_BASE + 0x0034)
+#define RMT_CH0STATUS_REG       (RMT_BASE + 0x0050)
+#define RMT_CH4STATUS_REG       (RMT_BASE + 0x0060)
+#define RMT_INT_RAW_REG         (RMT_BASE + 0x0070)
+#define RMT_INT_ST_REG          (RMT_BASE + 0x0074)
+#define RMT_INT_ENA_REG         (RMT_BASE + 0x0078)
+#define RMT_INT_CLR_REG         (RMT_BASE + 0x007c)
+#define RMT_CH0CARRIER_DUTY_REG (RMT_BASE + 0x0080)
+#define RMT_CH0_TX_LIM_REG      (RMT_BASE + 0x00a0)
+#define RMT_CH4_RX_LIM_REG      (RMT_BASE + 0x00b0)
+#define RMT_SYS_CONF_REG        (RMT_BASE + 0x00c0)
+#define RMT_TX_SIM_REG          (RMT_BASE + 0x00c4)
+#define RMT_DATE_REG            (RMT_BASE + 0x00cc)
+#define RMT_UNSUPPORTED_REG     (RMT_BASE + 0x00f0)
 #define GENERIC_MMIO_FE2_REG    (DR_REG_FE2_BASE + 0x0f0)
 #define GENERIC_MMIO_FE_REG     (DR_REG_FE_BASE + 0x0090)
 #define GENERIC_MMIO_NRX_REG    (DR_REG_NRX_BASE + 0x00d4)
@@ -251,6 +269,75 @@ static void test_ledc_register_surface(void)
     g_assert_cmphex(qtest_readl(qts, LEDC_LSTIMER0_CONF_REG), ==, 0x01ffffff);
     g_assert_cmphex(qtest_readl(qts, LEDC_CONF_REG), ==, 0x80000003);
     g_assert_cmphex(qtest_readl(qts, LEDC_UNSUPPORTED_REG), ==, 0);
+
+    qtest_quit(qts);
+}
+
+static void test_rmt_register_surface(void)
+{
+    QTestState *qts = qts_start();
+
+    g_assert_cmphex(qtest_readl(qts, RMT_CH0DATA_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH0CONF0_REG), ==, 0x00710200);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH4CONF0_REG), ==, 0x31007f02);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH4CONF1_REG), ==, 0x000001e8);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH0STATUS_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH4STATUS_REG), ==, 0x000600c0);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH0CARRIER_DUTY_REG), ==, 0x00400040);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH0_TX_LIM_REG), ==, 0x00000080);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH4_RX_LIM_REG), ==, 0x00000080);
+    g_assert_cmphex(qtest_readl(qts, RMT_SYS_CONF_REG), ==, 0x05000010);
+    g_assert_cmphex(qtest_readl(qts, RMT_TX_SIM_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RMT_DATE_REG), ==, 0x02101181);
+
+    qtest_writel(qts, RMT_CH0DATA_REG, 0x89abcdef);
+    qtest_writel(qts, RMT_CH0CONF0_REG, UINT32_MAX & ~BIT(0));
+    qtest_writel(qts, RMT_CH4CONF0_REG, UINT32_MAX);
+    qtest_writel(qts, RMT_CH4CONF1_REG, UINT32_MAX);
+    qtest_writel(qts, RMT_INT_ENA_REG, UINT32_MAX);
+    qtest_writel(qts, RMT_CH0CARRIER_DUTY_REG, UINT32_MAX);
+    qtest_writel(qts, RMT_CH0_TX_LIM_REG, UINT32_MAX);
+    qtest_writel(qts, RMT_CH4_RX_LIM_REG, UINT32_MAX);
+    qtest_writel(qts, RMT_SYS_CONF_REG, UINT32_MAX);
+    qtest_writel(qts, RMT_TX_SIM_REG, UINT32_MAX);
+    qtest_writel(qts, RMT_DATE_REG, UINT32_MAX);
+    qtest_writel(qts, RMT_UNSUPPORTED_REG, 0xa5a55a5a);
+
+    g_assert_cmphex(qtest_readl(qts, RMT_CH0DATA_REG), ==, 0x89abcdef);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH0CONF0_REG), ==, 0x007ffff8);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH4CONF0_REG), ==, 0x3f7fffff);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH4CONF1_REG), ==, 0x00003ff9);
+    g_assert_cmphex(qtest_readl(qts, RMT_INT_ENA_REG), ==, 0x3fffffff);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH0CARRIER_DUTY_REG), ==, 0xffffffff);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH0_TX_LIM_REG), ==, 0x002fffff);
+    g_assert_cmphex(qtest_readl(qts, RMT_CH4_RX_LIM_REG), ==, 0x000001ff);
+    g_assert_cmphex(qtest_readl(qts, RMT_SYS_CONF_REG), ==, 0x87ffffff);
+    g_assert_cmphex(qtest_readl(qts, RMT_TX_SIM_REG), ==, 0x0000001f);
+    g_assert_cmphex(qtest_readl(qts, RMT_DATE_REG), ==, 0x0fffffff);
+    g_assert_cmphex(qtest_readl(qts, RMT_UNSUPPORTED_REG), ==, 0);
+
+    qtest_quit(qts);
+}
+
+static void test_rmt_tx_start_raises_tx_end_interrupt(void)
+{
+    QTestState *qts = qts_start();
+
+    qtest_irq_intercept_out_named(qts, "/machine/soc/rmt", "sysbus-irq");
+    g_assert_false(qtest_get_irq(qts, 0));
+
+    qtest_writel(qts, RMT_INT_ENA_REG, BIT(0));
+    qtest_writel(qts, RMT_CH0CONF0_REG, BIT(0));
+
+    g_assert_cmphex(qtest_readl(qts, RMT_CH0CONF0_REG) & BIT(0), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RMT_INT_RAW_REG), ==, BIT(0));
+    g_assert_cmphex(qtest_readl(qts, RMT_INT_ST_REG), ==, BIT(0));
+    g_assert_true(qtest_get_irq(qts, 0));
+
+    qtest_writel(qts, RMT_INT_CLR_REG, BIT(0));
+    g_assert_cmphex(qtest_readl(qts, RMT_INT_RAW_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RMT_INT_ST_REG), ==, 0);
+    g_assert_false(qtest_get_irq(qts, 0));
 
     qtest_quit(qts);
 }
@@ -4207,6 +4294,9 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/emac/mii-write-requires-command",
                    test_emac_mii_write_requires_command);
     qtest_add_func("/esp32s3/emac/link-loopback", test_emac_link_and_loopback_surface);
+    qtest_add_func("/esp32s3/rmt/register-surface", test_rmt_register_surface);
+    qtest_add_func("/esp32s3/rmt/tx-start-raises-tx-end-interrupt",
+                   test_rmt_tx_start_raises_tx_end_interrupt);
     qtest_add_func("/esp32s3/pms/modeled-surface", test_pms_modeled_surface);
     qtest_add_func("/esp32s3/rng/modeled-surface", test_rng_modeled_surface);
     qtest_add_func("/esp32s3/efuse/explicit-contract",

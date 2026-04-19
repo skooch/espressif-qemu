@@ -51,6 +51,7 @@
 #include "hw/char/tdeck_gps.h"
 #include "hw/char/tdeck_modem.h"
 #include "hw/misc/esp32s3_ledc.h"
+#include "hw/misc/esp32s3_rmt.h"
 #include "hw/misc/esp32s3_rng.h"
 
 #include "chardev/char-fe.h"
@@ -166,6 +167,7 @@ typedef struct Esp32s3SocState {
     ESP32S3DsState ds;
     ESP32S3PmsState pms;
     ESP32S3LEDCState ledc;
+    ESP32S3RMTState rmt;
 
     ESP32S3XtsAesState xts_aes;
     ESP32S3TimgState timg[2];
@@ -310,6 +312,7 @@ static void esp32s3_soc_reset_owned_digital_peripherals(Esp32s3SocState *s)
     device_cold_reset(DEVICE(&s->hmac));
     device_cold_reset(DEVICE(&s->ds));
     device_cold_reset(DEVICE(&s->pms));
+    device_cold_reset(DEVICE(&s->rmt));
     device_cold_reset(DEVICE(&s->xts_aes));
     for (int i = 0; i < ESP32S3_TIMG_COUNT; ++i) {
         device_cold_reset(DEVICE(&s->timg[i]));
@@ -699,6 +702,10 @@ static void esp32s3_soc_realize(DeviceState *dev, Error **errp)
 
     qdev_realize(DEVICE(&s->ledc), &s->periph_bus, &error_fatal);
     esp32s3_soc_add_periph_device(sys_mem, &s->ledc, DR_REG_LEDC_BASE);
+    qdev_realize(DEVICE(&s->rmt), &s->periph_bus, &error_fatal);
+    esp32s3_soc_add_periph_device(sys_mem, &s->rmt, DR_REG_RMT_BASE);
+    sysbus_connect_irq(SYS_BUS_DEVICE(&s->rmt), 0,
+                       qdev_get_gpio_in(intmatrix_dev, ETS_RMT_INTR_SOURCE));
 
     qemu_register_reset(esp32s3_soc_qemu_reset, dev);
 
@@ -1109,6 +1116,7 @@ static void esp32s3_soc_init(Object *obj)
 
     object_initialize_child(obj, "rtc_cntl", &s->rtc_cntl, TYPE_ESP32S3_RTC_CNTL);
     object_initialize_child(obj, "ledc", &s->ledc, TYPE_ESP32S3_LEDC);
+    object_initialize_child(obj, "rmt", &s->rmt, TYPE_ESP32S3_RMT);
 
     qdev_init_gpio_in_named(DEVICE(s), esp32s3_dig_reset,  ESP32S3_RTC_DIG_RESET_GPIO, 1);
     qdev_init_gpio_in_named(DEVICE(s), esp32s3_cpu_reset,  ESP32S3_RTC_CPU_RESET_GPIO, ESP32S3_CPU_COUNT);
@@ -1762,7 +1770,6 @@ static void esp32s3_machine_init(MachineState *machine)
         memory_region_add_subregion_overlap(sys_mem, esp32s3_memmap[ESP32S3_MEMREGION_FRAMEBUF].base, &ss->rgb.vram, 0);
     }
 
-    esp32s3_soc_add_unimp_device(sys_mem, "esp32s3.rmt", DR_REG_RMT_BASE, 0x1000);
     esp32s3_machine_init_sd(ss);
 
     /* Need MMU initialized prior to ELF loading,
