@@ -82,6 +82,8 @@
 #define RTC_WAKEUP_ENA_EXT1_BIT BIT(16)
 #define RTC_GPIO_TRIG_EN        BIT(2)
 #define CACHE_OP_DELAY_NS              1000
+#define PSRAM_CMD_READ                 0x03
+#define PSRAM_CMD_WRITE                0x02
 #define ESP32S3_CACHE_IA_SOURCE        56
 #define ESP32S3_CACHE_CORE0_ACS_SOURCE 94
 #define ESP32S3_EMAC_SOURCE            0
@@ -740,6 +742,82 @@ static uint32_t spi1_read_flash_word(QTestState *qts, uint32_t addr)
     return qtest_readl(qts, SPI1_BASE + A_SPI_MEM_W0);
 }
 
+static uint32_t spi1_usr_addr_value(uint32_t addr, uint32_t addr_bytes)
+{
+    return bswap32(addr << ((sizeof(addr) - addr_bytes) * 8));
+}
+
+static void spi1_psram_write_word(QTestState *qts, uint32_t addr,
+                                  uint32_t value)
+{
+    uint32_t user1 = 0;
+    uint32_t user2 = 0;
+
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_MISC, R_SPI_MEM_MISC_CS0_DIS_MASK);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_USER,
+                 R_SPI_MEM_USER_USR_COMMAND_MASK |
+                 R_SPI_MEM_USER_USR_ADDR_MASK |
+                 R_SPI_MEM_USER_USR_MOSI_MASK);
+    user1 = FIELD_DP32(user1, SPI_MEM_USER1, USR_ADDR_BITLEN, 23);
+    user2 = FIELD_DP32(user2, SPI_MEM_USER2, USR_COMMAND_BITLEN, 7);
+    user2 = FIELD_DP32(user2, SPI_MEM_USER2, USR_COMMAND_VALUE,
+                       PSRAM_CMD_WRITE);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_USER1, user1);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_USER2, user2);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_MOSI_DLEN, 31);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_MISO_DLEN, 0);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_W0, value);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_ADDR,
+                 spi1_usr_addr_value(addr, 3));
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD, R_SPI_MEM_CMD_USR_MASK);
+}
+
+static uint32_t spi1_psram_read_word(QTestState *qts, uint32_t addr)
+{
+    uint32_t user1 = 0;
+    uint32_t user2 = 0;
+
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_MISC, R_SPI_MEM_MISC_CS0_DIS_MASK);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_USER,
+                 R_SPI_MEM_USER_USR_COMMAND_MASK |
+                 R_SPI_MEM_USER_USR_ADDR_MASK |
+                 R_SPI_MEM_USER_USR_MISO_MASK);
+    user1 = FIELD_DP32(user1, SPI_MEM_USER1, USR_ADDR_BITLEN, 23);
+    user2 = FIELD_DP32(user2, SPI_MEM_USER2, USR_COMMAND_BITLEN, 7);
+    user2 = FIELD_DP32(user2, SPI_MEM_USER2, USR_COMMAND_VALUE,
+                       PSRAM_CMD_READ);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_USER1, user1);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_USER2, user2);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_MOSI_DLEN, 0);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_MISO_DLEN, 31);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_ADDR,
+                 spi1_usr_addr_value(addr, 3));
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD, R_SPI_MEM_CMD_USR_MASK);
+
+    return qtest_readl(qts, SPI1_BASE + A_SPI_MEM_W0);
+}
+
+static void run_dcache_sync(QTestState *qts, uint32_t addr, uint32_t size,
+                            uint32_t ctrl_bits)
+{
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_SYNC_ADDR, addr);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_SYNC_SIZE, size);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_SYNC_CTRL,
+                 ctrl_bits);
+
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_DCACHE_SYNC_CTRL) &
+                    (R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK |
+                     R_EXTMEM_DCACHE_SYNC_CTRL_WRITEBACK_ENA_MASK |
+                     R_EXTMEM_DCACHE_SYNC_CTRL_CLEAN_ENA_MASK),
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_DCACHE_SYNC_CTRL) &
+                    R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK,
+                    ==, R_EXTMEM_DCACHE_SYNC_CTRL_SYNC_DONE_MASK);
+}
+
 static void run_icache_sync(QTestState *qts, uint32_t addr, uint32_t size)
 {
     qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_SYNC_ADDR, addr);
@@ -756,6 +834,45 @@ static void run_icache_sync(QTestState *qts, uint32_t addr, uint32_t size)
                                 A_EXTMEM_ICACHE_SYNC_CTRL) &
                     R_EXTMEM_ICACHE_SYNC_CTRL_SYNC_DONE_MASK,
                     ==, R_EXTMEM_ICACHE_SYNC_CTRL_SYNC_DONE_MASK);
+}
+
+static void run_icache_preload(QTestState *qts, uint32_t addr, uint32_t size)
+{
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_PRELOAD_ADDR, addr);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_PRELOAD_SIZE, size);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_PRELOAD_CTRL,
+                 R_EXTMEM_ICACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK);
+
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_ICACHE_PRELOAD_CTRL) &
+                    R_EXTMEM_ICACHE_PRELOAD_CTRL_PRELOAD_ENA_MASK,
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_ICACHE_PRELOAD_CTRL) &
+                    R_EXTMEM_ICACHE_PRELOAD_CTRL_PRELOAD_DONE_MASK,
+                    ==, R_EXTMEM_ICACHE_PRELOAD_CTRL_PRELOAD_DONE_MASK);
+}
+
+static void run_icache_autoload(QTestState *qts, uint32_t addr, uint32_t size)
+{
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_AUTOLOAD_SCT0_ADDR,
+                 addr);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_AUTOLOAD_SCT0_SIZE,
+                 size);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_AUTOLOAD_CTRL,
+                 R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_ENA_MASK |
+                 R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_SCT0_ENA_MASK);
+
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_ICACHE_AUTOLOAD_CTRL) &
+                    R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_ENA_MASK,
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_ICACHE_AUTOLOAD_CTRL) &
+                    R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_DONE_MASK,
+                    ==, R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_DONE_MASK);
 }
 
 static void test_cache_ctrl1_flash_ibus_gate(void)
@@ -860,6 +977,116 @@ static void test_flash_spi_requires_sync_for_mapped_alias(void)
     g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, programmed_word);
 
     run_icache_sync(qts, ESP32S3_ICACHE_BASE, ESP32S3_PAGE_SIZE);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, 0xffffffff);
+
+    qtest_quit(qts);
+    unlink(flash_path);
+}
+
+static void test_cache_flash_mmu_remap_reloads_visible_alias(void)
+{
+    g_autofree gchar *flash_path = create_flash_image_with_patterns();
+    QTestState *qts = qts_start_with_flash(flash_path);
+    const uint32_t mmu_entry0 = DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET;
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_CTRL1,
+                 R_EXTMEM_ICACHE_CTRL1_SHUT_CORE1_BUS_MASK);
+    qtest_writel(qts, mmu_entry0, 0);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, 0x11111111);
+
+    qtest_writel(qts, mmu_entry0, 1);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, 0x22222222);
+
+    qtest_quit(qts);
+    unlink(flash_path);
+}
+
+static void test_psram_raw_write_requires_dcache_invalidate_for_mapped_alias(void)
+{
+    QTestState *qts = qts_start_with_psram();
+    const uint32_t mmu_entry0 = DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET;
+    const uint32_t psram_page0 = BIT(15);
+    const uint32_t programmed_word = 0x78563412;
+
+    qtest_writel(qts, mmu_entry0, psram_page0);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_CTRL1,
+                 R_EXTMEM_DCACHE_CTRL1_SHUT_CORE1_BUS_MASK);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_DCACHE_BASE), ==, 0);
+
+    spi1_psram_write_word(qts, 0, programmed_word);
+    g_assert_cmphex(spi1_psram_read_word(qts, 0), ==, programmed_word);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_DCACHE_BASE), ==, 0);
+
+    run_dcache_sync(qts, ESP32S3_DCACHE_BASE, ESP32S3_PAGE_SIZE,
+                    R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_DCACHE_BASE), ==,
+                    programmed_word);
+
+    qtest_quit(qts);
+}
+
+static void test_psram_alias_write_requires_dcache_writeback(void)
+{
+    QTestState *qts = qts_start_with_psram();
+    const uint32_t mmu_entry0 = DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET;
+    const uint32_t psram_page0 = BIT(15);
+    const uint32_t alias_word = 0x11223344;
+    const uint32_t raw_word = 0xaabbccdd;
+
+    qtest_writel(qts, mmu_entry0, psram_page0);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_DCACHE_CTRL1,
+                 R_EXTMEM_DCACHE_CTRL1_SHUT_CORE1_BUS_MASK);
+
+    qtest_writel(qts, ESP32S3_DCACHE_BASE, alias_word);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_DCACHE_BASE), ==, alias_word);
+    g_assert_cmphex(spi1_psram_read_word(qts, 0), ==, 0);
+
+    run_dcache_sync(qts, ESP32S3_DCACHE_BASE, ESP32S3_PAGE_SIZE,
+                    R_EXTMEM_DCACHE_SYNC_CTRL_WRITEBACK_ENA_MASK);
+    g_assert_cmphex(spi1_psram_read_word(qts, 0), ==, alias_word);
+
+    spi1_psram_write_word(qts, 0, raw_word);
+    g_assert_cmphex(spi1_psram_read_word(qts, 0), ==, raw_word);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_DCACHE_BASE), ==, alias_word);
+
+    run_dcache_sync(qts, ESP32S3_DCACHE_BASE, ESP32S3_PAGE_SIZE,
+                    R_EXTMEM_DCACHE_SYNC_CTRL_INVALIDATE_ENA_MASK);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_DCACHE_BASE), ==, raw_word);
+
+    qtest_quit(qts);
+}
+
+static void test_flash_preload_and_autoload_refresh_stale_aliases(void)
+{
+    g_autofree gchar *flash_path = create_erased_flash_image();
+    QTestState *qts = qts_start_with_flash(flash_path);
+    const uint32_t mmu_entry0 = DR_REG_EXTMEM_BASE + ESP32S3_MMU_TABLE_OFFSET;
+    const uint32_t flash_word1 = 0x01020304;
+
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_CTRL1,
+                 R_EXTMEM_ICACHE_CTRL1_SHUT_CORE1_BUS_MASK);
+    qtest_writel(qts, mmu_entry0, 0);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, 0xffffffff);
+
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD,
+                 R_SPI_MEM_CMD_FLASH_WREN_MASK);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_W0, flash_word1);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_ADDR, 0x04000000);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD,
+                 R_SPI_MEM_CMD_FLASH_PP_MASK);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, 0xffffffff);
+
+    run_icache_preload(qts, ESP32S3_ICACHE_BASE, ESP32S3_PAGE_SIZE);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, flash_word1);
+
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD,
+                 R_SPI_MEM_CMD_FLASH_WREN_MASK);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_ADDR, 0);
+    qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD,
+                 R_SPI_MEM_CMD_FLASH_SE_MASK);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, flash_word1);
+
+    run_icache_autoload(qts, ESP32S3_ICACHE_BASE, ESP32S3_PAGE_SIZE);
     g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, 0xffffffff);
 
     qtest_quit(qts);
@@ -3754,6 +3981,14 @@ int main(int argc, char **argv)
                    test_cache_ctrl1_psram_dbus_gate);
     qtest_add_func("/esp32s3/cache/flash-spi-requires-sync-for-mapped-alias",
                    test_flash_spi_requires_sync_for_mapped_alias);
+    qtest_add_func("/esp32s3/cache/flash-mmu-remap-reloads-visible-alias",
+                   test_cache_flash_mmu_remap_reloads_visible_alias);
+    qtest_add_func("/esp32s3/cache/psram-raw-write-requires-dcache-invalidate",
+                   test_psram_raw_write_requires_dcache_invalidate_for_mapped_alias);
+    qtest_add_func("/esp32s3/cache/psram-alias-write-requires-dcache-writeback",
+                   test_psram_alias_write_requires_dcache_writeback);
+    qtest_add_func("/esp32s3/cache/preload-autoload-refresh-stale-aliases",
+                   test_flash_preload_and_autoload_refresh_stale_aliases);
     qtest_add_func("/esp32s3/cache/deferred-completion",
                    test_cache_deferred_completion_semantics);
     qtest_add_func("/esp32s3/cache/deferred-ordering-clear",

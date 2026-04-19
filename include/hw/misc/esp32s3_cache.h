@@ -123,6 +123,8 @@ struct ESP32S3CacheState {
     MemoryRegion flash_mr;
     /* Define an address space for the PSRAM, if not NULL */
     AddressSpace psram_as;
+    /* Guest-visible PSRAM alias contents live in a separate mirror. */
+    MemoryRegion psram_mr;
     uint32_t flash_page_count;
     uint32_t *flash_page_generation;
     uint32_t *flash_page_visible_generation;
@@ -147,6 +149,8 @@ _Static_assert(sizeof(((ESP32S3CacheState*)0)->mmu) == ESP32S3_MMU_SIZE,
                "The size of `mmu` field in structure ESP32C3CacheState must be equal to ESP32S3_MMU_SIZE");
 
 void esp32s3_cache_flash_modified(ESP32S3CacheState *s, hwaddr addr,
+                                  hwaddr size);
+void esp32s3_cache_psram_modified(ESP32S3CacheState *s, hwaddr addr,
                                   hwaddr size);
 
 

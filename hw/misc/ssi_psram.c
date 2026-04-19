@@ -15,6 +15,7 @@
 #include "qemu/module.h"
 #include "qemu/error-report.h"
 #include "hw/qdev-properties.h"
+#include "hw/misc/esp32s3_cache.h"
 #include "hw/misc/ssi_psram.h"
 
 #define PSRAM_WARNING   0
@@ -454,6 +455,9 @@ static int psram_cs(SSIPeripheral *ss, bool select)
          * mark the area as dirty since the ESP target's `cache` also uses it. */
         if (s->state == ST_PROCESSING && psram_is_write_command(s)) {
             memory_region_set_dirty(&s->data_mr, s->addr, s->byte_count);
+            if (s->cache != NULL) {
+                esp32s3_cache_psram_modified(s->cache, s->addr, s->byte_count);
+            }
         }
         s->state = ST_IDLE;
         s->byte_count = 0;

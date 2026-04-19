@@ -1404,6 +1404,7 @@ static void esp32s3_machine_init(MachineState *machine)
         }
         if (ss->psram) {
             ss->cache.psram = ss->psram;
+            ss->psram->cache = &ss->cache;
         }
         ss->cache.xts_aes = &ss->xts_aes;
         sysbus_realize(SYS_BUS_DEVICE(&ss->cache), &error_fatal);

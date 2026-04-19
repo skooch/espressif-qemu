@@ -45,6 +45,11 @@ typedef struct ESP32S3CacheDeferredOp {
     bool freeze;
 } ESP32S3CacheDeferredOp;
 
+typedef enum ESP32S3CacheCoherencyAction {
+    ESP32S3_CACHE_COHERENCY_INVALIDATE = BIT(0),
+    ESP32S3_CACHE_COHERENCY_WRITEBACK = BIT(1),
+} ESP32S3CacheCoherencyAction;
+
 static const ESP32S3CacheDeferredOp esp32s3_cache_deferred_ops[] = {
     {
         .addr = A_EXTMEM_DCACHE_SYNC_CTRL,
@@ -161,18 +166,6 @@ static void esp32s3_cache_mark_backing_page_visible(uint32_t *generation,
     visible_generation[page_index] = generation[page_index];
 }
 
-static bool esp32s3_cache_backing_page_stale(uint32_t *generation,
-                                             uint32_t *visible_generation,
-                                             uint32_t count,
-                                             hwaddr page_index)
-{
-    if (page_index >= count) {
-        return false;
-    }
-
-    return generation[page_index] != visible_generation[page_index];
-}
-
 static bool esp32s3_cache_range_overlaps_page(uint32_t range_addr,
                                               uint32_t range_size,
                                               hwaddr page_addr)
@@ -184,6 +177,17 @@ static bool esp32s3_cache_range_overlaps_page(uint32_t range_addr,
     const uint64_t page_end = page_start + ESP32S3_PAGE_SIZE;
 
     return range_start < page_end && page_start < range_end;
+}
+
+static uint32_t esp32s3_cache_normalize_range_addr(uint32_t addr,
+                                                   uint32_t virt_base)
+{
+    if (addr >= virt_base &&
+        addr < virt_base + ESP32S3_EXTMEM_REGION_SIZE) {
+        return addr - virt_base;
+    }
+
+    return addr;
 }
 
 static void esp32s3_cache_reload_flash_page(ESP32S3CacheState *s,
@@ -210,23 +214,67 @@ static void esp32s3_cache_reload_flash_page(ESP32S3CacheState *s,
                                             page_index);
 }
 
-static void esp32s3_cache_complete_coherency_op(ESP32S3CacheState *s,
-                                                bool dcache)
+static void esp32s3_cache_reload_psram_page(ESP32S3CacheState *s,
+                                            hwaddr page_index)
 {
-    const hwaddr addr_reg = dcache ? A_EXTMEM_DCACHE_SYNC_ADDR
-                                   : A_EXTMEM_ICACHE_SYNC_ADDR;
-    const hwaddr size_reg = dcache ? A_EXTMEM_DCACHE_SYNC_SIZE
-                                   : A_EXTMEM_ICACHE_SYNC_SIZE;
-    const uint32_t virt_base = dcache ? ESP32S3_DCACHE_BASE
-                                      : ESP32S3_ICACHE_BASE;
-    uint32_t sync_addr = s->regs[ESP32S3_CACHE_REG_IDX(addr_reg)];
-    const uint32_t sync_size = s->regs[ESP32S3_CACHE_REG_IDX(size_reg)];
-    bool refreshed = false;
+    const hwaddr page = page_index * ESP32S3_PAGE_SIZE;
+    const hwaddr psram_size = memory_region_size(&s->psram->data_mr);
+    const size_t remaining = psram_size - page;
+    const size_t load_size = MIN((size_t)ESP32S3_PAGE_SIZE, remaining);
+    uint8_t *backing_data;
+    uint8_t *visible_data;
 
-    if (sync_addr >= virt_base &&
-        sync_addr < virt_base + ESP32S3_EXTMEM_REGION_SIZE) {
-        sync_addr -= virt_base;
+    if (s->psram == NULL || page_index >= s->psram_page_count ||
+        page >= psram_size) {
+        return;
     }
+
+    backing_data = ((uint8_t *)memory_region_get_ram_ptr(&s->psram->data_mr)) +
+        page;
+    visible_data = ((uint8_t *)memory_region_get_ram_ptr(&s->psram_mr)) + page;
+    memcpy(visible_data, backing_data, load_size);
+    if (load_size < ESP32S3_PAGE_SIZE) {
+        memset(visible_data + load_size, 0, ESP32S3_PAGE_SIZE - load_size);
+    }
+    esp32s3_cache_mark_backing_page_visible(s->psram_page_generation,
+                                            s->psram_page_visible_generation,
+                                            s->psram_page_count,
+                                            page_index);
+}
+
+static void esp32s3_cache_writeback_psram_page(ESP32S3CacheState *s,
+                                               hwaddr page_index)
+{
+    const hwaddr page = page_index * ESP32S3_PAGE_SIZE;
+    const hwaddr psram_size = memory_region_size(&s->psram->data_mr);
+    const size_t remaining = psram_size - page;
+    const size_t store_size = MIN((size_t)ESP32S3_PAGE_SIZE, remaining);
+    uint8_t *backing_data;
+    uint8_t *visible_data;
+
+    if (s->psram == NULL || page_index >= s->psram_page_count ||
+        page >= psram_size) {
+        return;
+    }
+
+    backing_data = ((uint8_t *)memory_region_get_ram_ptr(&s->psram->data_mr)) +
+        page;
+    visible_data = ((uint8_t *)memory_region_get_ram_ptr(&s->psram_mr)) + page;
+    memcpy(backing_data, visible_data, store_size);
+    memory_region_set_dirty(&s->psram->data_mr, page, store_size);
+    esp32s3_cache_mark_backing_page_visible(s->psram_page_generation,
+                                            s->psram_page_visible_generation,
+                                            s->psram_page_count,
+                                            page_index);
+}
+
+static bool esp32s3_cache_apply_range_actions(ESP32S3CacheState *s,
+                                              uint32_t range_addr,
+                                              uint32_t range_size,
+                                              bool dcache,
+                                              uint32_t actions)
+{
+    bool touched = false;
 
     for (uint32_t i = 0; i < ESP32S3_MMU_TABLE_ENTRY_COUNT; i++) {
         const ESP32S3MMUEntry entry = s->mmu[i];
@@ -234,57 +282,122 @@ static void esp32s3_cache_complete_coherency_op(ESP32S3CacheState *s,
         const hwaddr phys_page = entry.page_number;
 
         if (entry.invalid ||
-            !esp32s3_cache_range_overlaps_page(sync_addr, sync_size,
+            !esp32s3_cache_range_overlaps_page(range_addr, range_size,
                                                virt_page)) {
             continue;
         }
 
-        if (entry.type == ESP32S3_MMU_TYPE_FLASH &&
-            esp32s3_cache_backing_page_stale(s->flash_page_generation,
-                                             s->flash_page_visible_generation,
-                                             s->flash_page_count,
-                                             phys_page)) {
-            esp32s3_cache_reload_flash_page(s, phys_page);
-            refreshed = true;
-        } else if (entry.type == ESP32S3_MMU_TYPE_PSRAM &&
-                   esp32s3_cache_backing_page_stale(
-                       s->psram_page_generation,
-                       s->psram_page_visible_generation,
-                       s->psram_page_count,
-                       phys_page)) {
-            esp32s3_cache_mark_backing_page_visible(
-                s->psram_page_generation,
-                s->psram_page_visible_generation,
-                s->psram_page_count,
-                phys_page);
-            refreshed = true;
+        if (entry.type == ESP32S3_MMU_TYPE_FLASH) {
+            if (actions & ESP32S3_CACHE_COHERENCY_INVALIDATE) {
+                esp32s3_cache_reload_flash_page(s, phys_page);
+            }
+            touched = true;
+            continue;
         }
+
+        if (!dcache || entry.type != ESP32S3_MMU_TYPE_PSRAM) {
+            continue;
+        }
+
+        if (actions & ESP32S3_CACHE_COHERENCY_WRITEBACK) {
+            esp32s3_cache_writeback_psram_page(s, phys_page);
+        }
+        if (actions & ESP32S3_CACHE_COHERENCY_INVALIDATE) {
+            esp32s3_cache_reload_psram_page(s, phys_page);
+        }
+        touched = true;
     }
 
-    if (refreshed) {
+    return touched;
+}
+
+static void esp32s3_cache_complete_coherency_op(ESP32S3CacheState *s,
+                                                bool dcache)
+{
+    const hwaddr ctrl_reg = dcache ? A_EXTMEM_DCACHE_SYNC_CTRL
+                                   : A_EXTMEM_ICACHE_SYNC_CTRL;
+    const hwaddr addr_reg = dcache ? A_EXTMEM_DCACHE_SYNC_ADDR
+                                   : A_EXTMEM_ICACHE_SYNC_ADDR;
+    const hwaddr size_reg = dcache ? A_EXTMEM_DCACHE_SYNC_SIZE
+                                   : A_EXTMEM_ICACHE_SYNC_SIZE;
+    const uint32_t virt_base = dcache ? ESP32S3_DCACHE_BASE
+                                      : ESP32S3_ICACHE_BASE;
+    const uint32_t sync_ctrl = s->regs[ESP32S3_CACHE_REG_IDX(ctrl_reg)];
+    const uint32_t sync_addr = esp32s3_cache_normalize_range_addr(
+        s->regs[ESP32S3_CACHE_REG_IDX(addr_reg)], virt_base);
+    const uint32_t sync_size = s->regs[ESP32S3_CACHE_REG_IDX(size_reg)];
+    uint32_t actions = 0;
+
+    if (sync_ctrl & R_EXTMEM_ICACHE_SYNC_CTRL_INVALIDATE_ENA_MASK) {
+        actions |= ESP32S3_CACHE_COHERENCY_INVALIDATE;
+    }
+    if (dcache &&
+        (sync_ctrl & (R_EXTMEM_DCACHE_SYNC_CTRL_WRITEBACK_ENA_MASK |
+                      R_EXTMEM_DCACHE_SYNC_CTRL_CLEAN_ENA_MASK))) {
+        actions |= ESP32S3_CACHE_COHERENCY_WRITEBACK;
+    }
+
+    if (actions != 0) {
+        esp32s3_cache_apply_range_actions(s, sync_addr, sync_size, dcache,
+                                          actions);
+    }
+}
+
+static void esp32s3_cache_complete_preload_op(ESP32S3CacheState *s,
+                                              bool dcache)
+{
+    const hwaddr addr_reg = A_EXTMEM_ICACHE_PRELOAD_ADDR;
+    const hwaddr size_reg = A_EXTMEM_ICACHE_PRELOAD_SIZE;
+    const uint32_t virt_base = ESP32S3_ICACHE_BASE;
+    const uint32_t preload_addr = esp32s3_cache_normalize_range_addr(
+        s->regs[ESP32S3_CACHE_REG_IDX(addr_reg)], virt_base);
+    const uint32_t preload_size = s->regs[ESP32S3_CACHE_REG_IDX(size_reg)];
+
+    if (dcache) {
         return;
     }
 
-    for (hwaddr page = 0; page < s->flash_page_count; page++) {
-        if (esp32s3_cache_backing_page_stale(s->flash_page_generation,
-                                             s->flash_page_visible_generation,
-                                             s->flash_page_count,
-                                             page)) {
-            esp32s3_cache_reload_flash_page(s, page);
-        }
+    esp32s3_cache_apply_range_actions(s, preload_addr, preload_size, dcache,
+                                      ESP32S3_CACHE_COHERENCY_INVALIDATE);
+}
+
+static void esp32s3_cache_complete_autoload_op(ESP32S3CacheState *s,
+                                               bool dcache)
+{
+    const hwaddr ctrl_reg = A_EXTMEM_ICACHE_AUTOLOAD_CTRL;
+    const hwaddr sct0_addr_reg = A_EXTMEM_ICACHE_AUTOLOAD_SCT0_ADDR;
+    const hwaddr sct0_size_reg = A_EXTMEM_ICACHE_AUTOLOAD_SCT0_SIZE;
+    const hwaddr sct1_addr_reg = A_EXTMEM_ICACHE_AUTOLOAD_SCT1_ADDR;
+    const hwaddr sct1_size_reg = A_EXTMEM_ICACHE_AUTOLOAD_SCT1_SIZE;
+    const uint32_t virt_base = ESP32S3_ICACHE_BASE;
+    const uint32_t ctrl = s->regs[ESP32S3_CACHE_REG_IDX(ctrl_reg)];
+    const uint32_t sct0_enable =
+        R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_SCT0_ENA_MASK;
+    const uint32_t sct1_enable =
+        R_EXTMEM_ICACHE_AUTOLOAD_CTRL_AUTOLOAD_SCT1_ENA_MASK;
+
+    if (dcache) {
+        return;
     }
 
-    for (hwaddr page = 0; page < s->psram_page_count; page++) {
-        if (esp32s3_cache_backing_page_stale(s->psram_page_generation,
-                                             s->psram_page_visible_generation,
-                                             s->psram_page_count,
-                                             page)) {
-            esp32s3_cache_mark_backing_page_visible(
-                s->psram_page_generation,
-                s->psram_page_visible_generation,
-                s->psram_page_count,
-                page);
-        }
+    if (ctrl & sct0_enable) {
+        esp32s3_cache_apply_range_actions(
+            s,
+            esp32s3_cache_normalize_range_addr(
+                s->regs[ESP32S3_CACHE_REG_IDX(sct0_addr_reg)], virt_base),
+            s->regs[ESP32S3_CACHE_REG_IDX(sct0_size_reg)],
+            dcache,
+            ESP32S3_CACHE_COHERENCY_INVALIDATE);
+    }
+
+    if (ctrl & sct1_enable) {
+        esp32s3_cache_apply_range_actions(
+            s,
+            esp32s3_cache_normalize_range_addr(
+                s->regs[ESP32S3_CACHE_REG_IDX(sct1_addr_reg)], virt_base),
+            s->regs[ESP32S3_CACHE_REG_IDX(sct1_size_reg)],
+            dcache,
+            ESP32S3_CACHE_COHERENCY_INVALIDATE);
     }
 }
 
@@ -595,6 +708,16 @@ static void esp32s3_cache_complete_deferred_ops(void *opaque)
             if ((op->dcache && op->addr == A_EXTMEM_DCACHE_SYNC_CTRL) ||
                 (!op->dcache && op->addr == A_EXTMEM_ICACHE_SYNC_CTRL)) {
                 esp32s3_cache_complete_coherency_op(s, op->dcache);
+            } else if ((op->dcache &&
+                        op->addr == A_EXTMEM_DCACHE_PRELOAD_CTRL) ||
+                       (!op->dcache &&
+                        op->addr == A_EXTMEM_ICACHE_PRELOAD_CTRL)) {
+                esp32s3_cache_complete_preload_op(s, op->dcache);
+            } else if ((op->dcache &&
+                        op->addr == A_EXTMEM_DCACHE_AUTOLOAD_CTRL) ||
+                       (!op->dcache &&
+                        op->addr == A_EXTMEM_ICACHE_AUTOLOAD_CTRL)) {
+                esp32s3_cache_complete_autoload_op(s, op->dcache);
             }
             s->regs[index] &= ~op->ena_mask;
             s->regs[index] |= op->done_mask;
@@ -735,6 +858,41 @@ void esp32s3_cache_flash_modified(ESP32S3CacheState *s, hwaddr addr,
     }
 }
 
+void esp32s3_cache_psram_modified(ESP32S3CacheState *s, hwaddr addr,
+                                  hwaddr size)
+{
+    const hwaddr psram_len =
+        s != NULL && s->psram != NULL ? memory_region_size(&s->psram->data_mr)
+                                      : 0;
+    hwaddr end;
+
+    if (s == NULL || s->psram == NULL || psram_len == 0 || addr >= psram_len) {
+        return;
+    }
+
+    end = size == 0 ? psram_len : MIN(addr + size, psram_len);
+
+    for (hwaddr page = addr & ~(ESP32S3_PAGE_SIZE - 1);
+         page < end;
+         page += ESP32S3_PAGE_SIZE) {
+        const hwaddr page_index = page / ESP32S3_PAGE_SIZE;
+
+        esp32s3_cache_mark_backing_page_stale(s->psram_page_generation,
+                                              s->psram_page_count, page_index);
+
+        for (int i = 0; i < ESP32S3_MMU_TABLE_ENTRY_COUNT; i++) {
+            const ESP32S3MMUEntry entry = s->mmu[i];
+
+            if (!entry.invalid &&
+                entry.type == ESP32S3_MMU_TYPE_PSRAM &&
+                entry.page_number * ESP32S3_PAGE_SIZE == page) {
+                esp32s3_mmu_invalidate_page(s, i * ESP32S3_PAGE_SIZE, page,
+                                            true, false);
+            }
+        }
+    }
+}
+
 
 static inline void esp32s3_write_mmu_value(ESP32S3CacheState *s, hwaddr reg_addr, uint32_t value)
 {
@@ -788,10 +946,7 @@ static inline void esp32s3_write_mmu_value(ESP32S3CacheState *s, hwaddr reg_addr
                     xts_aes_class->decrypt(s->xts_aes, physical_address, cache_data, ESP32S3_PAGE_SIZE);
                 }
             } else if (e.type == ESP32S3_MMU_TYPE_PSRAM) {
-                esp32s3_cache_mark_backing_page_visible(
-                    s->psram_page_generation,
-                    s->psram_page_visible_generation,
-                    s->psram_page_count, e.page_number);
+                esp32s3_cache_reload_psram_page(s, e.page_number);
             }
         }
         s->mmu[index].val = e.val;
@@ -1057,8 +1212,10 @@ static void esp32s3_cache_realize(DeviceState *dev, Error **errp)
     }
 
     if (s->psram != NULL) {
-        /* Initialize the physical address space for the PSRAM, this will be referenced by the IOMMU. */
-        address_space_init(&s->psram_as, &s->psram->data_mr, "esp32s3.cache.psram_as");
+        memory_region_init_ram(&s->psram_mr, OBJECT(s), "esp32s3.cache.psram_mr",
+                               memory_region_size(&s->psram->data_mr),
+                               &error_fatal);
+        address_space_init(&s->psram_as, &s->psram_mr, "esp32s3.cache.psram_as");
         s->psram_page_count = esp32s3_cache_page_count(
             memory_region_size(&s->psram->data_mr));
         s->psram_page_generation = g_new0(uint32_t, s->psram_page_count);

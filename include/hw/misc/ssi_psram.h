@@ -6,6 +6,7 @@
 #include "qom/object.h"
 #include "exec/memory.h"
 
+typedef struct ESP32S3CacheState ESP32S3CacheState;
 
 typedef enum PsramState {
     ST_IDLE = 0,
@@ -38,9 +39,9 @@ typedef struct SsiPsramState {
     uint8_t mr8;
 
     PsramState state;
+    ESP32S3CacheState *cache;
     MemoryRegion data_mr;
 } SsiPsramState;
 
 #define TYPE_SSI_PSRAM "ssi_psram"
 OBJECT_DECLARE_SIMPLE_TYPE(SsiPsramState, SSI_PSRAM)
-
