@@ -4,9 +4,9 @@
 
 This document tracks the known fidelity gaps in the `esp32s3` machine model in this fork and the current follow-on program for closing the highest-value gaps for the active T-Deck Pro workload.
 
-The immediate peripheral, deferred-foundation, core-SoC, first T-Deck prioritization plan, the 2026-04-18 follow-on clock/reset/sleep cleanup plan, the 2026-04-18 reset-fanout phase, the 2026-04-18 RTC time-trigger phase, the 2026-04-18 RTC light-sleep configuration phase, and the 2026-04-18 RTC SDIO config phase are historical records under `docs/plans/implemented/`. Plan `#1`, `docs/plans/in-progress/esp32s3-board-control-realism/plan.md`, is now the active ESP32-S3 fidelity queue. The remaining backlog is split into explicit `docs/plans/new/` plan records.
+The immediate peripheral, deferred-foundation, core-SoC, first T-Deck prioritization plan, the 2026-04-18 follow-on clock/reset/sleep cleanup plan, the 2026-04-18 reset-fanout phase, the 2026-04-18 RTC time-trigger phase, the 2026-04-18 RTC light-sleep configuration phase, the 2026-04-18 RTC SDIO config phase, and plan `#1` (`docs/plans/implemented/esp32s3-board-control-realism/plan.md`) are now historical records under `docs/plans/implemented/`. There is no active in-progress ESP32-S3 fidelity plan at the moment. The remaining backlog is split into explicit `docs/plans/new/` plan records.
 
-The current scope is intentionally limited to the remaining high-risk follow-on work:
+The remaining scope is intentionally limited to the next high-risk follow-on work:
 
 - broader sleep and clock realism beyond the qtest-pinned RTC sleep state machine, SYSTIMER stop/resume, light-sleep system-clock handoff, TIMG, and UART contract
 - reset-tree fidelity beyond the newly owned digital reset surface
@@ -18,7 +18,7 @@ Broader silicon-completeness work such as analog PLL dynamics, full cache microa
 
 The remaining documented queues are split into these plan records, in the ideal execution order for the current tree:
 
-1. `docs/plans/in-progress/esp32s3-board-control-realism/plan.md` for clock, reset, sleep, and low-power realism
+1. `docs/plans/implemented/esp32s3-board-control-realism/plan.md` is the completed historical record for clock, reset, sleep, and low-power register-surface realism.
 2. `docs/plans/new/esp32s3-peripheral-contract-follow-ons/plan.md` for GP-SPI, USB Serial/JTAG, I2C, UART, SHA, eFuse, PMS, and RNG residual contract work
 3. `docs/plans/new/esp32s3-generic-mmio-burn-down/plan.md` for the remaining catch-all windows and explicit owner handoff
 4. `docs/plans/new/esp32s3-external-memory-fidelity/plan.md` for cache/MMU, flash, and PSRAM follow-ons
