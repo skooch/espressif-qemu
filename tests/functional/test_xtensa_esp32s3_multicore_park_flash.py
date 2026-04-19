@@ -14,27 +14,30 @@ from qemu_test import QemuSystemTest
 
 
 MULTICORE_PARK_FLASH_ROM_ELF_ZLIB_B64 = (
-    "eNrtWE1sG0UUfrtOXIdupCQVEKgQTjgQBBiHWk0uKFnb63grO3a9dhI4sHESN3br2pa9gYAqtbnk"
-    "woEm5RK4pAfET0+IAxJw4FQkhAAJiaocEiEBhxYQkSpAoGp4szPjXbs5cOSwn7Qz7/vem+eZ9fxo"
-    "56KWSkiSBAIyvAiUTcLEdARrZRgLH0AEgqiPQQCO2H4YoMXENH3CKNCnt6178ODBgwcPHjx48ODB"
-    "gwcPHv5PuHYNi2ll0f5u//3rKbgEi/gRL+Pn/iL1DEXm1rHusa8GAKL44Jd+EJ4aCv58bCAIu7d9"
-    "u7t3PviNfPSm7I/Axq9E6dsuP3T1F/L+u9tnYeQ2efYqJOWJyN9JOdV7tDD3NinLq2/IiSBs/ESU"
-    "J3YCWz+S7fIzIz+QpHx6j7QjVjf2ydY+Qf8++h+g5vDWHvKRPTIpq9+TmSunNr4jWzdQUvrQd5P6"
-    "bqDvwp2ZK5GNr7AjOwGa+Qua+Vs7aQDTF8h1P4Di2/SD8liiF5QTfhydEtuUQTESODhl+TohyhCc"
-    "Bj8hI58QpUeXk/LxuC5v3iUK0NHbLwEWrFKtVTT12pk6FAzNVKNGJlXIa2ZKz2s5NWU8F75PjepY"
-    "sruSSRB3JvhCxxxN3Lc8zV9yCe0+rEfxqaE9yu3LaL/A7Vto93P7T7RpjgA+f6Hdy/W7/LcC3Ba6"
-    "LDk6tYV+RHLyBFx6vyu+36UPueKPcZ32f9gVT+0A14MundoDPE/YpR8O5veB1KH67Kxu7uviPR0t"
-    "euDA/v/YHKc4IA93tDggYSw/dfFTdq204+eArxfOl7BcccW/SqsBh78O9oRpx+90/d57fHEJ/jGW"
-    "Yy7+DZ1nLr7PjEuC/8GMacH72YBlwUcZlwSfYFZU8JjE1z3nBQlcb/WAnGWXfe18FyW+Z3D+GnK+"
-    "R9j8LeQEIfg7kvO/0258KLH5LfjnEpvjgt+UnHlL+S2JzXvB/5Gc+Uv5UZnNVcEflZ35SvkJma0V"
-    "wadktkYE12U2dwVfkJ35S/ki8kdcvIT8cRdfk9naZX87dm552TqprdcioTrk8jEzNptPmVHV0ByW"
-    "yeb1zKwRNjOJhKMa82YsWzCNvJpK2R7jeSOvpVlbbSGf7rL1mBpLamYsn0uN2/FcT6cLZl6NpjSW"
-    "JKuPs2ZomdQfS8eFx+ZqPJ7rENK6kTHjKW22Q50Pd1CaJZFSjaSZ09T4IfJ8Tps9RM5mDxGxd3w0"
-    "dk/jORW9mcIsbqJ294C9FDWbpW8oFjajet7oEseZmM3pca6hnZnBVGktbs5ncnHALdkQdrHRWG6s"
-    "mdV6vQEvFyuWyYXmWq1Wqa0CdQhithqVGpwpVqpmrW61QxrF5jmzVbKsaqkrgnpKK4w3Grb0UqVV"
-    "WaqWmNYqdWjNUmvtPM/B7fo5kc1kCqzUzdJ6xYJysWq5e29aOAKzZRWbFkCo9cp5q7iEtdVkdVlY"
-    "VmndgtC6fWKFKvTEQhKqVmwx1Ghilv+M43xD8Yu9eYDd/zv7LMMIPVNc7cKDdK04EE1CLpuiPNh5"
-    "Fgjfya64xiDdW+6NkwA6TobLQwCfyay/T/L+0S26zz4jHGTvB7gg35tvsCvuywcBpg7p378vRdmk"
+    "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"
+    "lxFP3dMbAO4XCD5e2wq/DzsA9q4S3z+ZQ0By"
 )
 
 
@@ -52,8 +55,9 @@ class XTensaEsp32S3MulticoreParkFlash(QemuSystemTest):
     def _create_erased_flash(self, name: str) -> Path:
         """Create a backing flash image with first sector pre-erased to 0xff.
 
-        The ROM programs offset 0 via SPI1 page-program. NOR flash AND-only
-        writes need pre-erased cells, matching esp32s3-test.c's
+        The ROM programs offset 0 via SPI1 page-program, then runs an
+        explicit `ICACHE_SYNC` before checking the EXTMEM alias. NOR flash
+        AND-only writes need pre-erased cells, matching esp32s3-test.c's
         create_erased_flash_image helper.
         """
         path = Path(self.workdir) / name

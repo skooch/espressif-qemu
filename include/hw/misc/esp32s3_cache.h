@@ -123,6 +123,12 @@ struct ESP32S3CacheState {
     MemoryRegion flash_mr;
     /* Define an address space for the PSRAM, if not NULL */
     AddressSpace psram_as;
+    uint32_t flash_page_count;
+    uint32_t *flash_page_generation;
+    uint32_t *flash_page_visible_generation;
+    uint32_t psram_page_count;
+    uint32_t *psram_page_generation;
+    uint32_t *psram_page_visible_generation;
 
     /* Registers for controlling the cache */
     uint32_t regs[ESP32S3_CACHE_REG_COUNT];

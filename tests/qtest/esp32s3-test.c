@@ -740,6 +740,24 @@ static uint32_t spi1_read_flash_word(QTestState *qts, uint32_t addr)
     return qtest_readl(qts, SPI1_BASE + A_SPI_MEM_W0);
 }
 
+static void run_icache_sync(QTestState *qts, uint32_t addr, uint32_t size)
+{
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_SYNC_ADDR, addr);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_SYNC_SIZE, size);
+    qtest_writel(qts, DR_REG_EXTMEM_BASE + A_EXTMEM_ICACHE_SYNC_CTRL,
+                 R_EXTMEM_ICACHE_SYNC_CTRL_INVALIDATE_ENA_MASK);
+
+    qtest_clock_step(qts, CACHE_OP_DELAY_NS);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_ICACHE_SYNC_CTRL) &
+                    R_EXTMEM_ICACHE_SYNC_CTRL_INVALIDATE_ENA_MASK,
+                    ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DR_REG_EXTMEM_BASE +
+                                A_EXTMEM_ICACHE_SYNC_CTRL) &
+                    R_EXTMEM_ICACHE_SYNC_CTRL_SYNC_DONE_MASK,
+                    ==, R_EXTMEM_ICACHE_SYNC_CTRL_SYNC_DONE_MASK);
+}
+
 static void test_cache_ctrl1_flash_ibus_gate(void)
 {
     g_autofree gchar *flash_path = create_flash_image_with_patterns();
@@ -809,7 +827,7 @@ static void test_cache_ctrl1_psram_dbus_gate(void)
     qtest_quit(qts);
 }
 
-static void test_flash_spi_updates_mapped_alias(void)
+static void test_flash_spi_requires_sync_for_mapped_alias(void)
 {
     g_autofree gchar *flash_path = create_erased_flash_image();
     QTestState *qts = qts_start_with_flash(flash_path);
@@ -828,6 +846,9 @@ static void test_flash_spi_updates_mapped_alias(void)
     qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD,
                  R_SPI_MEM_CMD_FLASH_PP_MASK);
     g_assert_cmphex(spi1_read_flash_word(qts, 0), ==, programmed_word);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, 0xffffffff);
+
+    run_icache_sync(qts, ESP32S3_ICACHE_BASE, ESP32S3_PAGE_SIZE);
     g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, programmed_word);
 
     qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD,
@@ -836,6 +857,9 @@ static void test_flash_spi_updates_mapped_alias(void)
     qtest_writel(qts, SPI1_BASE + A_SPI_MEM_CMD,
                  R_SPI_MEM_CMD_FLASH_SE_MASK);
     g_assert_cmphex(spi1_read_flash_word(qts, 0), ==, 0xffffffff);
+    g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, programmed_word);
+
+    run_icache_sync(qts, ESP32S3_ICACHE_BASE, ESP32S3_PAGE_SIZE);
     g_assert_cmphex(qtest_readl(qts, ESP32S3_ICACHE_BASE), ==, 0xffffffff);
 
     qtest_quit(qts);
@@ -3728,8 +3752,8 @@ int main(int argc, char **argv)
                    test_cache_ctrl1_flash_ibus_gate);
     qtest_add_func("/esp32s3/cache/ctrl1-psram-dbus-gate",
                    test_cache_ctrl1_psram_dbus_gate);
-    qtest_add_func("/esp32s3/cache/flash-spi-updates-mapped-alias",
-                   test_flash_spi_updates_mapped_alias);
+    qtest_add_func("/esp32s3/cache/flash-spi-requires-sync-for-mapped-alias",
+                   test_flash_spi_requires_sync_for_mapped_alias);
     qtest_add_func("/esp32s3/cache/deferred-completion",
                    test_cache_deferred_completion_semantics);
     qtest_add_func("/esp32s3/cache/deferred-ordering-clear",

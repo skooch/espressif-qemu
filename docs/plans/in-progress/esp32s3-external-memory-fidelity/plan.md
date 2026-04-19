@@ -4,7 +4,7 @@
 Add a functional EXTMEM cache-coherency model so guest-visible flash and PSRAM alias behavior no longer depends on immediate backing-store refresh, while keeping cycle timing and replacement policy explicitly out of scope.
 
 ## Current Phase
-Queued on 2026-04-19 under `docs/plans/new/`.
+In progress on 2026-04-19 under `docs/plans/in-progress/`.
 
 Ideal backlog order: 4 of 7.
 
@@ -22,31 +22,33 @@ Ideal backlog order: 4 of 7.
 
 ### Phase 1: Coherency Contract And State Model
 - [ ] Re-audit the local TRM, ESP-IDF cache/MMU sources, and current guest paths to define the functional coherency contract this model will claim: when flash/PSRAM alias data may stay stale, which maintenance operations make backing-store mutations visible, and which behaviors remain intentionally unmodeled.
-- [ ] Extend `include/hw/misc/esp32s3_cache.h` with explicit per-domain cache-line metadata and any source-backed constants needed for line tracking, separating line state from MMU page translation state.
-- [ ] Add the line-state helpers in `hw/misc/esp32s3_cache.c` that can look up, mark stale, invalidate, refill, and flush line metadata without yet changing maintenance-operation wiring.
-- [ ] Record the narrowed contract in `ESP32S3_EMULATION_GAPS.md`, explicitly stating that functional coherency is in scope while replacement policy, contention, stalls, and flash-controller micro-timing remain out of scope.
-- **Status:** pending
+- [x] Extend `include/hw/misc/esp32s3_cache.h` with the initial coherency metadata needed by the current guest path: backing-page generation and visible-generation state for flash and PSRAM aliases, separated from MMU translation state.
+- [x] Add the first coherency helpers in `hw/misc/esp32s3_cache.c` that can mark backing pages stale, refresh visible flash pages, and decide whether a backing page is still stale without yet claiming full line-fill or replacement behavior.
+- [x] Record the narrowed contract in `ESP32S3_EMULATION_GAPS.md`, explicitly stating that functional coherency is in scope while replacement policy, contention, stalls, and flash-controller micro-timing remain out of scope.
+- **Status:** partial
 
 ### Phase 2: Backing Store Decoupling
-- [ ] Change the flash mutation path in `hw/misc/esp32s3_cache.c` so `esp32s3_cache_flash_modified()` no longer makes mutated flash contents immediately visible through every mapped alias; instead it must mark affected lines or pages stale according to the new line-state model.
+- [x] Change the flash mutation path in `hw/misc/esp32s3_cache.c` so `esp32s3_cache_flash_modified()` no longer makes mutated flash contents immediately visible through every mapped alias; instead it marks affected backing pages stale until a modeled maintenance path refreshes them.
 - [ ] Update `hw/ssi/esp32s3_spi.c` only as needed so page-program and erase callbacks preserve the new “backing store changed, cache visibility pending maintenance” contract without regressing existing SPI1 behavior.
 - [ ] Add the equivalent state transition for PSRAM-backed aliases in `hw/misc/esp32s3_cache.c`, so writes through one path can leave cached alias lines stale until the modeled maintenance path resolves them.
 - [ ] Preserve the existing MMU permission, reject, and fault behavior while decoupling cache-visible data from the backing `flash_as` / `psram_as` mappings.
-- **Status:** pending
+- **Status:** partial
 
 ### Phase 3: Maintenance Operations With Real Coherency Effects
-- [ ] Wire the existing EXTMEM maintenance controls in `hw/misc/esp32s3_cache.c` so `SYNC`, `PRELOAD`, `AUTOLOAD`, `FREEZE`, suspend/resume, and MMU invalidation paths update line visibility and stale/valid state instead of only toggling busy/done bits.
+- [x] Wire the first EXTMEM maintenance control in `hw/misc/esp32s3_cache.c` so `ICACHE_SYNC` completion refreshes stale flash alias visibility instead of only toggling busy/done bits.
+- [ ] Extend the same real coherency effects to the remaining maintenance paths (`DCACHE_SYNC`, `PRELOAD`, `AUTOLOAD`, `FREEZE`, suspend/resume, and MMU invalidation) once the current guest evidence shows which paths matter.
 - [ ] Keep the current deferred completion and freeze-drain ordering contract intact while making completion correspond to real coherency state transitions.
 - [ ] Re-audit `hw/xtensa/esp32s3.c` for any SoC-owned reset or suspend path that must drop or reset cache-line state to preserve the current reset-domain contract.
 - [ ] Update `ESP32S3_EMULATION_GAPS.md` to state the exact coherency behaviors now claimed and the exact residual items still blocked for accuracy.
-- **Status:** pending
+- **Status:** partial
 
 ### Phase 4: Regression Coverage For Stale And Fresh Visibility
-- [ ] Extend `tests/qtest/esp32s3-test.c` with direct cache qtests that prove stale-then-fresh behavior for flash aliases, MMU remaps, and maintenance operations rather than only register completion bits.
+- [x] Extend `tests/qtest/esp32s3-test.c` with the first direct cache qtest that proves stale-then-fresh behavior for flash aliases across SPI1 mutation and `ICACHE_SYNC`.
+- [ ] Extend `tests/qtest/esp32s3-test.c` with the remaining direct cache qtests for MMU remaps and other maintenance operations rather than only register completion bits.
 - [ ] Extend `tests/qtest/esp32s3-test.c` with direct cache qtests that prove PSRAM-backed alias visibility changes only after the modeled coherency path.
 - [ ] Keep `tests/functional/test_xtensa_esp32s3_cache_reject.py` focused on reject/fault behavior, widening it only if the functional coherency work changes the board-level reject contract.
-- [ ] Update `tests/functional/test_xtensa_esp32s3_multicore_park_flash.py` so the board-level flash probe proves the intended coherency boundary instead of only immediate mapped-alias refresh.
-- **Status:** pending
+- [x] Update `tests/functional/test_xtensa_esp32s3_multicore_park_flash.py` so the board-level flash probe proves the intended coherency boundary instead of only immediate mapped-alias refresh.
+- **Status:** partial
 
 ### Phase 5: Documentation And Exit
 - [ ] Re-read `ESP32S3_EMULATION_GAPS.md` and ensure the external-memory section now distinguishes resolved functional coherency from still-blocked microarchitectural fidelity.
