@@ -70,6 +70,7 @@
 #define GENERIC_MMIO_CORE_REG   (DR_REG_WCL_BASE + 0x0f0)
 #define RTC_EXT_WAKEUP_CONF_REG (RTC_CNTL_BASE + 0x64)
 #define RTC_EXT_WAKEUP1_REG     (RTC_CNTL_BASE + 0xe0)
+#define RTC_EXT_WAKEUP1_STATUS_REG (RTC_CNTL_BASE + 0xe4)
 #define RTC_RETENTION_CTRL_REG  (RTC_CNTL_BASE + 0x140)
 #define RTC_WAKEUP_ENA_EXT1_BIT BIT(16)
 #define CACHE_OP_DELAY_NS              1000
@@ -2845,6 +2846,38 @@ static void test_rtc_ext1_immediate_wakeup_transition(void)
     qtest_quit(qts);
 }
 
+static void test_rtc_ext1_wakeup_status_latch(void)
+{
+    QTestState *qts = qts_start();
+    uint32_t ext1_sel = BIT(12) | BIT(15);
+    uint32_t ext1_clr = 0;
+    uint32_t state0 = 0;
+    uint32_t wakeup_state = RTC_WAKEUP_ENA_EXT1_BIT;
+
+    set_gpio_input_level(qts, 12, false);
+    set_gpio_input_level(qts, 15, false);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_INT_CLR, UINT32_MAX);
+    qtest_writel(qts, RTC_EXT_WAKEUP1_REG,
+                 FIELD_DP32(0, RTC_CNTL_EXT_WAKEUP1, EXT_WAKEUP1_SEL,
+                            ext1_sel));
+    qtest_writel(qts, RTC_EXT_WAKEUP_CONF_REG, 0);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_WAKEUP_STATE, wakeup_state);
+
+    state0 = FIELD_DP32(state0, RTC_CNTL_STATE0, SLEEP_EN, 1);
+    qtest_writel(qts, RTC_CNTL_BASE + A_RTC_CNTL_STATE0, state0);
+
+    g_assert_cmphex(qtest_readl(qts, RTC_EXT_WAKEUP1_STATUS_REG), ==, ext1_sel);
+
+    ext1_clr = FIELD_DP32(ext1_sel, RTC_CNTL_EXT_WAKEUP1,
+                          EXT_WAKEUP1_STATUS_CLR, 1);
+    qtest_writel(qts, RTC_EXT_WAKEUP1_REG, ext1_clr);
+
+    g_assert_cmphex(qtest_readl(qts, RTC_EXT_WAKEUP1_STATUS_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, RTC_EXT_WAKEUP1_REG), ==, ext1_sel);
+
+    qtest_quit(qts);
+}
+
 static void test_rtc_state0_requires_hardware_sleep_bits(void)
 {
     QTestState *qts = qts_start();
@@ -3647,6 +3680,8 @@ int main(int argc, char **argv)
     qtest_add_func("/esp32s3/rtc/ext1-high-wakeup", test_rtc_ext1_high_wakeup_transition);
     qtest_add_func("/esp32s3/rtc/ext1-immediate-wakeup",
                    test_rtc_ext1_immediate_wakeup_transition);
+    qtest_add_func("/esp32s3/rtc/ext1-status-latch",
+                   test_rtc_ext1_wakeup_status_latch);
     qtest_add_func("/esp32s3/rtc/state0-hardware-bits", test_rtc_state0_requires_hardware_sleep_bits);
     qtest_add_func("/esp32s3/rtc/reset-transitions", test_rtc_reset_transitions);
     qtest_add_func("/esp32s3/rtc/cpu-stall", test_rtc_cpu_stall_transition);
