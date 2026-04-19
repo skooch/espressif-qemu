@@ -64,9 +64,18 @@
 #define PMS_BASE                DR_REG_SENSITIVE_BASE
 #define ASSIST_DEBUG_BASE       DR_REG_ASSIST_DEBUG_BASE
 #define LEDC_BASE               DR_REG_LEDC_BASE
-#define GENERIC_MMIO_LEDC_REG   (LEDC_BASE + 0x0f0)
-#define GENERIC_MMIO_LEDC_REG2  (GENERIC_MMIO_LEDC_REG + 4)
+#define LEDC_LSCH0_CONF0_REG    (LEDC_BASE + 0x0000)
+#define LEDC_LSCH0_HPOINT_REG   (LEDC_BASE + 0x0004)
+#define LEDC_LSCH0_DUTY_REG     (LEDC_BASE + 0x0008)
+#define LEDC_LSCH0_CONF1_REG    (LEDC_BASE + 0x000c)
+#define LEDC_LSTIMER0_CONF_REG  (LEDC_BASE + 0x00a0)
+#define LEDC_UNSUPPORTED_REG    (LEDC_BASE + 0x00f0)
+#define LEDC_CONF_REG           (LEDC_BASE + 0x00d0)
+#define LEDC_DATE_REG           (LEDC_BASE + 0x00fc)
 #define GENERIC_MMIO_FE2_REG    (DR_REG_FE2_BASE + 0x0f0)
+#define GENERIC_MMIO_FE_REG     (DR_REG_FE_BASE + 0x0090)
+#define GENERIC_MMIO_NRX_REG    (DR_REG_NRX_BASE + 0x00d4)
+#define GENERIC_MMIO_BB_REG     (DR_REG_BB_BASE + 0x0054)
 #define GENERIC_MMIO_CORE_REG   (DR_REG_WCL_BASE + 0x0f0)
 #define RTC_EXT_WAKEUP_CONF_REG (RTC_CNTL_BASE + 0x64)
 #define RTC_EXT_WAKEUP1_REG     (RTC_CNTL_BASE + 0xe0)
@@ -213,23 +222,55 @@ static void assert_openeth_instantiated(QTestState *qts, bool expected)
     g_assert_cmpint(present, ==, expected);
 }
 
+static void test_ledc_register_surface(void)
+{
+    QTestState *qts = qts_start();
+
+    g_assert_cmphex(qtest_readl(qts, LEDC_LSCH0_CONF0_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, LEDC_LSCH0_HPOINT_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, LEDC_LSCH0_DUTY_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, LEDC_LSCH0_CONF1_REG), ==, 0x40000000);
+    g_assert_cmphex(qtest_readl(qts, LEDC_LSTIMER0_CONF_REG), ==, 0x00800000);
+    g_assert_cmphex(qtest_readl(qts, LEDC_CONF_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, LEDC_DATE_REG), ==, 0x19040200);
+
+    qtest_writel(qts, LEDC_LSCH0_CONF0_REG, 0xffffffff);
+    qtest_writel(qts, LEDC_LSCH0_HPOINT_REG, 0xffffffff);
+    qtest_writel(qts, LEDC_LSCH0_DUTY_REG, 0xffffffff);
+    qtest_writel(qts, LEDC_LSCH0_CONF1_REG, 0x89abcdef);
+    qtest_writel(qts, LEDC_LSTIMER0_CONF_REG, 0xffffffff);
+    qtest_writel(qts, LEDC_CONF_REG, 0xffffffff);
+    qtest_writel(qts, LEDC_UNSUPPORTED_REG, 0xa5a55a5a);
+
+    g_assert_cmphex(qtest_readl(qts, LEDC_LSCH0_CONF0_REG), ==, 0x0000ffef);
+    g_assert_cmphex(qtest_readl(qts, LEDC_LSCH0_HPOINT_REG), ==, 0x00003fff);
+    g_assert_cmphex(qtest_readl(qts, LEDC_LSCH0_DUTY_REG), ==, 0x0007ffff);
+    g_assert_cmphex(qtest_readl(qts, LEDC_LSCH0_CONF1_REG), ==, 0x89abcdef);
+    g_assert_cmphex(qtest_readl(qts, LEDC_LSTIMER0_CONF_REG), ==, 0x01ffffff);
+    g_assert_cmphex(qtest_readl(qts, LEDC_CONF_REG), ==, 0x80000003);
+    g_assert_cmphex(qtest_readl(qts, LEDC_UNSUPPORTED_REG), ==, 0);
+
+    qtest_quit(qts);
+}
+
 static void test_generic_mmio_compatibility_storage(void)
 {
     QTestState *qts = qts_start();
 
-    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_LEDC_REG), ==, 0);
-    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_LEDC_REG2), ==, 0);
     g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_FE2_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_FE_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_NRX_REG), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_BB_REG), ==, 0);
 
-    qtest_writel(qts, GENERIC_MMIO_LEDC_REG, 0x11223344);
-    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_LEDC_REG), ==, 0x11223344);
-    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_LEDC_REG2), ==, 0);
-
-    qtest_writel(qts, GENERIC_MMIO_LEDC_REG2, 0xa5a55a5a);
     qtest_writel(qts, GENERIC_MMIO_FE2_REG, 0x55667788);
-    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_LEDC_REG), ==, 0x11223344);
-    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_LEDC_REG2), ==, 0xa5a55a5a);
+    qtest_writel(qts, GENERIC_MMIO_FE_REG, 0x11223344);
+    qtest_writel(qts, GENERIC_MMIO_NRX_REG, 0xa5a55a5a);
+    qtest_writel(qts, GENERIC_MMIO_BB_REG, 0x5aa55aa5);
+
     g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_FE2_REG), ==, 0x55667788);
+    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_FE_REG), ==, 0x11223344);
+    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_NRX_REG), ==, 0xa5a55a5a);
+    g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_BB_REG), ==, 0x5aa55aa5);
 
     qtest_writel(qts, GENERIC_MMIO_CORE_REG, 0xffffffff);
     g_assert_cmphex(qtest_readl(qts, GENERIC_MMIO_CORE_REG), ==, 0);
@@ -4034,6 +4075,8 @@ int main(int argc, char **argv)
 
     qtest_add_func("/esp32s3/ana/pll-done", test_ana_pll_done);
     qtest_add_func("/esp32s3/machine/single-cpu-boot", test_single_cpu_boot);
+    qtest_add_func("/esp32s3/ledc/register-surface",
+                   test_ledc_register_surface);
     qtest_add_func("/esp32s3/generic-mmio/compatibility-storage",
                    test_generic_mmio_compatibility_storage);
     qtest_add_func("/esp32s3/spi0/mem-register-surface",

@@ -164,6 +164,7 @@ system_ss.add(when: 'CONFIG_XTENSA_ESP32S3', if_true: files(
   'esp_sha.c',
   'esp32s3_sha.c',
   'esp32c3_jtag.c',
+  'esp32s3_ledc.c',
   'esp32s3_rtc_cntl.c',
   'esp32s3_rng.c',
   'tdeck_i2c_devices.c',

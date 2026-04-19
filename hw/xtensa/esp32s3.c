@@ -50,6 +50,7 @@
 #include "hw/char/esp32s3_uart.h"
 #include "hw/char/tdeck_gps.h"
 #include "hw/char/tdeck_modem.h"
+#include "hw/misc/esp32s3_ledc.h"
 #include "hw/misc/esp32s3_rng.h"
 
 #include "chardev/char-fe.h"
@@ -164,6 +165,7 @@ typedef struct Esp32s3SocState {
     ESP32S3HmacState hmac;
     ESP32S3DsState ds;
     ESP32S3PmsState pms;
+    ESP32S3LEDCState ledc;
 
     ESP32S3XtsAesState xts_aes;
     ESP32S3TimgState timg[2];
@@ -695,6 +697,9 @@ static void esp32s3_soc_realize(DeviceState *dev, Error **errp)
     sysbus_connect_irq(SYS_BUS_DEVICE(&s->sdmmc), 0,
                        qdev_get_gpio_in(intmatrix_dev, ETS_SDIO_HOST_INTR_SOURCE));
 
+    qdev_realize(DEVICE(&s->ledc), &s->periph_bus, &error_fatal);
+    esp32s3_soc_add_periph_device(sys_mem, &s->ledc, DR_REG_LEDC_BASE);
+
     qemu_register_reset(esp32s3_soc_qemu_reset, dev);
 
     /* TWAI realization */
@@ -727,7 +732,6 @@ typedef struct Esp32s3IoCompatRegion {
 static const Esp32s3IoCompatRegion esp32s3_io_compat_regions[] = {
     { DR_REG_FE2_BASE,  0x1000 },
     { DR_REG_FE_BASE,   0x1000 },
-    { DR_REG_LEDC_BASE, 0x0400 },
     { DR_REG_NRX_BASE,  0x0400 },
     { DR_REG_BB_BASE,   0x1000 },
 };
@@ -1104,6 +1108,7 @@ static void esp32s3_soc_init(Object *obj)
     object_initialize_child(obj, "intmatrix", &s->intmatrix, TYPE_ESP32S3_INTMATRIX);
 
     object_initialize_child(obj, "rtc_cntl", &s->rtc_cntl, TYPE_ESP32S3_RTC_CNTL);
+    object_initialize_child(obj, "ledc", &s->ledc, TYPE_ESP32S3_LEDC);
 
     qdev_init_gpio_in_named(DEVICE(s), esp32s3_dig_reset,  ESP32S3_RTC_DIG_RESET_GPIO, 1);
     qdev_init_gpio_in_named(DEVICE(s), esp32s3_cpu_reset,  ESP32S3_RTC_CPU_RESET_GPIO, ESP32S3_CPU_COUNT);
