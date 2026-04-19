@@ -4,7 +4,7 @@
 Close the residual board-path contract gaps in the already-modeled peripheral set without broadening them into unjustified silicon-complete rewrites.
 
 ## Current Phase
-Queued on 2026-04-19 under `docs/plans/new/`.
+In progress on 2026-04-19 under `docs/plans/in-progress/`.
 
 Ideal backlog order: 2 of 7.
 
