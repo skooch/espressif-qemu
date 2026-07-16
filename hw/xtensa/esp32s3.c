@@ -38,6 +38,7 @@
 #include "qemu/datadir.h"
 #include "sysemu/sysemu.h"
 #include "sysemu/reset.h"
+#include "sysemu/runstate.h"
 #include "sysemu/cpus.h"
 #include "sysemu/blockdev.h"
 #include "sysemu/block-backend.h"
@@ -199,6 +200,13 @@ typedef struct Esp32s3SocState {
     bool cpu_runstall[ESP32S3_CPU_COUNT];
     bool cpu_paused_by_soc[ESP32S3_CPU_COUNT];
 
+    /*
+     * Reset domain requested by a guest-initiated reset (SW_SYS_RST /
+     * SW_{PRO,APP}CPU_RST). Applied by the deferred machine-reset callback;
+     * zero means "cold boot / full chip".
+     */
+    uint32_t requested_reset;
+
     /* Keyboard input chardev (serial port 3 -> TCA8418 FIFO) */
     TdeckTca8418State *kbd_dev;
     CharBackend kbd_chr;
@@ -266,12 +274,26 @@ static void esp32s3_soc_apply_tdeck_gpio_defaults(Esp32s3SocState *s)
                                            ESP32S3_GPIO_SIG_LORA_CS);
 }
 
+/*
+ * Guest-initiated resets (RTC_CNTL SW_SYS_RST / SW_{PRO,APP}CPU_RST) arrive
+ * here from an MMIO write, i.e. on the requesting vCPU's own thread, mid-TB.
+ * Applying the reset synchronously calls cpu_reset() on the executing CPU
+ * without leaving the translation block: the remainder of the old TB then
+ * runs with freshly-zeroed window/PS state, faults, and parks the machine in
+ * the ROM exception vector (observed with the firmware supervisor's
+ * SW_SYS_RST self-reset). Defer to the main-loop machine reset instead —
+ * the same shape hw/xtensa/esp32.c has always used — and let the reset
+ * callback apply the recorded domain with all vCPUs stopped. rtc_cntl
+ * reset_cause and scratch registers survive the device reset, so the guest
+ * still reads SW_SYS_RESET and its RTC breadcrumbs after reboot.
+ */
 static void esp32s3_dig_reset(void *opaque, int n, int level)
 {
     Esp32s3SocState *s = ESP32S3_SOC(opaque);
 
     if (level) {
-        esp32s3_soc_apply_reset(s, ESP32S3_SOC_RESET_DIG);
+        s->requested_reset = ESP32S3_SOC_RESET_DIG;
+        qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
     }
 }
 
@@ -280,8 +302,15 @@ static void esp32s3_cpu_reset(void* opaque, int n, int level)
     Esp32s3SocState *s = ESP32S3_SOC(opaque);
 
     if (level) {
-        esp32s3_soc_apply_reset(s, (n == 0) ? ESP32S3_SOC_RESET_PROCPU :
-                                            ESP32S3_SOC_RESET_APPCPU);
+        s->requested_reset = (n == 0) ? ESP32S3_SOC_RESET_PROCPU :
+                                        ESP32S3_SOC_RESET_APPCPU;
+        /*
+         * SUBSYSTEM_RESET for the APP CPU so -no-reboot does not exit QEMU
+         * on a single-core reset (mirrors esp32_cpu_reset).
+         */
+        ShutdownCause cause = (n == 0) ? SHUTDOWN_CAUSE_GUEST_RESET :
+                                         SHUTDOWN_CAUSE_SUBSYSTEM_RESET;
+        qemu_system_reset_request(cause);
     }
 }
 
@@ -446,7 +475,16 @@ static void esp32s3_soc_reset(DeviceState *dev)
 {
     Esp32s3SocState *s = ESP32S3_SOC(dev);
 
-    esp32s3_soc_apply_reset(s, ESP32S3_SOC_RESET_ALL);
+    /*
+     * Runs from the main-loop machine reset with all vCPUs stopped. A
+     * guest-initiated reset recorded its domain in requested_reset; a cold
+     * machine reset (monitor system_reset, -no-reboot restart, startup)
+     * arrives with no request and resets the full chip.
+     */
+    uint32_t domain = s->requested_reset ? s->requested_reset
+                                         : ESP32S3_SOC_RESET_ALL;
+    s->requested_reset = 0;
+    esp32s3_soc_apply_reset(s, domain);
 }
 
 static void esp32s3_soc_qemu_reset(void *opaque)
